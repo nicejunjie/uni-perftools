@@ -230,7 +230,9 @@ def reduce_rows(ranks, imbalance):
 
 
 def pct(mn, mx, avg):
-    return (mx - mn) / avg * 100.0 if avg > 0 else 0.0
+    # Suite-wide imbalance = (max-avg)/max: the recoverable fraction of the slow
+    # rank (CrayPAT Imb%, bounded 0-100). Matches cp_imb() and core/contract.
+    return (mx - avg) / mx * 100.0 if mx > 0 else 0.0
 
 
 def imb_s(p):
@@ -581,7 +583,7 @@ def main():
     print("                      Scientific Library Profiler")
     print("=" * 80)
     print(" application: %s" % app)
-    print(" ranks: %d   max runtime (s): %.3f   imbalance: %s   imb = (max-min)/avg" %
+    print(" ranks: %d   max runtime (s): %.3f   imbalance: %s   imb = (max-avg)/max" %
           (len(ranks), runtime, args.imbalance))
 
     # Table 1 — sampling, grouped by function group (CrayPAT-style).

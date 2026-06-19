@@ -93,7 +93,8 @@ OUT=$(python3 "$RPT" "$TMP"/p.*.json 2>&1)
 ok "4 per-rank files written"  "[ $NFILES -eq 4 ]"
 ok "dedicated MPI table"        "echo \"$OUT\" | grep -q 'MPI (communication)'"
 ok "MPI_Allreduce has GB/s"     "echo \"$OUT\" | grep -q MPI_Allreduce"
-ok "dgemm imbalance 80% (20 vs 10)" "echo \"$OUT\" | grep -E ' dgemm_ ' | grep -qE '80\.0%'"
+# (max-avg)/max for ranks [20,10,10,10]: avg 12.5, max 20 -> 37.5%
+ok "dgemm imbalance 37.5% (20 vs 10)" "echo \"$OUT\" | grep -E ' dgemm_ ' | grep -qE '37\.5%'"
 ok "no GB/s in compute table"   "echo \"$OUT\" | sed -n '/Compute/,/MPI (comm/p' | grep -qv 'GB/s'"
 
 # --- sampling: a hot function must dominate the flat profile ---

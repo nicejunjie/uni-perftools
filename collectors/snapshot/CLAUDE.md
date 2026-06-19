@@ -61,7 +61,8 @@ PMU events), real macOS/Windows backends, and `attach` for running processes.
 - **Phase 6 — Portability ✅ (scaffold):** Linux backends are `cfg(target_os = "linux")`; other platforms get stub collectors (`src/fallback.rs`). Real kperf/ETW backends are future work.
 
 ### Key behaviors & limitations to know
-- **MPI runs:** the `/proc` and perf collectors profile the *launcher* process tree, not individual ranks; for MPI the authoritative metrics come from the shim (`mpi_*`). The "Mostly single-threaded" insight is intentionally suppressed under `--mpi`.
+- **In the perf-suite:** this tool is the **snapshot** collector (roofline + microarch). MPI is owned by the **profile** collector (portable `mpi.h`-free PMPI), so the suite runs `uaps` **without `--mpi`** and `uaps_mpi.c` is standalone-only — there is no double MPI interception. The unified imbalance metric is `(max-avg)/max` (matches the profile collector and `core/contract`).
+- **MPI runs (standalone `--mpi`):** the `/proc` and perf collectors profile the *launcher* process tree, not individual ranks; for MPI the authoritative metrics come from the shim (`mpi_*`). The "Mostly single-threaded" insight is intentionally suppressed under `--mpi`.
 - **AMD host:** development/validation is on an AMD CPU, so the code deliberately uses *generic* perf events (portable) rather than Intel raw event codes.
 - **Counters include kernel time** by default, which inflates cache-miss counts for I/O-heavy code; the insight engine ranks I/O-bound before memory-bound to compensate.
 - **`testbench/`** holds six validation workloads (compute/memory/io/threaded/openmp/mpi); build locally with `make -C testbench`. Per project policy, never install toolchains system-wide — build test artifacts locally.

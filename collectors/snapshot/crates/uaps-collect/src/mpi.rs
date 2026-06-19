@@ -96,10 +96,11 @@ impl Collector for MpiCollector {
         let max_mpi = ranks.iter().map(|r| r.mpi_time).fold(0.0_f64, f64::max);
 
         let mpi_time_pct = if avg_wall > 0.0 { avg_mpi / avg_wall * 100.0 } else { 0.0 };
-        // Imbalance: how much the busiest rank's MPI (mostly wait) time exceeds
-        // the average, relative to wall time. High when ranks are unevenly loaded.
-        let imbalance_pct = if avg_wall > 0.0 {
-            ((max_mpi - avg_mpi) / avg_wall * 100.0).max(0.0)
+        // Imbalance = (max-avg)/max: the recoverable fraction of the busiest
+        // rank's MPI time. Suite-wide definition (matches the profile collector
+        // and core/contract); bounded 0-100.
+        let imbalance_pct = if max_mpi > 0.0 {
+            ((max_mpi - avg_mpi) / max_mpi * 100.0).max(0.0)
         } else {
             0.0
         };
