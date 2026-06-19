@@ -107,9 +107,10 @@ rm -f "$TMP"/p.*.json
 env SCILIB_QUIET=1 SCILIB_SAMPLE=1 SCILIB_SAMPLE_HZ=2000 SCILIB_OUTPUT="$TMP/p" \
     LD_PRELOAD="$LIB" "$TMP/t5" >/dev/null 2>&1
 OUT=$(python3 "$RPT" "$TMP"/p.*.json 2>&1)
-ok "sampling: Top functions table"  "echo \"$OUT\" | grep -q 'Top functions'"
+ok "sampling: grouped table (CrayPAT-style)" "echo \"$OUT\" | grep -q 'Profile by Function Group'"
+ok "sampling: USER group present"   "echo \"$OUT\" | grep -qE '^ *[0-9.]+%.* USER$'"
 ok "sampling: hot is the top function" \
-   "echo \"$OUT\" | sed -n '/Top functions/,/^\$/p' | grep -oE '\\b(hot|cold)\\b' | head -1 | grep -qw hot"
+   "echo \"$OUT\" | sed -n '/Table 1/,/Table 2/p' | grep -oE '\\b(hot|cold)\\b' | head -1 | grep -qw hot"
 ok "sampling: source line resolved (t5.c:N)" "echo \"$OUT\" | grep -qE 't5\.c:[0-9]+'"
 
 # --- driver: one command runs + reports ---

@@ -22,19 +22,29 @@ make install PREFIX=~/.local               # then just: scilib-prof ./your_app
 ```
 
 `scilib-prof` sets `LD_PRELOAD` + config for the child, runs it, and aggregates
-the per-rank raw files into a report automatically. Example:
+the per-rank raw files into a report automatically. The report mimics CrayPAT —
+a sampling "Profile by Function Group and Function" followed by exact library
+tracing tables:
 
 ```
-  Top functions  (sampling @ 1000 Hz, whole application)
-   function / file:line                       samples  time(s)      %     imb
-   dgemm_                                          365    0.365  97.9%   0.0%
-   my_kernel                  solver.c:142          22    0.022   5.9%  41.0%
-   ...
-  Compute (BLAS / LAPACK / ...)        count[imb]  incl(s)  excl(s)
-   BLAS  dgemm_                          4010 0.0%   0.357    0.357
-  MPI (communication)            count[imb]  r/R   incl(s)      bytes    GB/s
-   MPI_Allreduce                    102  9.8%  4/4   0.000     819840    8.5
+Table 1:  Profile by Function Group and Function  (sampling @ 1000 Hz, 4 PEs)
+   Samp%      Samp  Imb.Samp  Imb.Samp%  Group
+                                         Function=[file:line]
+ 100.0%      4615      96.2      7.7%  Total
+  94.9%      4379      64.2      5.5%  ETC          # MPI wait/progress (poll,...)
+   5.1%       236      32.0     35.2%  BLAS
+   5.1%       236      32.0     35.2%    dgemm_  [libblas.so.3]
+   ...                                  USER         # your code: solver.c:142, ...
+
+Table 2:  Library calls by group and function  (tracing)
+   BLAS  dgemm_                  4010 0.0%   0.357    0.357
+Table 3:  MPI message statistics  (tracing)
+   MPI_Allreduce        102  9.8%  4/4   0.000     819840    8.5
 ```
+
+Groups: **USER** (your code), **MPI**, **BLAS**, **LAPACK**, **FFTW**, **ETC**
+(libc/runtime). Use `SCILIB_SAMPLE_CPU=1` to focus on compute and push MPI wait
+time out of the picture.
 
 ## Manual use (no driver)
 
