@@ -1,1 +1,0 @@
-void libprof_fini(); 

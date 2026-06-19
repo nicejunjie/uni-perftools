@@ -1,104 +1,120 @@
+# scilib-prof - scientific library profiler
+# Builds two preloadable profilers:
+#   libscilibprof-preload.so : LD_PRELOAD symbol interposition (dynamic libs)
+#   libscilibprof-frida.so   : Frida DBI (also static libs)
 
+CC      ?= cc
+PYTHON  ?= python3
 
+# --- OpenMP flag detection (gcc/clang: -fopenmp ; nvhpc: -mp) ---------------
+OMPFLAG := $(shell $(CC) -fopenmp -E -x c /dev/null >/dev/null 2>&1 && echo -fopenmp || echo -mp)
 
-CC = mpicc #pgcc
-FC = mpif90 #pgf90
+GEN      := build/gen
+OBJ      := build/obj
+INCLUDE  := -Isrc/core -Isrc/wrap -Isrc/analyzers -Isrc/sample -I$(GEN)
+CFLAGS   ?= -O2 -g -w
+CFLAGS   += -fPIC $(OMPFLAG) -ftls-model=initial-exec $(INCLUDE)
+# ILP64=1 -> profile 64-bit-integer BLAS/LAPACK (MKL/NVPL ILP64)
+ifeq ($(ILP64),1)
+CFLAGS   += -DLIBPROF_ILP64
+endif
+LDFLAGS  := -shared
+LDLIBS   := -ldl -lrt -lpthread -lm
 
-FRIDA_DIR := frida
+PROTOS   := $(wildcard gen/prototypes/*.txt)
+HEADERS  := $(wildcard src/core/*.h src/analyzers/*.h src/sample/*.h) \
+            src/wrap/libprof_wrap.h $(GEN)/libprof_slots.h
+# MPI is profiled via the "opaque" dialect (mpi.h-free), so it builds like any
+# other group with the plain compiler - no mpicc, no MPI headers required.
+WRAP_GRP := blas lapack pblas scalapack cblas lapacke fftw mpi
 
-INCLUDE = -I. -I./blas -I./utils -I./$(FRIDA_DIR)
+# --- sources ---------------------------------------------------------------
+CORE_SRC := $(wildcard src/core/*.c)
+ANA_SRC  := $(wildcard src/analyzers/*.c)
+SAMP_SRC := $(wildcard src/sample/*.c)
+CORE_OBJ := $(patsubst src/core/%.c,$(OBJ)/shared/%.o,$(CORE_SRC)) \
+            $(patsubst src/analyzers/%.c,$(OBJ)/shared/%.o,$(ANA_SRC)) \
+            $(patsubst src/sample/%.c,$(OBJ)/shared/%.o,$(SAMP_SRC)) \
+            $(OBJ)/shared/libprof_desc.o
+WRAP_PRE := $(patsubst %,$(OBJ)/preload/%_wrap.o,$(WRAP_GRP))
+WRAP_FRI := $(patsubst %,$(OBJ)/frida/%_wrap.o,$(WRAP_GRP))
 
-BLAS = -Mnvpl
-LD_FLAGS = -ldl -lrt -lresolv -lm -pthread -Wl,-z,noexecstack,--gc-sections 
+TARGET_PRE := libscilibprof-preload.so
+TARGET_FRI := libscilibprof-frida.so
 
-TARGET1 = libprof-dbi.so
-TARGET2 = libprof-dl.so
+all: $(TARGET_PRE) $(TARGET_FRI)
+preload: $(TARGET_PRE)
+frida:   $(TARGET_FRI)
 
-CFLAGS = -O2 -mp -fPIC -w  -g $(INCLUDE) $(CPPFLAGS) 
-CFLAGS1 = $(CFLAGS) -DDBI -I./$(FRIDA_DIR)
-FFLAGS = -O2 -mp -g -mcmodel=large #$(MEMMODEL)
+# --- code generation -------------------------------------------------------
+$(GEN)/.stamp: gen/gen.py $(PROTOS)
+	@mkdir -p $(GEN)
+	$(PYTHON) gen/gen.py --out $(GEN)
+	@touch $@
+GENERATED := $(GEN)/.stamp
 
-#----------------------------
+# the generator produces these as a side effect of the stamp rule
+GENFILES := $(patsubst %,$(GEN)/%_wrap.c,$(WRAP_GRP)) $(GEN)/libprof_desc.c $(GEN)/libprof_slots.h
+$(GENFILES): $(GENERATED) ;
 
-#BLAS_SRCS = $(wildcard linear_algebra/$(GPUARCH)/*.c)
-UTIL_SRCS = $(wildcard utils/*.c)
-COMMON_SRCS = init.c fini.c $(UTIL_SRCS)
-
-SRCS1 = main-dbi.c BLAS/blas-dbi.c PBLAS/pblas-dbi.c LAPACK/lapack-dbi.c ScaLAPACK/scalapack-dbi.c
-OBJ1 = $(patsubst %.c,%-dbi.o,$(COMMON_SRCS)) $(SRCS1:.c=.o)
-
-SRCS2 = main-dl.c BLAS/blas-dl.c PBLAS/pblas-dl.c LAPACK/lapack-dl.c ScaLAPACK/scalapack-dl.c
-OBJ2 = $(patsubst %.c,%-dl.o,$(COMMON_SRCS))  $(SRCS2:.c=.o)
-
-
-all: gen-wrapper dbi dl 
-
-gen-wrapper:
-	cd BLAS       && ../tools/gen-wrapper.py -dbi prototypes-blas.txt      > blas-dbi.c      
-	cd BLAS       && ../tools/gen-wrapper.py -dl  prototypes-blas.txt      > blas-dl.c       
-	cd BLAS       && ../tools/gen-wrapper.py -dl  prototypes-blas.txt      > blas-dl.c       
-	cd BLAS       && ../tools/gen-index.sh prototypes-blas.txt
-	cd PBLAS      && ../tools/gen-wrapper.py -dbi prototypes-pblas.txt     > pblas-dbi.c     
-	cd PBLAS      && ../tools/gen-wrapper.py -dl  prototypes-pblas.txt     > pblas-dl.c      
-	cd PBLAS      && ../tools/gen-index.sh prototypes-pblas.txt
-	cd LAPACK     && ../tools/gen-wrapper.py -dbi prototypes-lapack.txt    > lapack-dbi.c    
-	cd LAPACK     && ../tools/gen-wrapper.py -dl  prototypes-lapack.txt    > lapack-dl.c     
-	cd LAPACK     && ../tools/gen-index.sh prototypes-lapack.txt
-	cd ScaLAPACK  && ../tools/gen-wrapper.py -dbi prototypes-scalapack.txt > scalapack-dbi.c 
-	cd ScaLAPACK  && ../tools/gen-wrapper.py -dl  prototypes-scalapack.txt > scalapack-dl.c  
-	cd ScaLAPACK  && ../tools/gen-index.sh prototypes-scalapack.txt
-	
-dbi: $(FRIDA_DIR) $(TARGET1)
-$(TARGET1): $(OBJ1) 
-	@echo "Building DBI based Libprof"
-	$(CC) -o $@ -shared -ffunction-sections -fdata-sections $^ ./$(FRIDA_DIR)/libfrida-gum.a ${LD_FLAGS} ${CFLAGS} $(LIBS)
-
-dl: $(TARGET2)
-$(TARGET2): $(OBJ2)
-	@echo "Building DL based Libprof"
-	$(CC) -o $@ -shared  $^  ${LD_FLAGS} ${CFLAGS} $(LIBS)
-
-%-dbi.o: %.c
-	$(CC) $(CFLAGS1) -c $< -o $@
-
-%-dl.o: %.c
+# --- shared (backend-agnostic) objects -------------------------------------
+$(OBJ)/shared/%.o: src/core/%.c $(GENERATED) $(HEADERS) | dirs
+	$(CC) $(CFLAGS) -c $< -o $@
+$(OBJ)/shared/%.o: src/analyzers/%.c $(GENERATED) $(HEADERS) | dirs
+	$(CC) $(CFLAGS) -c $< -o $@
+$(OBJ)/shared/%.o: src/sample/%.c $(GENERATED) $(HEADERS) | dirs
+	$(CC) $(CFLAGS) -c $< -o $@
+$(OBJ)/shared/libprof_desc.o: $(GEN)/libprof_desc.c $(GENERATED) $(HEADERS) | dirs
 	$(CC) $(CFLAGS) -c $< -o $@
 
-# ------------------------- setup frida for DBI --------------------------
+# --- preload backend -------------------------------------------------------
+$(OBJ)/preload/%_wrap.o: $(GEN)/%_wrap.c $(GENERATED) $(HEADERS) | dirs
+	$(CC) $(CFLAGS) -c $< -o $@
+$(OBJ)/preload/preload.o: src/backends/preload.c $(HEADERS) | dirs
+	$(CC) $(CFLAGS) -c $< -o $@
+$(TARGET_PRE): $(CORE_OBJ) $(WRAP_PRE) $(OBJ)/preload/preload.o
+	$(CC) $(LDFLAGS) -o $@ $^ $(LDLIBS)
+	@echo "built $@"
 
-# Determine the architecture
-CPUARCH := $(shell uname -m)
-# Set architecture-specific variables
-FRIDA_HOME := https://github.com/frida/frida/releases/download/
+# --- frida backend ---------------------------------------------------------
+$(OBJ)/frida/%_wrap.o: $(GEN)/%_wrap.c $(GENERATED) $(HEADERS) frida/frida-gum.h | dirs
+	$(CC) $(CFLAGS) -DLIBPROF_BACKEND_FRIDA -Ifrida -c $< -o $@
+$(OBJ)/frida/frida.o: src/backends/frida.c $(HEADERS) frida/frida-gum.h | dirs
+	$(CC) $(CFLAGS) -Ifrida -c $< -o $@
+$(TARGET_FRI): $(CORE_OBJ) $(WRAP_FRI) $(OBJ)/frida/frida.o frida/libfrida-gum.a
+	$(CC) $(LDFLAGS) -o $@ $^ frida/libfrida-gum.a $(LDLIBS)
+	@echo "built $@"
+
+dirs:
+	@mkdir -p $(OBJ)/shared $(OBJ)/preload $(OBJ)/frida
+
+# --- frida devkit download -------------------------------------------------
 FRIDA_VERSION := 16.2.1
+CPUARCH := $(shell uname -m)
 ifeq ($(CPUARCH),x86_64)
-    FRIDA_DEVKIT_URL := $(FRIDA_HOME)$(FRIDA_VERSION)/frida-gum-devkit-$(FRIDA_VERSION)-linux-x86_64.tar.xz
-    FRIDA_DEVKIT_FILE := frida-gum-devkit-$(FRIDA_VERSION)-linux-x86_64.tar.xz
-else ifeq ($(CPUARCH),aarch64)
-    FRIDA_DEVKIT_URL := $(FRIDA_HOME)$(FRIDA_VERSION)/frida-gum-devkit-$(FRIDA_VERSION)-linux-arm64.tar.xz
-    FRIDA_DEVKIT_FILE := frida-gum-devkit-$(FRIDA_VERSION)-linux-arm64.tar.xz
-else ifeq ($(CPUARCH),arm64)
-    FRIDA_DEVKIT_URL := $(FRIDA_HOME)$(FRIDA_VERSION)/frida-gum-devkit-$(FRIDA_VERSION)-linux-arm64.tar.xz
-    FRIDA_DEVKIT_FILE := frida-gum-devkit-$(FRIDA_VERSION)-linux-arm64.tar.xz
+  FRIDA_ARCH := x86_64
 else
-    $(error Unsupported architecture: $(CPUARCH))
+  FRIDA_ARCH := arm64
 endif
+FRIDA_URL := https://github.com/frida/frida/releases/download/$(FRIDA_VERSION)/frida-gum-devkit-$(FRIDA_VERSION)-linux-$(FRIDA_ARCH).tar.xz
 
-$(FRIDA_DIR): $(FRIDA_DIR)/$(FRIDA_DEVKIT_FILE)
-	@if [ ! -e "$(FRIDA_DIR)/frida-gum.h" ]; then \
-        tar -xvf $(FRIDA_DIR)/$(FRIDA_DEVKIT_FILE) -C $(FRIDA_DIR); \
-        fi
+frida/frida-gum.h:
+	@mkdir -p frida
+	curl -s -L $(FRIDA_URL) -o frida/devkit.tar.xz
+	tar -xf frida/devkit.tar.xz -C frida
+frida/libfrida-gum.a: frida/frida-gum.h
 
-$(FRIDA_DIR)/$(FRIDA_DEVKIT_FILE):
-	mkdir -p $(FRIDA_DIR)
-	curl -s  -L $(FRIDA_DEVKIT_URL) -o $(FRIDA_DIR)/$(FRIDA_DEVKIT_FILE)
+PREFIX ?= /usr/local
+install: all
+	mkdir -p $(DESTDIR)$(PREFIX)/lib $(DESTDIR)$(PREFIX)/bin
+	install -m 755 $(TARGET_PRE) $(TARGET_FRI) $(DESTDIR)$(PREFIX)/lib/
+	install -m 755 bin/scilib-prof $(DESTDIR)$(PREFIX)/bin/scilib-prof
+	install -m 755 tools/scilib-report.py $(DESTDIR)$(PREFIX)/bin/scilib-report
+	@echo "installed to $(DESTDIR)$(PREFIX) — run: scilib-prof ./your_app"
 
-# ------------------------------------------------------------------------
-
-.PHONY: clean
+.PHONY: all preload frida dirs clean veryclean install
 clean:
-	rm -rf $(OBJ1) $(OBJ2) $(FRIDA_DIR)
-
-.PHONY: veryclean
-veryclean:
-	rm -rf $(TARGET1) $(TARGET2) $(OBJ1) $(OBJ2) $(FRIDA_DIR) BLAS/*.[ch] PBLAS/*.[ch] LAPACK/*.[ch] ScaLAPACK/*.[ch]
+	rm -rf $(OBJ) $(GEN)
+veryclean: clean
+	rm -f $(TARGET_PRE) $(TARGET_FRI)
+	rm -rf frida

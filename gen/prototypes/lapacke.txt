@@ -1,0 +1,26 @@
+# LAPACKe (C dialect: arguments by value). Common high-level drivers (count +
+# time only). matrix_layout is the leading int; lapack_int tracks integer width.
+# Solvers
+lapack_int LAPACKE_sgesv(int matrix_layout, lapack_int n, lapack_int nrhs, float* a, lapack_int lda, lapack_int* ipiv, float* b, lapack_int ldb)
+lapack_int LAPACKE_dgesv(int matrix_layout, lapack_int n, lapack_int nrhs, double* a, lapack_int lda, lapack_int* ipiv, double* b, lapack_int ldb)
+lapack_int LAPACKE_cgesv(int matrix_layout, lapack_int n, lapack_int nrhs, void* a, lapack_int lda, lapack_int* ipiv, void* b, lapack_int ldb)
+lapack_int LAPACKE_zgesv(int matrix_layout, lapack_int n, lapack_int nrhs, void* a, lapack_int lda, lapack_int* ipiv, void* b, lapack_int ldb)
+lapack_int LAPACKE_sposv(int matrix_layout, char uplo, lapack_int n, lapack_int nrhs, float* a, lapack_int lda, float* b, lapack_int ldb)
+lapack_int LAPACKE_dposv(int matrix_layout, char uplo, lapack_int n, lapack_int nrhs, double* a, lapack_int lda, double* b, lapack_int ldb)
+# Factorizations
+lapack_int LAPACKE_sgetrf(int matrix_layout, lapack_int m, lapack_int n, float* a, lapack_int lda, lapack_int* ipiv)
+lapack_int LAPACKE_dgetrf(int matrix_layout, lapack_int m, lapack_int n, double* a, lapack_int lda, lapack_int* ipiv)
+lapack_int LAPACKE_cgetrf(int matrix_layout, lapack_int m, lapack_int n, void* a, lapack_int lda, lapack_int* ipiv)
+lapack_int LAPACKE_zgetrf(int matrix_layout, lapack_int m, lapack_int n, void* a, lapack_int lda, lapack_int* ipiv)
+lapack_int LAPACKE_spotrf(int matrix_layout, char uplo, lapack_int n, float* a, lapack_int lda)
+lapack_int LAPACKE_dpotrf(int matrix_layout, char uplo, lapack_int n, double* a, lapack_int lda)
+lapack_int LAPACKE_sgeqrf(int matrix_layout, lapack_int m, lapack_int n, float* a, lapack_int lda, float* tau)
+lapack_int LAPACKE_dgeqrf(int matrix_layout, lapack_int m, lapack_int n, double* a, lapack_int lda, double* tau)
+# Eigen / SVD / least squares
+lapack_int LAPACKE_ssyev(int matrix_layout, char jobz, char uplo, lapack_int n, float* a, lapack_int lda, float* w)
+lapack_int LAPACKE_dsyev(int matrix_layout, char jobz, char uplo, lapack_int n, double* a, lapack_int lda, double* w)
+lapack_int LAPACKE_dsyevd(int matrix_layout, char jobz, char uplo, lapack_int n, double* a, lapack_int lda, double* w)
+lapack_int LAPACKE_sgels(int matrix_layout, char trans, lapack_int m, lapack_int n, lapack_int nrhs, float* a, lapack_int lda, float* b, lapack_int ldb)
+lapack_int LAPACKE_dgels(int matrix_layout, char trans, lapack_int m, lapack_int n, lapack_int nrhs, double* a, lapack_int lda, double* b, lapack_int ldb)
+lapack_int LAPACKE_sgesvd(int matrix_layout, char jobu, char jobvt, lapack_int m, lapack_int n, float* a, lapack_int lda, float* s, float* u, lapack_int ldu, float* vt, lapack_int ldvt, float* superb)
+lapack_int LAPACKE_dgesvd(int matrix_layout, char jobu, char jobvt, lapack_int m, lapack_int n, double* a, lapack_int lda, double* s, double* u, lapack_int ldu, double* vt, lapack_int ldvt, double* superb)

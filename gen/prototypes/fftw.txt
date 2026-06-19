@@ -1,0 +1,34 @@
+# FFTW (C dialect: arguments by value). double / single / long-double precision.
+# Plan creators return a plan; execute* does the work; destroy evicts. The plan
+# registry records each plan's transform size, attributed at execute time.
+
+# --- double ---
+fftw_plan fftw_plan_dft_1d(int n, fftw_complex* in, fftw_complex* out, int sign, unsigned flags)
+fftw_plan fftw_plan_dft_2d(int n0, int n1, fftw_complex* in, fftw_complex* out, int sign, unsigned flags)
+fftw_plan fftw_plan_dft_3d(int n0, int n1, int n2, fftw_complex* in, fftw_complex* out, int sign, unsigned flags)
+fftw_plan fftw_plan_dft_r2c_1d(int n, double* in, fftw_complex* out, unsigned flags)
+fftw_plan fftw_plan_dft_r2c_2d(int n0, int n1, double* in, fftw_complex* out, unsigned flags)
+fftw_plan fftw_plan_dft_r2c_3d(int n0, int n1, int n2, double* in, fftw_complex* out, unsigned flags)
+fftw_plan fftw_plan_dft_c2r_1d(int n, fftw_complex* in, double* out, unsigned flags)
+fftw_plan fftw_plan_dft_c2r_2d(int n0, int n1, fftw_complex* in, double* out, unsigned flags)
+fftw_plan fftw_plan_dft_c2r_3d(int n0, int n1, int n2, fftw_complex* in, double* out, unsigned flags)
+void fftw_execute(fftw_plan p)
+void fftw_execute_dft(fftw_plan p, fftw_complex* in, fftw_complex* out)
+void fftw_execute_dft_r2c(fftw_plan p, double* in, fftw_complex* out)
+void fftw_execute_dft_c2r(fftw_plan p, fftw_complex* in, double* out)
+void fftw_destroy_plan(fftw_plan p)
+
+# --- single ---
+fftwf_plan fftwf_plan_dft_1d(int n, fftwf_complex* in, fftwf_complex* out, int sign, unsigned flags)
+fftwf_plan fftwf_plan_dft_2d(int n0, int n1, fftwf_complex* in, fftwf_complex* out, int sign, unsigned flags)
+fftwf_plan fftwf_plan_dft_3d(int n0, int n1, int n2, fftwf_complex* in, fftwf_complex* out, int sign, unsigned flags)
+fftwf_plan fftwf_plan_dft_r2c_1d(int n, float* in, fftwf_complex* out, unsigned flags)
+fftwf_plan fftwf_plan_dft_c2r_1d(int n, fftwf_complex* in, float* out, unsigned flags)
+void fftwf_execute(fftwf_plan p)
+void fftwf_execute_dft(fftwf_plan p, fftwf_complex* in, fftwf_complex* out)
+void fftwf_destroy_plan(fftwf_plan p)
+
+# --- long double ---
+fftwl_plan fftwl_plan_dft_1d(int n, fftwl_complex* in, fftwl_complex* out, int sign, unsigned flags)
+void fftwl_execute(fftwl_plan p)
+void fftwl_destroy_plan(fftwl_plan p)

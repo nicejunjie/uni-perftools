@@ -1,112 +1,119 @@
 # Scientific Libraries Profiler
 
-Profiling is ready for BLAS PBLAS, LAPACK, and ScaLAPACK. 
+A low-overhead, no-recompile profiler for HPC applications — CrayPAT-like in
+spirit, with two complementary views from a single run:
 
+- **Sampling** (works for *any* binary): a statistical timer profile of the whole
+  application → **top time-consuming functions and source lines**, like `gprof`
+  but with no `-pg` rebuild and full support for threads and MPI ranks.
+- **Tracing** (scientific libraries): exact call interception of **BLAS, LAPACK,
+  PBLAS, ScaLAPACK, CBLAS, LAPACKe, FFTW, MPI** → per-function counts,
+  inclusive/exclusive time, MPI communication volume (GB/s), and per-rank
+  **load imbalance**.
 
-To do: CBLAS, LAPACKe, FFTW, MPI.
-
-## Compile
-simply `make`, the following will be created: <br /> 
-`libprof-dbi.so`: profiling with Dynamic Binary Instrumentation, works for both dynamically linked and statically linked libs. <br /> 
-`libprof-dl.so` : profiling based on runtime symbol resolution, only works for dynamically linked libs but is friendly when working with other tools, such as scilib-accel. 
-
-
-## Usage
-`LD_PRELOAD=$PATH_TO_SCILIB_PROF/libprof-dbi.so` <br /> 
-or  <br /> 
-`LD_PRELOAD=$PATH_TO_SCILIB_PROF/libprof-dl.so`
-
-## Sample output
+## Quick start (no barrier)
 
 ```
--------------------------------------------------------------------------------
-                      Scientific Library Profiler    
--------------------------------------------------------------------------------
- for application: /scratch/07893/junjieli/parsec/use-nvpl/nvhpc24.3/parsec_dev-omp/src/parsec-nvfortran.mpi.omp
- total runtime (s):    113.246, library time (s):     79.993, lib percentage: 70.6%.
-
-                            Inclusive Times                                   
--------------------------------------------------------------------------------
-           group     function           count [imb%]           time(s) [imb%]  
--------------------------------------------------------------------------------
-  1        PBLAS      pdgemm_            1505 [  0.0%]         60.937 [  0.5%] 
-  2         BLAS       dgemm_           32048 [ 46.3%]         59.367 [ 10.0%] 
-  3    ScaLAPACK     pdsyevd_              10 [  0.0%]         11.402 [  0.0%] 
-  4        PBLAS      pdtrsm_             750 [  0.0%]          8.395 [ 33.7%] 
-  5    ScaLAPACK     pdsytrd_               5 [  0.0%]          7.782 [  0.0%] 
-  6    ScaLAPACK     pdlatrd_             745 [  0.0%]          7.014 [  2.8%] 
-  7        PBLAS      pdsymv_           23840 [  0.0%]          5.502 [ 20.2%] 
-  8    ScaLAPACK     pdstedc_               5 [  0.0%]          2.811 [  0.6%] 
-  9    ScaLAPACK     pdlaed0_               5 [  0.0%]          2.791 [  0.6%] 
- 10    ScaLAPACK     pdlaed1_             745 [  0.0%]          2.786 [  0.6%] 
- 11    ScaLAPACK     pdlaed3_             745 [  0.0%]          1.150 [  3.7%] 
- 12        PBLAS      pdgemv_          143040 [  0.0%]          1.120 [ 82.9%] 
- 13    ScaLAPACK     pdormtr_               5 [  0.0%]          0.783 [  2.1%] 
- 14    ScaLAPACK     pdormqr_               5 [  0.0%]          0.774 [  0.0%] 
- 15        PBLAS     pdsyr2k_             745 [  0.0%]          0.766 [ 25.6%] 
- 16       LAPACK      dlaed4_           85058 [  1.4%]          0.739 [  4.0%] 
- 17    ScaLAPACK     pdlarfb_             745 [  0.0%]          0.691 [  6.9%] 
- 18         BLAS       dgemv_          860236 [ 54.7%]          0.647 [ 88.9%] 
- 19    ScaLAPACK     pdpotrf_               5 [  0.0%]          0.400 [  2.3%] 
- 20        PBLAS      pdsyrk_             745 [  0.0%]          0.372 [  3.0%] 
- 21         BLAS       dcopy_         1549273 [>=999%]          0.324 [533.9%] 
- 22         BLAS       dnrm2_           82759 [  0.0%]          0.231 [  5.0%] 
- 23    ScaLAPACK     pdlarfg_           23840 [  0.0%]          0.214 [ 59.4%] 
- 24        PBLAS       pddot_           47840 [  0.0%]          0.202 [ 38.5%] 
- 25         BLAS       dtrsm_             397 [  1.3%]          0.179 [ 40.7%] 
- 26        PBLAS      pdnrm2_           11920 [  1.3%]          0.159 [ 66.1%] 
- 27         BLAS        ddot_           73229 [  5.0%]          0.149 [ 23.6%] 
- 28    ScaLAPACK     pdlaed2_             745 [  0.0%]          0.113 [ 47.3%] 
- 29    ScaLAPACK     pdlamch_             755 [  0.0%]          0.077 [ 67.2%] 
- 30    ScaLAPACK     pdlaedz_             745 [  0.0%]          0.043 [115.2%] 
-...
-...
--------------------------------------------------------------------------------
-  * inclusive time: time including all children functions
-  * average count and timing reported.
-  * imblance metric: imb% = (max-min)/avg*100%. 
-
-
-                            Exclusive Times                                   
--------------------------------------------------------------------------------
-           group     function           count [imb%]           time(s) [imb%]  
--------------------------------------------------------------------------------
-  1         BLAS       dgemm_           32048 [ 46.3%]         59.367 [ 10.0%] 
-  2        PBLAS      pdgemm_            1505 [  0.0%]          8.045 [ 28.7%] 
-  3        PBLAS      pdsymv_           23840 [  0.0%]          4.822 [ 31.3%] 
-  4        PBLAS      pdtrsm_             750 [  0.0%]          2.066 [133.8%] 
-  5        PBLAS      pdgemv_          143040 [  0.0%]          1.095 [ 85.2%] 
-  6       LAPACK      dlaed4_           85058 [  1.4%]          0.735 [  4.0%] 
-  7         BLAS       dgemv_          860236 [ 54.7%]          0.647 [ 88.9%] 
-  8        PBLAS     pdsyr2k_             745 [  0.0%]          0.575 [ 12.2%] 
-  9    ScaLAPACK     pdlarfb_             745 [  0.0%]          0.427 [ 22.8%] 
- 10         BLAS       dcopy_         1549273 [>=999%]          0.324 [533.9%] 
- 11        PBLAS      pdsyrk_             745 [  0.0%]          0.314 [  8.4%] 
- 12         BLAS       dnrm2_           82759 [  0.0%]          0.231 [  5.0%] 
- 13        PBLAS       pddot_           47840 [  0.0%]          0.199 [ 39.4%] 
- 14    ScaLAPACK     pdlaed3_             745 [  0.0%]          0.180 [ 10.4%] 
- 15         BLAS       dtrsm_             397 [  1.3%]          0.179 [ 40.7%] 
- 16        PBLAS      pdnrm2_           11920 [  1.3%]          0.159 [ 66.1%] 
- 17         BLAS        ddot_           73229 [  5.0%]          0.149 [ 23.6%] 
- 18    ScaLAPACK     pdlamch_             755 [  0.0%]          0.077 [ 67.2%] 
- 19    ScaLAPACK     pdlarfg_           23840 [  0.0%]          0.047 [113.6%] 
- 20    ScaLAPACK     pdlaedz_             745 [  0.0%]          0.043 [115.3%] 
- 21    ScaLAPACK     pdlarft_             745 [  0.0%]          0.035 [136.9%] 
- 22    ScaLAPACK     pdlatrd_             745 [  0.0%]          0.024 [ 31.6%] 
- 23         BLAS        dger_             160 [  0.0%]          0.023 [ 24.9%] 
- 24    ScaLAPACK     pdpotf2_             750 [  0.0%]          0.017 [ 48.9%] 
- 25         BLAS      dsyr2k_             775 [247.7%]          0.016 [249.6%] 
- 26         BLAS       dsymv_           25337 [248.6%]          0.015 [247.1%] 
- 27    ScaLAPACK     pdlaed2_             745 [  0.0%]          0.013 [  6.7%] 
- 28       LAPACK      dlapy2_          177469 [  1.0%]          0.012 [ 31.8%] 
- 29    ScaLAPACK      pdlarf_             160 [  0.0%]          0.012 [ 55.6%] 
- 30    ScaLAPACK     pdormtr_               5 [  0.0%]          0.009 [175.8%] 
-...
-...
--------------------------------------------------------------------------------
-                                     total library time (s):   79.993
--------------------------------------------------------------------------------
-  * exclusive time: time excluding all children functions
-  * average count and timing reported.
-  * imblance metric: imb% = (max-min)/avg*100%. 
+make
+bin/scilib-prof ./your_app                 # run + report, one step
+bin/scilib-prof mpirun -n 4 ./your_app     # parallel; env propagated for you
+bin/scilib-prof --dbi ./static_app         # Frida backend (also static libs)
+make install PREFIX=~/.local               # then just: scilib-prof ./your_app
 ```
+
+`scilib-prof` sets `LD_PRELOAD` + config for the child, runs it, and aggregates
+the per-rank raw files into a report automatically. Example:
+
+```
+  Top functions  (sampling @ 1000 Hz, whole application)
+   function / file:line                       samples  time(s)      %     imb
+   dgemm_                                          365    0.365  97.9%   0.0%
+   my_kernel                  solver.c:142          22    0.022   5.9%  41.0%
+   ...
+  Compute (BLAS / LAPACK / ...)        count[imb]  incl(s)  excl(s)
+   BLAS  dgemm_                          4010 0.0%   0.357    0.357
+  MPI (communication)            count[imb]  r/R   incl(s)      bytes    GB/s
+   MPI_Allreduce                    102  9.8%  4/4   0.000     819840    8.5
+```
+
+## Manual use (no driver)
+
+```
+LD_PRELOAD=./libscilibprof-preload.so ./app      # writes scilib-prof.<rank>.json
+tools/scilib-report.py scilib-prof.*.json        # symbolize + aggregate
+```
+
+The library only ever *writes raw per-process data*; all analysis (symbolization
+via `addr2line`, cross-rank reduction, imbalance, formatting) happens in the
+postprocess tool. You can re-analyze a finished run any number of ways without
+re-running it.
+
+## Configuration
+
+Library (measurement) — environment variables:
+
+| Variable            | Default | Meaning                                          |
+|---------------------|---------|--------------------------------------------------|
+| `SCILIB_SAMPLE`     | `1`     | statistical sampling on/off                      |
+| `SCILIB_SAMPLE_HZ`  | `1000`  | sampling rate (Hz)                               |
+| `SCILIB_SAMPLE_CPU` | `0`     | sample CPU time (`1`) vs wall time (`0`)         |
+| `SCILIB_SHAPE`      | `0`     | per-shape tracing rows (`dgemm_[m=…,n=…,k=…]`)   |
+| `SCILIB_OUTPUT`     | `scilib-prof` | raw-file path prefix (`<prefix>.<rank>.json`)|
+| `SCILIB_QUIET`      | `0`     | suppress the "wrote …" note                      |
+
+Wall-clock sampling (default) shows where real time goes, *including* MPI waits
+and load imbalance; `SCILIB_SAMPLE_CPU=1` focuses on compute hotspots.
+
+Postprocess (analysis): `scilib-report.py [--imbalance active|world]
+[--format table|json|csv] [--sort t_excl|t_incl|count] [--top N] FILES...`.
+
+## Build
+
+```
+make                 # libscilibprof-preload.so + libscilibprof-frida.so
+make ILP64=1         # profile 64-bit-integer BLAS/LAPACK (MKL/NVPL ILP64)
+make install PREFIX=...
+tests/run.sh [preload|frida]
+```
+
+Plain C — no `mpicc`, no MPI/FFTW headers needed. Compiler + OpenMP flag are
+auto-detected (`gcc`/`clang` → `-fopenmp`, nvhpc → `-mp`); the Frida backend
+downloads the Frida-gum devkit on first build.
+
+## How it works
+
+```
+src/core/       runtime: timer, per-thread store, call stack (incl/excl), raw emit
+src/sample/     sampling: per-thread timer -> signal -> leaf-PC histogram
+src/backends/   preload.c (dlsym RTLD_NEXT), frida.c (gum replace)
+src/analyzers/  blas.c (+cblas shapes), fftw.c (plan registry), mpi.c (bytes)
+gen/gen.py      reads gen/prototypes/*.txt, emits one thin wrapper per symbol
+tools/scilib-report.py   symbolize + reduce across ranks -> tables
+bin/scilib-prof          one-command driver (run + auto-report)
+```
+
+A single **universal** pipeline serves every library group; there is no
+per-group code in the runtime/backends. Group-specific logic lives only in
+opt-in analyzers and the declarative prototype lists (dialects `fortran` /
+`c` / `opaque`). Sampling adds a second raw stream that the same per-rank
+file/postprocess machinery carries.
+
+**MPI portability:** the MPI wrappers are `mpi.h`-free (opaque dialect: uniform
+`void*` args, `PMPI_Type_size` via `dlsym`). They reference no MPI constants or
+handle types, so one binary works under OpenMPI *or* MPICH — avoiding the
+constant/handle ABI mismatch that breaks tools like mpiP across implementations.
+
+**Adding coverage** = editing `gen/prototypes/*.txt` (and optionally binding an
+analyzer). No core changes.
+
+## Notes & caveats
+
+- Sampling symbolizes with `addr2line`; functions in libraries without debug info
+  show as `func  libfoo.so` (no line). Build your app with `-g` for source lines.
+- Flop-rate (GFLOP/s) is intentionally omitted: an exact static flop count exists
+  only for a few routines. GB/s (MPI volume) is exact and reported.
+- Only library calls crossing the public symbol boundary are traced; a single
+  internally-threaded kernel is timed once.
+- MPICH and aarch64 are designed-for (opaque MPI dialect, ucontext PC on both
+  arches) but were validated here only on x86-64 + OpenMPI.
+- Launcher executables (`mpirun`, `srun`, `numactl`, …) are skipped automatically.

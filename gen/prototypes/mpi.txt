@@ -1,0 +1,42 @@
+# MPI (opaque dialect: mpi.h-free, args forwarded as uniform pointer-sized slots).
+# Only the ARGUMENT COUNT matters here; types are for readability. The byte-volume
+# analyzer (src/analyzers/mpi.c) knows the (count,datatype) slot indices per call.
+# MPI_Finalize is intentionally absent (the lib writes its raw file from a
+# destructor; no MPI is called or intercepted for finalization).
+
+# point-to-point
+int MPI_Send(void* buf, int count, MPI_Datatype dt, int dest, int tag, MPI_Comm comm)
+int MPI_Recv(void* buf, int count, MPI_Datatype dt, int src, int tag, MPI_Comm comm, MPI_Status* st)
+int MPI_Isend(void* buf, int count, MPI_Datatype dt, int dest, int tag, MPI_Comm comm, MPI_Request* rq)
+int MPI_Irecv(void* buf, int count, MPI_Datatype dt, int src, int tag, MPI_Comm comm, MPI_Request* rq)
+int MPI_Sendrecv(void* sb, int sc, MPI_Datatype st, int dest, int stag, void* rb, int rc, MPI_Datatype rt, int src, int rtag, MPI_Comm comm, MPI_Status* status)
+
+# collectives (scalar count)
+int MPI_Bcast(void* buf, int count, MPI_Datatype dt, int root, MPI_Comm comm)
+int MPI_Ibcast(void* buf, int count, MPI_Datatype dt, int root, MPI_Comm comm, MPI_Request* rq)
+int MPI_Allreduce(void* sb, void* rb, int count, MPI_Datatype dt, MPI_Op op, MPI_Comm comm)
+int MPI_Iallreduce(void* sb, void* rb, int count, MPI_Datatype dt, MPI_Op op, MPI_Comm comm, MPI_Request* rq)
+int MPI_Reduce(void* sb, void* rb, int count, MPI_Datatype dt, MPI_Op op, int root, MPI_Comm comm)
+int MPI_Ireduce(void* sb, void* rb, int count, MPI_Datatype dt, MPI_Op op, int root, MPI_Comm comm, MPI_Request* rq)
+int MPI_Reduce_scatter_block(void* sb, void* rb, int rcount, MPI_Datatype dt, MPI_Op op, MPI_Comm comm)
+int MPI_Allgather(void* sb, int sc, MPI_Datatype st, void* rb, int rc, MPI_Datatype rt, MPI_Comm comm)
+int MPI_Iallgather(void* sb, int sc, MPI_Datatype st, void* rb, int rc, MPI_Datatype rt, MPI_Comm comm, MPI_Request* rq)
+int MPI_Alltoall(void* sb, int sc, MPI_Datatype st, void* rb, int rc, MPI_Datatype rt, MPI_Comm comm)
+int MPI_Ialltoall(void* sb, int sc, MPI_Datatype st, void* rb, int rc, MPI_Datatype rt, MPI_Comm comm, MPI_Request* rq)
+int MPI_Gather(void* sb, int sc, MPI_Datatype st, void* rb, int rc, MPI_Datatype rt, int root, MPI_Comm comm)
+int MPI_Igather(void* sb, int sc, MPI_Datatype st, void* rb, int rc, MPI_Datatype rt, int root, MPI_Comm comm, MPI_Request* rq)
+int MPI_Scatter(void* sb, int sc, MPI_Datatype st, void* rb, int rc, MPI_Datatype rt, int root, MPI_Comm comm)
+
+# vector collectives (per-rank scalar count usable for send/recv volume)
+int MPI_Gatherv(void* sb, int sc, MPI_Datatype st, void* rb, void* rcounts, void* displs, MPI_Datatype rt, int root, MPI_Comm comm)
+int MPI_Allgatherv(void* sb, int sc, MPI_Datatype st, void* rb, void* rcounts, void* displs, MPI_Datatype rt, MPI_Comm comm)
+int MPI_Scatterv(void* sb, void* scounts, void* displs, MPI_Datatype st, void* rb, int rc, MPI_Datatype rt, int root, MPI_Comm comm)
+int MPI_Alltoallv(void* sb, void* scounts, void* sdispls, MPI_Datatype st, void* rb, void* rcounts, void* rdispls, MPI_Datatype rt, MPI_Comm comm)
+int MPI_Reduce_scatter(void* sb, void* rb, void* rcounts, MPI_Datatype dt, MPI_Op op, MPI_Comm comm)
+
+# synchronization / completion (count + time only)
+int MPI_Barrier(MPI_Comm comm)
+int MPI_Wait(MPI_Request* rq, MPI_Status* st)
+int MPI_Waitall(int count, MPI_Request* rqs, MPI_Status* sts)
+int MPI_Test(MPI_Request* rq, int* flag, MPI_Status* st)
+int MPI_Testall(int count, MPI_Request* rqs, int* flag, MPI_Status* sts)

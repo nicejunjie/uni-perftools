@@ -1,0 +1,90 @@
+#!/usr/bin/env python3
+"""scilib-prof - one-command driver (CrayPAT pat_run style).
+
+    scilib-prof ./app                 # run + auto-report
+    scilib-prof mpirun -n 4 ./app     # parallel; LD_PRELOAD propagated
+    scilib-prof --dbi ./static_app    # use the Frida (static-lib) backend
+    scilib-prof --no-sample ./app     # tracing only (no PC sampling)
+
+Sets LD_PRELOAD + SCILIB_* for the child, runs it, then symbolizes/aggregates the
+per-rank raw files into one report. No recompilation, no manual postprocess step.
+"""
+import sys, os, glob, shutil, tempfile, argparse, subprocess
+
+HERE = os.path.dirname(os.path.abspath(__file__))
+ROOT = os.path.dirname(HERE)
+
+
+def find(cands):
+    for c in cands:
+        if c and os.path.exists(c):
+            return c
+    return None
+
+
+def main():
+    ap = argparse.ArgumentParser(usage="scilib-prof [opts] <command...>", add_help=True)
+    ap.add_argument("--dbi", action="store_true", help="use the Frida backend (static libs)")
+    ap.add_argument("--no-sample", action="store_true", help="disable PC sampling")
+    ap.add_argument("--shape", action="store_true", help="per-shape rows (size-resolved)")
+    ap.add_argument("-o", "--outdir", help="keep raw per-rank files in this directory")
+    ap.add_argument("--imbalance", choices=["active", "world"], default="active")
+    ap.add_argument("--top", type=int, default=0)
+    ap.add_argument("cmd", nargs=argparse.REMAINDER, help="the command to profile")
+    args = ap.parse_args()
+    if not args.cmd:
+        ap.error("no command given")
+
+    lib_name = "libscilibprof-frida.so" if args.dbi else "libscilibprof-preload.so"
+    lib = find([os.path.join(ROOT, "lib", lib_name), os.path.join(ROOT, lib_name),
+                os.path.join(HERE, lib_name)])
+    report = find([os.path.join(HERE, "scilib-report"), os.path.join(HERE, "scilib-report.py"),
+                   os.path.join(ROOT, "tools", "scilib-report.py")])
+    if not lib:
+        sys.exit("scilib-prof: cannot find %s (run make)" % lib_name)
+    if not report:
+        sys.exit("scilib-prof: cannot find scilib-report")
+
+    tmp = None
+    outdir = args.outdir
+    if not outdir:
+        tmp = tempfile.mkdtemp(prefix="scilib-prof-")
+        outdir = tmp
+    else:
+        os.makedirs(outdir, exist_ok=True)
+    prefix = os.path.join(outdir, "prof")
+
+    env = os.environ.copy()
+    env["LD_PRELOAD"] = (lib + " " + env.get("LD_PRELOAD", "")).strip()
+    env["SCILIB_OUTPUT"] = prefix
+    env["SCILIB_QUIET"] = "1"
+    env["SCILIB_SAMPLE"] = "0" if args.no_sample else "1"
+    if args.shape:
+        env["SCILIB_SHAPE"] = "1"
+
+    # Make sure the launcher forwards our env to the ranks (OpenMPI needs -x).
+    cmd = list(args.cmd)
+    launcher = os.path.basename(cmd[0])
+    if launcher in ("mpirun", "mpiexec", "orterun"):
+        inj = []
+        for v in ("LD_PRELOAD", "SCILIB_OUTPUT", "SCILIB_QUIET", "SCILIB_SAMPLE", "SCILIB_SHAPE"):
+            if v in env:
+                inj += ["-x", v]
+        cmd = [cmd[0]] + inj + cmd[1:]
+
+    sys.stderr.write("[scilib-prof] profiling: %s\n" % " ".join(args.cmd))
+    rc = subprocess.run(cmd, env=env).returncode
+
+    files = sorted(glob.glob(prefix + ".*.json"))
+    if not files:
+        sys.stderr.write("[scilib-prof] no profile data was produced.\n")
+    else:
+        subprocess.run([sys.executable, report, "--imbalance", args.imbalance,
+                        "--top", str(args.top)] + files)
+    if tmp:
+        shutil.rmtree(tmp, ignore_errors=True)
+    sys.exit(rc)
+
+
+if __name__ == "__main__":
+    main()
