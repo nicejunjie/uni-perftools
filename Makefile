@@ -23,10 +23,24 @@ snapshot:
 test: all
 	@echo "== profile tests =="; bash $(PROFILE)/tests/run.sh preload
 	@echo "== snapshot tests =="; cd $(SNAPSHOT) && cargo test
+	@echo "== suite tests =="; bash tests/run.sh
 
 clean:
 	$(MAKE) -C $(PROFILE) clean
 	cd $(SNAPSHOT) && cargo clean
 
-install: all
-	@echo "install target is fleshed out in the packaging phase (PREFIX=$(PREFIX))"
+# Stage the suite under $(PREFIX)/lib/perfsuite (the driver discovers its
+# collectors via this tree) + a bin/perfsuite wrapper.
+DEST := $(DESTDIR)$(PREFIX)/lib/perfsuite
+install: profile
+	cd $(SNAPSHOT) && cargo build --release
+	mkdir -p $(DEST)/collectors/profile/tools \
+	         $(DEST)/collectors/snapshot/target/release \
+	         $(DESTDIR)$(PREFIX)/bin
+	install -m644 $(PROFILE)/libscilibprof-preload.so $(PROFILE)/libscilibprof-frida.so $(DEST)/collectors/profile/
+	install -m755 $(PROFILE)/tools/scilib-report.py $(DEST)/collectors/profile/tools/
+	install -m755 $(SNAPSHOT)/target/release/uaps $(DEST)/collectors/snapshot/target/release/
+	cp -r core $(DEST)/
+	printf '#!/bin/sh\nexec "%s/lib/perfsuite/core/cli/perfsuite" "$$@"\n' "$(PREFIX)" > $(DESTDIR)$(PREFIX)/bin/perfsuite
+	chmod +x $(DESTDIR)$(PREFIX)/bin/perfsuite
+	@echo "installed → run: perfsuite run -- ./your_app"
