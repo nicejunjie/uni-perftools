@@ -13,8 +13,20 @@ _HERE = os.path.dirname(os.path.abspath(__file__))
 _ROOT = os.path.dirname(os.path.dirname(_HERE))           # repo root
 sys.path.insert(0, os.path.join(_ROOT, "core", "contract"))
 import contract  # noqa: E402
+import insights  # noqa: E402
 
 PROFILE_REPORT = os.path.join(_ROOT, "collectors", "profile", "tools", "scilib-report.py")
+
+
+def _profile_json(profs):
+    if not profs:
+        return None
+    r = subprocess.run([sys.executable, PROFILE_REPORT, "--format", "json"] + profs,
+                       capture_output=True, text=True)
+    try:
+        return json.loads(r.stdout)
+    except Exception:
+        return None
 
 # roofline + characterization keys worth surfacing, in order
 SNAP_KEYS = ["elapsed_time", "cpu_core_pct", "ipc", "cpi",
@@ -33,8 +45,8 @@ def _load(path):
 def _render_snapshot(snap, out):
     out.append("\n── SNAPSHOT  (bird's-eye: hardware counters / roofline) " + "─" * 22)
     m = {x["key"]: x for x in snap.get("metrics", [])}
-    for ins in snap.get("insights", []):
-        out.append("  ▶ %s — %s" % (ins.get("headline", ""), ins.get("detail", "")))
+    # NOTE: snapshot's own insights[] are intentionally not shown here — the
+    # unified suite insights engine (below) replaces them.
     # roofline line if the collector provided the pieces
     if "arith_intensity" in m and "dp_gflops" in m:
         out.append("  roofline: AI %s, achieved %s (peak %s, BW %s)" % (
@@ -50,18 +62,13 @@ def render(result_dir, fmt="text"):
     manifest = _load(os.path.join(result_dir, contract.MANIFEST)) or {}
     snap = _load(os.path.join(result_dir, contract.SNAP))
     profs = contract.prof_glob(result_dir)
+    profile = _profile_json(profs)
+    suite = insights.suite_insights(snap, profile)
 
     if fmt == "json":
-        doc = {"schema_version": contract.SCHEMA_VERSION, "manifest": manifest,
-               "snapshot": snap}
-        if profs:
-            r = subprocess.run([sys.executable, PROFILE_REPORT, "--format", "json"] + profs,
-                               capture_output=True, text=True)
-            try:
-                doc["profile"] = json.loads(r.stdout)
-            except Exception:
-                doc["profile"] = None
-        json.dump(doc, sys.stdout, indent=2)
+        json.dump({"schema_version": contract.SCHEMA_VERSION, "manifest": manifest,
+                   "snapshot": snap, "profile": profile, "insights": suite},
+                  sys.stdout, indent=2)
         print()
         return
 
@@ -72,14 +79,16 @@ def render(result_dir, fmt="text"):
         out.append(" command: %s" % " ".join(manifest["command"]))
     if snap:
         _render_snapshot(snap, out)
-        out.append("    → drill into the hotspots below ↓")
     else:
         out.append("\n(no snapshot — hardware counters unavailable or not collected)")
+    out.append("\n── INSIGHTS  (combined snapshot + profile) " + "─" * 35)
+    for s in suite:
+        out.append("  ▶ " + s)
     print("\n".join(out))
 
     if profs:
         print("\n── PROFILE  (drill-down: sampling + sci-lib + MPI tracing) " + "─" * 19)
         sys.stdout.flush()   # ensure our header precedes the subprocess output
-        subprocess.run([sys.executable, PROFILE_REPORT] + profs)
+        subprocess.run([sys.executable, PROFILE_REPORT, "--no-observations"] + profs)
     else:
         print("\n(no profile data)")

@@ -537,6 +537,8 @@ def main():
     ap.add_argument("--top", type=int, default=0)
     ap.add_argument("--folded", action="store_true",
                     help="print folded call stacks (for flamegraph.pl) and exit")
+    ap.add_argument("--no-observations", action="store_true",
+                    help="suppress the Observations section (suite supplies unified insights)")
     args = ap.parse_args()
 
     ranks = load(args.files)
@@ -552,8 +554,18 @@ def main():
     app = ranks[0].get("application", "")
 
     if args.format == "json":
+        # sampling dominant-group totals (accurate time-by-group: charges e.g.
+        # read()-under-MPI to MPI via the stack, unlike tracing t_excl).
+        groups = {}
+        s = symbolize_samples(ranks)
+        if s.stacks and s.total:
+            for c in s.dom:
+                if c:
+                    for g, n in c.items():
+                        groups[g] = groups.get(g, 0) + n
         json.dump({"version": 1, "application": app, "runtime_s": runtime,
-                   "nranks": len(ranks), "functions": rows}, sys.stdout, indent=2)
+                   "nranks": len(ranks), "functions": rows,
+                   "groups": groups, "group_total": s.total}, sys.stdout, indent=2)
         print()
         return
     if args.format == "csv":
@@ -601,7 +613,8 @@ def main():
         print(iot)
     print(fmt_heap(ranks))
     print(fmt_perpe(ranks))
-    print(observations(rows, ranks, hz, total, per_rank))
+    if not args.no_observations:
+        print(observations(rows, ranks, hz, total, per_rank))
     print()
 
 
