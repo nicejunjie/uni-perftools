@@ -1,0 +1,127 @@
+#!/usr/bin/env python3
+"""perfsuite — the suite driver (collect / report / run).
+
+Composes the two collectors over one result directory:
+  * snapshot (Rust)  = outer parent, perf-counts the target tree → snap.json
+  * profile  (C .so) = injected into the target only → prof.<rank>.json
+Then the analysis core renders one combined report.
+
+  perfsuite run    -- ./app                 # collect + report (one-liner)
+  perfsuite run    -- mpirun -n 4 ./app
+  perfsuite collect -o RESULT -- ./app      # just collect into RESULT
+  perfsuite report  [RESULT]                # render (default: most recent)
+"""
+import os
+import sys
+import json
+import argparse
+import subprocess
+
+HERE = os.path.dirname(os.path.abspath(__file__))
+ROOT = os.path.dirname(os.path.dirname(HERE))             # repo root
+sys.path.insert(0, os.path.join(ROOT, "core", "contract"))
+sys.path.insert(0, os.path.join(ROOT, "core", "analysis"))
+import contract       # noqa: E402
+import report         # noqa: E402
+
+
+def find(env, cands):
+    if os.environ.get(env):
+        return os.environ[env]
+    for c in cands:
+        if c and os.path.exists(c):
+            return c
+    return None
+
+
+def tools(dbi):
+    lib = find("PROFILE_LIB", [os.path.join(
+        ROOT, "collectors", "profile",
+        "libscilibprof-%s.so" % ("frida" if dbi else "preload"))])
+    snap = find("SNAPSHOT_BIN", [os.path.join(
+        ROOT, "collectors", "snapshot", "target", b, "uaps") for b in ("release", "debug")])
+    return lib, snap
+
+
+def scoped(cmd, env_vars):
+    """Scope env to the TARGET only (keep it out of the snapshot collector)."""
+    launcher = os.path.basename(cmd[0]) if cmd else ""
+    kv = ["%s=%s" % (k, v) for k, v in env_vars.items()]
+    if launcher in ("mpirun", "mpiexec", "orterun"):
+        inj = []
+        for x in kv:
+            inj += ["-x", x]
+        return [cmd[0]] + inj + cmd[1:]
+    return ["env"] + kv + cmd
+
+
+def do_collect(args):
+    lib, snap = tools(args.dbi)
+    if not lib:
+        sys.exit("perfsuite: profile .so not found (build collectors/profile or set PROFILE_LIB)")
+    result = args.outdir or os.path.join(os.getcwd(), "perf.%d" % os.getpid())
+    os.makedirs(result, exist_ok=True)
+
+    env_vars = {"LD_PRELOAD": lib, "SCILIB_OUTPUT": os.path.join(result, "prof"),
+                "SCILIB_QUIET": "1"}
+    if args.no_sample:
+        env_vars["SCILIB_SAMPLE"] = "0"
+    if args.shape:
+        env_vars["SCILIB_SHAPE"] = "1"
+    if args.heap:
+        env_vars["SCILIB_HEAP"] = "1"
+
+    inner = scoped(args.cmd, env_vars)
+    # snapshot = outer parent; emits run-level snap.json. (No --mpi: MPI is profile's.)
+    if snap:
+        full = [snap, "run", "--format", "json", "-o", os.path.join(result, contract.SNAP), "--"] + inner
+    else:
+        sys.stderr.write("[perfsuite] snapshot collector not found — profile only\n")
+        full = inner
+
+    json.dump({"schema_version": contract.SCHEMA_VERSION, "command": args.cmd,
+               "collectors": (["snapshot"] if snap else []) + ["profile"]},
+              open(os.path.join(result, contract.MANIFEST), "w"), indent=2)
+
+    sys.stderr.write("[perfsuite] collecting: %s\n" % " ".join(args.cmd))
+    rc = subprocess.run(full).returncode
+    return result, rc
+
+
+def main():
+    ap = argparse.ArgumentParser(prog="perfsuite")
+    sub = ap.add_subparsers(dest="verb", required=True)
+    for name in ("collect", "run"):
+        p = sub.add_parser(name)
+        p.add_argument("--dbi", action="store_true", help="profile via Frida backend")
+        p.add_argument("--no-sample", action="store_true")
+        p.add_argument("--shape", action="store_true")
+        p.add_argument("--heap", action="store_true")
+        p.add_argument("-o", "--outdir")
+        p.add_argument("--format", default="text", choices=["text", "json"])
+        p.add_argument("cmd", nargs=argparse.REMAINDER)
+    rp = sub.add_parser("report")
+    rp.add_argument("result", nargs="?")
+    rp.add_argument("--format", default="text", choices=["text", "json"])
+
+    args = ap.parse_args()
+    if args.verb in ("collect", "run"):
+        if args.cmd and args.cmd[0] == "--":
+            args.cmd = args.cmd[1:]
+        if not args.cmd:
+            ap.error("no command (use: perfsuite %s -- <command>)" % args.verb)
+        result, rc = do_collect(args)
+        if args.verb == "run":
+            report.render(result, args.format)
+        else:
+            sys.stderr.write("[perfsuite] result: %s  (perfsuite report %s)\n" % (result, result))
+        sys.exit(rc)
+    else:
+        result = args.result or contract.latest_result()
+        if not result:
+            sys.exit("perfsuite: no result dir given and none found")
+        report.render(result, args.format)
+
+
+if __name__ == "__main__":
+    main()
