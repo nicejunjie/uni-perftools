@@ -31,6 +31,7 @@ GROUPS = [
     # (OpenMPI). This sidesteps the constant/handle portability bugs (the ones
     # that break mpiP on OpenMPI) and removes the mpicc build dependency.
     ("mpi.txt",       "MPI",       "LP_MPI",       "opaque"),
+    ("io.txt",        "IO",        "LP_IO",        "opaque"),
 ]
 
 # extra header a group's wrapper file must include (for its argument types)
@@ -115,7 +116,12 @@ def emit_wrapper(f, ret, name, args, arg_names, dialect):
     call_args = ", ".join(arg_names)
     fp = "%s (*)()" % ret
     addr = "&" if dialect in ("c", "opaque") else ""  # by-value args passed by address
-    retexpr = "(void*)lp__r" if is_pointer_ret(ret) else "(void*)0"
+    # opaque (MPI/IO) returns an int/ssize_t we want (e.g. bytes actually read);
+    # otherwise only capture pointer returns (e.g. fftw_plan).
+    if dialect == "opaque" and not is_void:
+        retexpr = "(void*)(intptr_t)lp__r"
+    else:
+        retexpr = "(void*)lp__r" if is_pointer_ret(ret) else "(void*)0"
     if arg_names:
         argarr = "        void *lp__args[] = { %s };\n" % ", ".join("(void*)%s%s" % (addr, a) for a in arg_names)
     else:

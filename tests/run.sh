@@ -119,6 +119,56 @@ OUT=$("$DRV" --no-sample "$TMP/t1" 2>&1)
 ok "driver: prints a report"        "echo \"$OUT\" | grep -q 'Scientific Library Profiler'"
 ok "driver: traced dgemm"           "echo \"$OUT\" | grep -q ' dgemm_ '"
 
+# --- I/O tracing ---
+cat > "$TMP/t6.c" <<'EOF'
+#include <unistd.h>
+#include <fcntl.h>
+int main(){ char b[65536]; for(int i=0;i<65536;i++) b[i]=i;
+ int fd=open("/tmp/.scilib_t6",O_WRONLY|O_CREAT|O_TRUNC,0644);
+ for(int i=0;i<100;i++) if(write(fd,b,65536)<0) return 1; close(fd);
+ fd=open("/tmp/.scilib_t6",O_RDONLY); while(read(fd,b,65536)>0){} close(fd);
+ unlink("/tmp/.scilib_t6"); return 0; }
+EOF
+$CC -O2 "$TMP/t6.c" -o "$TMP/t6" 2>/dev/null
+OUT=$(run "$TMP/t6" "SCILIB_SAMPLE=0")
+ok "I/O: table present"              "echo \"$OUT\" | grep -q 'I/O statistics'"
+ok "I/O: write traced with bytes"   "echo \"$OUT\" | grep -E '^   write ' | grep -qE '[0-9]{7}'"
+
+# --- heap high-water (opt-in) ---
+cat > "$TMP/t7.c" <<'EOF'
+#include <stdlib.h>
+#include <string.h>
+int main(){ void* a[32]; for(int i=0;i<32;i++){a[i]=malloc(4<<20); memset(a[i],1,4<<20);}
+ for(int i=0;i<32;i++) free(a[i]); return 0; }
+EOF
+$CC -O0 "$TMP/t7.c" -o "$TMP/t7" 2>/dev/null   # -O0: keep allocations from being elided
+OUT=$(run "$TMP/t7" "SCILIB_SAMPLE=0 SCILIB_HEAP=1")
+ok "heap: high-water reported"      "echo \"$OUT\" | grep -q 'Heap high-water'"
+ok "heap: peak ~128MB"              "echo \"$OUT\" | grep -qE 'peak .*0\.1[0-9]+ GB'"
+OUT=$(run "$TMP/t7" "SCILIB_SAMPLE=0")
+ok "heap: off by default"           "! echo \"$OUT\" | grep -q 'Heap high-water'"
+
+# --- MPI detail (histogram + comm matrix) + observations ---
+cat > "$TMP/t8.c" <<'EOF'
+#include <mpi.h>
+#include <stdlib.h>
+int main(int c,char**v){MPI_Init(&c,&v);int r,n;MPI_Comm_rank(MPI_COMM_WORLD,&r);MPI_Comm_size(MPI_COMM_WORLD,&n);
+ int sz=8192; double*s=calloc(sz,8),*rb=calloc(sz,8); int nx=(r+1)%n,pv=(r+n-1)%n;
+ for(int i=0;i<80;i++) MPI_Sendrecv(s,sz,MPI_DOUBLE,nx,0,rb,sz,MPI_DOUBLE,pv,0,MPI_COMM_WORLD,MPI_STATUS_IGNORE);
+ for(int i=0;i<40;i++) MPI_Allreduce(s,rb,sz,MPI_DOUBLE,MPI_SUM,MPI_COMM_WORLD);
+ MPI_Finalize();return 0;}
+EOF
+$CC -O2 "$TMP/t8.c" -o "$TMP/t8" 2>/dev/null
+rm -f "$TMP"/p.*.json
+OMPI_MCA_rmaps_base_oversubscribe=1 mpirun --oversubscribe -n 4 \
+  -x SCILIB_QUIET=1 -x SCILIB_SAMPLE=0 -x SCILIB_OUTPUT="$TMP/p" -x LD_PRELOAD="$LIB" "$TMP/t8" >/dev/null 2>&1
+OUT=$(python3 "$RPT" "$TMP"/p.*.json 2>&1)
+ok "MPI: size distribution"          "echo \"$OUT\" | grep -q 'message-size distribution'"
+ok "MPI: communication matrix"       "echo \"$OUT\" | grep -q 'Communication matrix'"
+ok "MPI: p2p vs collective"          "echo \"$OUT\" | grep -q 'point-to-point vs collective'"
+ok "report: Observations section"    "echo \"$OUT\" | grep -q 'Observations'"
+ok "report: Per-PE summary"          "echo \"$OUT\" | grep -q 'Per-PE summary'"
+
 rm -rf "$TMP"
 echo "== $PASS passed, $FAIL failed =="
 exit $FAIL

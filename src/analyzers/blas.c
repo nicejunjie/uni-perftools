@@ -78,4 +78,6 @@ void libprof_register_analyzers(void)
     if (libprof_register_mpi_analyzers) libprof_register_mpi_analyzers();
     extern void libprof_register_fftw_analyzers(void) __attribute__((weak));
     if (libprof_register_fftw_analyzers) libprof_register_fftw_analyzers();
+    extern void libprof_register_io_analyzers(void) __attribute__((weak));
+    if (libprof_register_io_analyzers) libprof_register_io_analyzers();
 }

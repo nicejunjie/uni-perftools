@@ -26,7 +26,7 @@ HEADERS  := $(wildcard src/core/*.h src/analyzers/*.h src/sample/*.h) \
             src/wrap/libprof_wrap.h $(GEN)/libprof_slots.h
 # MPI is profiled via the "opaque" dialect (mpi.h-free), so it builds like any
 # other group with the plain compiler - no mpicc, no MPI headers required.
-WRAP_GRP := blas lapack pblas scalapack cblas lapacke fftw mpi
+WRAP_GRP := blas lapack pblas scalapack cblas lapacke fftw mpi io
 
 # --- sources ---------------------------------------------------------------
 CORE_SRC := $(wildcard src/core/*.c)

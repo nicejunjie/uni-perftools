@@ -18,7 +18,7 @@ typedef int lp_fint;
 /* ------------------------------------------------------------------ groups */
 enum libprof_group {
     LP_BLAS = 0, LP_LAPACK, LP_PBLAS, LP_SCALAPACK,
-    LP_CBLAS, LP_LAPACKE, LP_FFTW, LP_MPI, LP_NGROUPS
+    LP_CBLAS, LP_LAPACKE, LP_FFTW, LP_MPI, LP_IO, LP_NGROUPS
 };
 
 /* ------------------------------------------------------------- metric key */
@@ -93,6 +93,10 @@ typedef struct libprof_tls {
 
 extern __thread libprof_tls_t *libprof_tls;
 
+/* Set at finalize so wrappers stop measuring our own shutdown-time activity
+ * (e.g. the I/O we do writing the report file). */
+extern volatile int libprof_shutdown;
+
 /* cold-path helpers (in tls.c / store.c) */
 libprof_tls_t   *libprof_tls_init(void);
 libprof_frame_t *libprof_grow_stack(libprof_tls_t *t);
@@ -110,12 +114,19 @@ uint64_t         libprof_fnv1a(const void *data, size_t len);
 void libprof_init(void);
 void libprof_finalize(void);
 
+/* Extra raw-JSON emitters: a module (MPI comm matrix, heap, ...) registers a
+ * callback that writes  ,\n  "key": <json>  into the per-rank file at finalize. */
+typedef void (*libprof_emitter_fn)(void *file);
+void libprof_register_emitter(libprof_emitter_fn fn);
+void libprof_emit_extras(void *file);
+
 /* backend hook: resolve the original function for a descriptor (dl: dlsym). */
 void *libprof_resolve(libprof_desc_t *d);
 
 /* ------------------------------------------------------------- hot path */
 static inline libprof_frame_t *libprof_enter(void)
 {
+    if (__builtin_expect(libprof_shutdown, 0)) return NULL;
     libprof_tls_t *t = libprof_tls;
     if (__builtin_expect(t == NULL, 0)) t = libprof_tls_init();
     if (__builtin_expect(t->in_runtime, 0)) return NULL;  /* skip measurement */

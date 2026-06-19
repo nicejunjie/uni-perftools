@@ -239,6 +239,86 @@ def fmt_mpi(rows, sortkey, top):
     return "\n".join(out)
 
 
+MPI_BINS = ["<=64B", "<=256B", "<=1KiB", "<=4KiB", "<=16KiB", "<=64KiB",
+            "<=256KiB", "<=1MiB", "<=4MiB", "<=16MiB", "<=64MiB", ">64MiB"]
+COLLECTIVE = ("Bcast", "Allreduce", "Reduce", "Allgather", "Alltoall", "Gather",
+              "Scatter", "Barrier", "Reduce_scatter")
+
+
+def fmt_mpi_detail(ranks, rows):
+    details = [r.get("mpi_detail") for r in ranks if r.get("mpi_detail")]
+    if not details:
+        return ""
+    out = []
+
+    # point-to-point vs collective (from traced byte totals)
+    p2p = sum(r["bytes"] for r in rows if r["group"] == "MPI"
+              and not any(c in r["name"] for c in COLLECTIVE))
+    coll = sum(r["bytes"] for r in rows if r["group"] == "MPI"
+               and any(c in r["name"] for c in COLLECTIVE))
+    if p2p or coll:
+        tot = p2p + coll or 1
+        out += ["", "  MPI point-to-point vs collective (bytes)",
+                "   point-to-point: %10.3f GB  (%4.1f%%)" % (p2p / 1e9, 100 * p2p / tot),
+                "   collective:     %10.3f GB  (%4.1f%%)" % (coll / 1e9, 100 * coll / tot)]
+
+    # message-size histogram (summed over ranks)
+    binsum = [0] * len(MPI_BINS)
+    for d in details:
+        for i, v in enumerate(d.get("bins", [])):
+            binsum[i] += v
+    nmsg = sum(binsum)
+    if nmsg:
+        out += ["", "  MPI message-size distribution", "   %-10s %12s %7s" % ("size", "count", "%")]
+        for lab, c in zip(MPI_BINS, binsum):
+            if c:
+                out.append("   %-10s %12d %6.1f%%" % (lab, c, 100.0 * c / nmsg))
+
+    # communication matrix (sent bytes, MB), rank -> peer
+    nr = len(ranks)
+    rank_of = [r.get("rank", i) for i, r in enumerate(ranks)]
+    sent = {}
+    for r in ranks:
+        d = r.get("mpi_detail")
+        if d:
+            sent[r.get("rank", 0)] = d.get("sent", [])
+    if any(sum(v) for v in sent.values()):
+        out += ["", "  Communication matrix  (sent MB, row=from rank, col=to rank)"]
+        if nr <= 16:
+            hdr = "        " + "".join("%8d" % c for c in sorted(rank_of))
+            out.append(hdr)
+            for rk in sorted(rank_of):
+                v = sent.get(rk, [])
+                cells = "".join("%8.1f" % (v[c] / 1e6 if c < len(v) else 0.0) for c in sorted(rank_of))
+                out.append("   %4d %s" % (rk, cells))
+        else:
+            out.append("   (%d ranks — too large to print; per-rank sent totals:)" % nr)
+            for rk in sorted(rank_of):
+                out.append("   rank %4d sent %10.3f GB" % (rk, sum(sent.get(rk, [])) / 1e9))
+    return "\n".join(out)
+
+
+def fmt_io(rows, sortkey, top):
+    rows = [r for r in rows if r["group"] == "IO"]
+    rows.sort(key=lambda r: r[sortkey], reverse=True)
+    if top:
+        rows = rows[:top]
+    if not rows:
+        return ""
+    total_bytes = sum(r["bytes"] for r in rows)
+    out = ["", "  I/O", "  " + "-" * 70,
+           "   %-14s %11s %5s %10s %12s %8s" % ("call", "count[imb]", "r/R", "incl(s)", "bytes", "GB/s"),
+           "  " + "-" * 70]
+    for r in rows:
+        gbs = r["bytes"] / r["t_incl"] / 1e9 if r["t_incl"] > 0 else 0.0
+        out.append("   %-14s %8.0f %5s %3d/%-3d %10.4f %12d %8.2f" % (
+            r["name"][:14], r["count"], imb_s(r["imb_count"]),
+            r["active"], r["nranks"], r["t_incl"], r["bytes"], gbs))
+    out.append("  " + "-" * 70)
+    out.append("   total I/O volume: %.3f GB  (sum over ranks)" % (total_bytes / 1e9))
+    return "\n".join(out)
+
+
 # CrayPAT imbalance over PEs (ranks): Imb.Samp = max - avg ; Imb% = (max-avg)/max.
 def cp_imb(counts, nranks):
     tot = sum(counts)
@@ -299,6 +379,77 @@ def fmt_groups(per_rank, hz, total, nranks, top):
     return "\n".join(out)
 
 
+def fmt_heap(ranks):
+    hs = [(r.get("rank", i), r["heap"]) for i, r in enumerate(ranks) if r.get("heap")]
+    if not hs:
+        return ""
+    peaks = [h["peak"] for _, h in hs]
+    out = ["", "Heap high-water mark", " " + "-" * 60,
+           "   peak (max over ranks): %.3f GB   mean: %.3f GB" % (
+               max(peaks) / 1e9, sum(peaks) / len(peaks) / 1e9)]
+    worst = max(hs, key=lambda x: x[1]["peak"])
+    out.append("   highest on rank %d: %.3f GB   total allocations: %d" % (
+        worst[0], worst[1]["peak"] / 1e9, sum(h["allocs"] for _, h in hs)))
+    leaked = sum(h["live_at_exit"] for _, h in hs)
+    if leaked > 0:
+        out.append("   live at exit (possible leak): %.3f GB" % (leaked / 1e9))
+    return "\n".join(out)
+
+
+def fmt_perpe(ranks):
+    if len(ranks) < 2:
+        return ""
+    out = ["", "Per-PE summary", " " + "-" * 60,
+           "   %-6s %12s %12s %8s" % ("PE", "runtime(s)", "lib excl(s)", "lib%")]
+    info = []
+    for r in ranks:
+        rt = r.get("runtime_s", 0.0)
+        lib = sum(f["t_excl"] for f in r.get("functions", []))
+        info.append((r.get("rank", 0), rt, lib))
+    for pe, rt, lib in sorted(info):
+        out.append("   %-6d %12.3f %12.3f %7.1f%%" % (pe, rt, lib, 100 * lib / rt if rt else 0))
+    rts = [x[1] for x in info]
+    slow = max(info, key=lambda x: x[1])
+    out.append(" " + "-" * 60)
+    out.append("   slowest PE %d (%.3fs); mean %.3fs; spread %.1f%%" % (
+        slow[0], slow[1], sum(rts) / len(rts),
+        (max(rts) - min(rts)) / max(rts) * 100 if max(rts) else 0))
+    return "\n".join(out)
+
+
+def observations(rows, ranks, hz, total, per_rank):
+    obs = []
+    nr = len(ranks)
+    runtime = max((r.get("runtime_s", 0.0) for r in ranks), default=0.0)
+
+    # load imbalance among traced calls that cost real time
+    for r in sorted(rows, key=lambda r: r["t_excl"], reverse=True)[:8]:
+        if r["t_excl"] > 0.01 and r["imb_excl"] >= 30 and nr > 1:
+            obs.append("Load imbalance: %s is %.0f%% imbalanced across ranks "
+                       "(%.3fs avg excl) — check work distribution." %
+                       (r["name"], r["imb_excl"], r["t_excl"]))
+
+    # MPI communication fraction (from traced MPI inclusive time)
+    mpi_t = sum(r["t_incl"] for r in rows if r["group"] == "MPI")
+    if mpi_t > 0 and runtime > 0 and mpi_t / runtime > 0.15:
+        obs.append("MPI is %.0f%% of runtime — communication-bound; consider "
+                   "larger messages, overlap, or fewer collectives." % (mpi_t / runtime * 100))
+
+    # slow rank (placement / imbalance hint)
+    if nr > 1:
+        rts = [(r.get("rank", 0), r.get("runtime_s", 0.0)) for r in ranks]
+        mean = sum(t for _, t in rts) / nr
+        srank, smax = max(rts, key=lambda x: x[1])
+        if mean > 0 and smax > 1.15 * mean:
+            obs.append("Rank %d runtime is %.0f%% above the mean — investigate "
+                       "rank placement / affinity or input imbalance." %
+                       (srank, (smax / mean - 1) * 100))
+
+    if not obs:
+        obs.append("No significant imbalance or communication bottleneck detected.")
+    return "\nObservations\n " + "-" * 60 + "\n" + "\n".join(" * " + o for o in obs)
+
+
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("files", nargs="+")
@@ -348,6 +499,14 @@ def main():
     if mt:
         print("\nTable 3:  MPI message statistics  (tracing)")
         print(mt)
+        print(fmt_mpi_detail(ranks, rows))
+    iot = fmt_io(rows, args.sort, args.top)
+    if iot:
+        print("\nTable 4:  I/O statistics  (tracing)")
+        print(iot)
+    print(fmt_heap(ranks))
+    print(fmt_perpe(ranks))
+    print(observations(rows, ranks, hz, total, per_rank))
     print()
 
 

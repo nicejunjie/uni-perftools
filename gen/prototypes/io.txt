@@ -1,0 +1,15 @@
+# POSIX I/O (opaque dialect: mpi.h-free, args/return forwarded as pointer-sized
+# slots). Only the argument count matters; return types use plain long/int (same
+# width as ssize_t/size_t on LP64) to avoid any header dependency. Byte volume
+# comes from the return value (read/write) or size*nmemb (fread/fwrite).
+long read(int fd, void* buf, long count)
+long write(int fd, void* buf, long count)
+long pread(int fd, void* buf, long count, long offset)
+long pwrite(int fd, void* buf, long count, long offset)
+long fread(void* ptr, long size, long nmemb, void* stream)
+long fwrite(void* ptr, long size, long nmemb, void* stream)
+int open(char* path, int flags, int mode)
+int openat(int dirfd, char* path, int flags, int mode)
+int close(int fd)
+long lseek(int fd, long offset, int whence)
+int fsync(int fd)

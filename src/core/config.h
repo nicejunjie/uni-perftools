@@ -10,6 +10,7 @@ typedef struct {
     int  sample;            /* SCILIB_SAMPLE      1 (default) => sampling profiler on */
     int  sample_hz;         /* SCILIB_SAMPLE_HZ   sampling rate (default 1000) */
     int  sample_cpu;        /* SCILIB_SAMPLE_CPU  1 => CPU-time clock instead of wall */
+    int  heap;              /* SCILIB_HEAP        1 => track heap high-water mark */
     char prefix[1024];      /* SCILIB_OUTPUT      output path prefix (default scilib-prof) */
 } libprof_config_t;
 

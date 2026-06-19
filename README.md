@@ -6,10 +6,11 @@ spirit, with two complementary views from a single run:
 - **Sampling** (works for *any* binary): a statistical timer profile of the whole
   application → **top time-consuming functions and source lines**, like `gprof`
   but with no `-pg` rebuild and full support for threads and MPI ranks.
-- **Tracing** (scientific libraries): exact call interception of **BLAS, LAPACK,
-  PBLAS, ScaLAPACK, CBLAS, LAPACKe, FFTW, MPI** → per-function counts,
-  inclusive/exclusive time, MPI communication volume (GB/s), and per-rank
-  **load imbalance**.
+- **Tracing** (scientific libraries + MPI + I/O): exact call interception of
+  **BLAS, LAPACK, PBLAS, ScaLAPACK, CBLAS, LAPACKe, FFTW, MPI, POSIX I/O** →
+  per-function counts, inclusive/exclusive time, communication/I/O volume (GB/s),
+  **MPI message-size histogram + communication matrix**, optional **heap
+  high-water**, per-rank **load imbalance**, and auto **observations**.
 
 ## Quick start (no barrier)
 
@@ -67,6 +68,7 @@ Library (measurement) — environment variables:
 | `SCILIB_SAMPLE`     | `1`     | statistical sampling on/off                      |
 | `SCILIB_SAMPLE_HZ`  | `1000`  | sampling rate (Hz)                               |
 | `SCILIB_SAMPLE_CPU` | `0`     | sample CPU time (`1`) vs wall time (`0`)         |
+| `SCILIB_HEAP`       | `0`     | track heap high-water mark (interposes malloc)   |
 | `SCILIB_SHAPE`      | `0`     | per-shape tracing rows (`dgemm_[m=…,n=…,k=…]`)   |
 | `SCILIB_OUTPUT`     | `scilib-prof` | raw-file path prefix (`<prefix>.<rank>.json`)|
 | `SCILIB_QUIET`      | `0`     | suppress the "wrote …" note                      |
@@ -96,7 +98,8 @@ downloads the Frida-gum devkit on first build.
 src/core/       runtime: timer, per-thread store, call stack (incl/excl), raw emit
 src/sample/     sampling: per-thread timer -> signal -> leaf-PC histogram
 src/backends/   preload.c (dlsym RTLD_NEXT), frida.c (gum replace)
-src/analyzers/  blas.c (+cblas shapes), fftw.c (plan registry), mpi.c (bytes)
+src/analyzers/  blas.c (+cblas shapes), fftw.c (plan registry), mpi.c (bytes,
+                size histogram, comm matrix), io.c (POSIX bytes), heap.c (high-water)
 gen/gen.py      reads gen/prototypes/*.txt, emits one thin wrapper per symbol
 tools/scilib-report.py   symbolize + reduce across ranks -> tables
 bin/scilib-prof          one-command driver (run + auto-report)

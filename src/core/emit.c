@@ -12,6 +12,19 @@
 __attribute__((weak)) int libprof_sample_enabled(void);
 __attribute__((weak)) int libprof_sample_hz(void);
 
+/* registry of extra per-rank JSON emitters (MPI comm matrix, heap, ...) */
+#define LIBPROF_MAX_EMIT 8
+static libprof_emitter_fn lp_emitters[LIBPROF_MAX_EMIT];
+static int lp_n_emit;
+void libprof_register_emitter(libprof_emitter_fn fn)
+{
+    if (lp_n_emit < LIBPROF_MAX_EMIT) lp_emitters[lp_n_emit++] = fn;
+}
+void libprof_emit_extras(void *file)
+{
+    for (int i = 0; i < lp_n_emit; i++) lp_emitters[i]((FILE *)file);
+}
+
 static void json_str(FILE *f, const char *s)
 {
     fputc('"', f);
@@ -107,6 +120,7 @@ void libprof_write_raw(libprof_row_t *rows, int n, double apptime)
     }
     fprintf(f, "\n  ]");
     write_sampling(f);
+    libprof_emit_extras(f);
     fprintf(f, "\n}\n");
     fclose(f);
 

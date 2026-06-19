@@ -1,18 +1,17 @@
-/* MPI communication-volume analyzer: bytes = count * sizeof(datatype).
+/* MPI communication-volume analyzer + message-size histogram + point-to-point
+ * communication matrix. mpi.h-free (see note below): handles are opaque values,
+ * PMPI_Type_size is resolved by dlsym, so one binary works under OpenMPI/MPICH.
  *
- * Deliberately mpi.h-free for portability. OpenMPI and MPICH disagree on what
- * MPI_Datatype is (an 8-byte pointer vs a 4-byte int handle) and implement the
- * predefined constants differently; including mpi.h and referencing those is
- * exactly what breaks tools like mpiP across implementations. Instead we:
- *   - take the datatype as an opaque pointer-sized value passed through by the
- *     opaque-dialect wrapper, and
- *   - resolve PMPI_Type_size at runtime via dlsym and call it generically.
- * PMPI_Type_size reads the handle correctly for whichever MPI is loaded (the low
- * 32 bits for a MPICH int handle, the full pointer for OpenMPI). */
+ * Detail (histogram + per-peer matrix) is accumulated in module-local state under
+ * a mutex and written to the per-rank JSON via the emitter hook; the postprocess
+ * tool turns it into a size distribution and an NxN communication matrix. */
 #define _GNU_SOURCE
 #include <dlfcn.h>
-#include "analyzer.h"
+#include <pthread.h>
+#include <stdlib.h>
+#include <stdio.h>
 #include <string.h>
+#include "analyzer.h"
 
 typedef int (*type_size_fn)(void *datatype, int *size);
 
@@ -26,24 +25,70 @@ static int type_size(void *datatype)
     return 0;
 }
 
-/* args[i] points AT the i-th (opaque, pointer-sized) argument slot. */
-static int bytes_at(libprof_delta_t *md, void **a, int count_idx, int type_idx)
+/* ---- message-size histogram + p2p communication matrix (module state) ---- */
+#define NBIN 12
+static pthread_mutex_t L = PTHREAD_MUTEX_INITIALIZER;
+static unsigned long long bins[NBIN];
+static unsigned long long *sent, *recvd;   /* bytes per peer rank */
+static int npeer;
+
+static int size_bin(unsigned long long b)
 {
-    int count = *(int *)a[count_idx];           /* element count (int slot) */
-    void *dt  = *(void **)a[type_idx];           /* datatype handle, opaque */
-    md->bytes = (uint64_t)count * (uint64_t)type_size(dt);
-    return 0;
+    unsigned long long lim = 64; int i = 0;
+    while (i < NBIN - 1 && b > lim) { lim <<= 2; i++; }
+    return i;
 }
 
-/* arg index of (count, datatype) varies by call family */
-static int an_p2p(libprof_key_t *k, libprof_delta_t *md, const libprof_desc_t *d, void **a, void *r)
-{ (void)k;(void)d;(void)r; return bytes_at(md, a, 1, 2); }      /* Send/Recv/Bcast/Isend/Irecv */
+static void grow(int peer)
+{
+    if (peer < npeer) return;
+    int nn = peer + 1;
+    sent = realloc(sent, nn * sizeof(*sent));
+    recvd = realloc(recvd, nn * sizeof(*recvd));
+    for (int i = npeer; i < nn; i++) { sent[i] = 0; recvd[i] = 0; }
+    npeer = nn;
+}
+
+static void record(unsigned long long bytes, int dir, int peer)
+{
+    pthread_mutex_lock(&L);
+    bins[size_bin(bytes)]++;
+    if (dir && peer >= 0) { grow(peer); (dir > 0 ? sent : recvd)[peer] += bytes; }
+    pthread_mutex_unlock(&L);
+}
+
+/* dir: +1 send (peer=dest), -1 recv (peer=src), 0 collective (no peer) */
+static uint64_t volume(void **a, int ci, int ti)
+{
+    int count = *(int *)a[ci];
+    int sz = type_size(*(void **)a[ti]);
+    return (uint64_t)count * (uint64_t)sz;
+}
+
+static int an_send(libprof_key_t *k, libprof_delta_t *md, const libprof_desc_t *d, void **a, void *r)
+{ (void)k;(void)d;(void)r; md->bytes = volume(a, 1, 2); record(md->bytes, +1, *(int *)a[3]); return 0; }
+static int an_recv(libprof_key_t *k, libprof_delta_t *md, const libprof_desc_t *d, void **a, void *r)
+{ (void)k;(void)d;(void)r; md->bytes = volume(a, 1, 2); record(md->bytes, -1, *(int *)a[3]); return 0; }
+static int an_bcast(libprof_key_t *k, libprof_delta_t *md, const libprof_desc_t *d, void **a, void *r)
+{ (void)k;(void)d;(void)r; md->bytes = volume(a, 1, 2); record(md->bytes, 0, -1); return 0; }
 static int an_reduce(libprof_key_t *k, libprof_delta_t *md, const libprof_desc_t *d, void **a, void *r)
-{ (void)k;(void)d;(void)r; return bytes_at(md, a, 2, 3); }      /* Allreduce/Reduce */
+{ (void)k;(void)d;(void)r; md->bytes = volume(a, 2, 3); record(md->bytes, 0, -1); return 0; }
 static int an_coll(libprof_key_t *k, libprof_delta_t *md, const libprof_desc_t *d, void **a, void *r)
-{ (void)k;(void)d;(void)r; return bytes_at(md, a, 1, 2); }      /* gather/alltoall (send count) */
+{ (void)k;(void)d;(void)r; md->bytes = volume(a, 1, 2); record(md->bytes, 0, -1); return 0; }
 static int an_scatterv(libprof_key_t *k, libprof_delta_t *md, const libprof_desc_t *d, void **a, void *r)
-{ (void)k;(void)d;(void)r; return bytes_at(md, a, 5, 6); }      /* Scatterv (recv count/type) */
+{ (void)k;(void)d;(void)r; md->bytes = volume(a, 5, 6); record(md->bytes, 0, -1); return 0; }
+
+static void emit(void *fp)
+{
+    FILE *f = fp;
+    fprintf(f, ",\n  \"mpi_detail\": {\n    \"bins\": [");
+    for (int i = 0; i < NBIN; i++) fprintf(f, "%s%llu", i ? "," : "", bins[i]);
+    fprintf(f, "],\n    \"sent\": [");
+    for (int i = 0; i < npeer; i++) fprintf(f, "%s%llu", i ? "," : "", sent[i]);
+    fprintf(f, "],\n    \"recv\": [");
+    for (int i = 0; i < npeer; i++) fprintf(f, "%s%llu", i ? "," : "", recvd[i]);
+    fprintf(f, "]\n  }");
+}
 
 static void bind(const char *name, libprof_analyzer_fn fn)
 {
@@ -53,22 +98,21 @@ static void bind(const char *name, libprof_analyzer_fn fn)
 
 void libprof_register_mpi_analyzers(void)
 {
-    /* point-to-point + bcast: (count,datatype) at (1,2) */
-    bind("MPI_Send", an_p2p);   bind("MPI_Recv", an_p2p);
-    bind("MPI_Isend", an_p2p);  bind("MPI_Irecv", an_p2p);
-    bind("MPI_Sendrecv", an_p2p);
-    bind("MPI_Bcast", an_p2p);  bind("MPI_Ibcast", an_p2p);
-    /* reductions: (count,datatype) at (2,3) */
+    bind("MPI_Send", an_send);   bind("MPI_Isend", an_send);
+    bind("MPI_Recv", an_recv);   bind("MPI_Irecv", an_recv);
+    bind("MPI_Bcast", an_bcast); bind("MPI_Ibcast", an_bcast);
     bind("MPI_Allreduce", an_reduce);  bind("MPI_Iallreduce", an_reduce);
     bind("MPI_Reduce", an_reduce);     bind("MPI_Ireduce", an_reduce);
     bind("MPI_Reduce_scatter_block", an_reduce);
-    /* gather/scatter/alltoall + vector variants with a scalar send count at (1,2) */
-    bind("MPI_Allgather", an_coll);   bind("MPI_Iallgather", an_coll);
-    bind("MPI_Alltoall", an_coll);    bind("MPI_Ialltoall", an_coll);
-    bind("MPI_Gather", an_coll);      bind("MPI_Igather", an_coll);
+    bind("MPI_Allgather", an_coll);    bind("MPI_Iallgather", an_coll);
+    bind("MPI_Alltoall", an_coll);     bind("MPI_Ialltoall", an_coll);
+    bind("MPI_Gather", an_coll);       bind("MPI_Igather", an_coll);
     bind("MPI_Scatter", an_coll);
-    bind("MPI_Gatherv", an_coll);     bind("MPI_Allgatherv", an_coll);
+    bind("MPI_Gatherv", an_coll);      bind("MPI_Allgatherv", an_coll);
     bind("MPI_Scatterv", an_scatterv);
-    /* Alltoallv / Reduce_scatter (all-array counts) and Wait/Test/Barrier:
-     * count + time only (no single scalar volume). */
+    /* Sendrecv counts as a send to dest (arg 3) for the matrix */
+    bind("MPI_Sendrecv", an_send);
+
+    extern void libprof_register_emitter(libprof_emitter_fn);
+    libprof_register_emitter(emit);
 }

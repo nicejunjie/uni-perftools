@@ -20,6 +20,7 @@ void libprof_config_parse(void)
     c->sample = getenv_int("SCILIB_SAMPLE", 1);
     c->sample_hz = getenv_int("SCILIB_SAMPLE_HZ", 1000);
     c->sample_cpu = getenv_int("SCILIB_SAMPLE_CPU", 0);
+    c->heap = getenv_int("SCILIB_HEAP", 0);
     if (c->sample_hz < 1) c->sample_hz = 1;
     if (c->sample_hz > 100000) c->sample_hz = 100000;
 
