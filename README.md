@@ -5,7 +5,10 @@ spirit, with two complementary views from a single run:
 
 - **Sampling** (works for *any* binary): a statistical timer profile of the whole
   application → **top time-consuming functions and source lines**, like `gprof`
-  but with no `-pg` rebuild and full support for threads and MPI ranks.
+  but with no `-pg` rebuild and full support for threads and MPI ranks. Captures
+  **call stacks** by default, so time is attributed inclusively and charged to the
+  right group (e.g. blocking in MPI shows as **MPI**, not libc `poll`); exports
+  **folded stacks** for flame graphs (`scilib-report --folded`).
 - **Tracing** (scientific libraries + MPI + I/O): exact call interception of
   **BLAS, LAPACK, PBLAS, ScaLAPACK, CBLAS, LAPACKe, FFTW, MPI, POSIX I/O** →
   per-function counts, inclusive/exclusive time, communication/I/O volume (GB/s),
@@ -68,6 +71,7 @@ Library (measurement) — environment variables:
 | `SCILIB_SAMPLE`     | `1`     | statistical sampling on/off                      |
 | `SCILIB_SAMPLE_HZ`  | `1000`  | sampling rate (Hz)                               |
 | `SCILIB_SAMPLE_CPU` | `0`     | sample CPU time (`1`) vs wall time (`0`)         |
+| `SCILIB_SAMPLE_STACK`| `64`   | call-stack depth to unwind per sample (`1`=leaf only) |
 | `SCILIB_HEAP`       | `0`     | track heap high-water mark (interposes malloc)   |
 | `SCILIB_SHAPE`      | `0`     | per-shape tracing rows (`dgemm_[m=…,n=…,k=…]`)   |
 | `SCILIB_OUTPUT`     | `scilib-prof` | raw-file path prefix (`<prefix>.<rank>.json`)|

@@ -89,6 +89,7 @@ typedef struct libprof_tls {
     uint32_t               *samp_cnt;
     int                     samp_cap, samp_used;
     uint64_t                samp_total, samp_dropped;
+    void                   *samp_stack;   /* call-stack table (src/sample/sampler.c) */
 } libprof_tls_t;
 
 extern __thread libprof_tls_t *libprof_tls;

@@ -94,51 +94,89 @@ def group_of(path, func, app_base):
     return "ETC"
 
 
+# dominant-group priority: a sample is charged to the highest-priority group on
+# its stack, so time waiting in MPI counts as MPI (not the libc poll it blocks in).
+GROUP_PRIO = {"MPI": 6, "BLAS": 5, "LAPACK": 5, "FFTW": 5, "IO": 4, "USER": 3, "ETC": 0}
+
+
+class Samp:
+    """Symbolized sampling data with leaf (self) and, if stacks were captured,
+    inclusive attribution."""
+    def __init__(self):
+        self.hz = 0
+        self.total = 0
+        self.nranks = 0
+        self.stacks = False
+        self.leaf = []        # per-rank Counter[(group, func, file:line)]  (self)
+        self.dom = []         # per-rank Counter[group]                     (dominant)
+        self.incf = []        # per-rank Counter[func]                      (inclusive)
+        self.folded = collections.Counter()  # "a;b;c" -> samples
+
+
 def symbolize_samples(ranks):
-    """Return (hz, total, nranks, per_rank) where per_rank[i] is a Counter keyed
-    by (group, func, file:line)."""
-    hz = 0
+    s = Samp()
+    s.nranks = len(ranks)
     app_base = os.path.basename(ranks[0].get("application", "")) if ranks else ""
-    addrs_by_path = collections.defaultdict(set)
-    rank_keys = []
+    addrs = collections.defaultdict(set)
+    raw = []   # per rank: list of (count, [(path,addr), ...]) leaf-first
     for r in ranks:
-        s = r.get("sampling")
-        if not s or not s.get("samples"):
-            rank_keys.append(None)
-            continue
-        hz = s.get("hz", hz)
-        maps = s.get("maps", [])
-        keys = []
-        for pc, cnt in s["samples"]:
-            m = map_lookup(maps, pc)
-            if m:
-                a = file_vaddr(m, pc)
-                addrs_by_path[m["path"]].add(a)
-                keys.append((m["path"], a, cnt))
-            else:
-                keys.append((None, pc, cnt))
-        rank_keys.append(keys)
+        sm = r.get("sampling")
+        if not sm:
+            raw.append(None); continue
+        s.hz = sm.get("hz", s.hz)
+        maps = sm.get("maps", [])
+
+        def frames_of(pcs):
+            fr = []
+            for pc in pcs:
+                m = map_lookup(maps, pc)
+                if m:
+                    a = file_vaddr(m, pc); addrs[m["path"]].add(a); fr.append((m["path"], a))
+                else:
+                    fr.append((None, pc))
+            return fr
+
+        items = []
+        if sm.get("stacks"):
+            s.stacks = True
+            for st in sm["stacks"]:
+                items.append((st["n"], frames_of(st["pc"])))
+        else:
+            for pc, cnt in sm.get("samples", []):
+                items.append((cnt, frames_of([pc])))
+        raw.append(items)
 
     sym = {}
-    for path, aset in addrs_by_path.items():
+    for path, aset in addrs.items():
         for a, v in addr2line(path, aset).items():
             sym[(path, a)] = v
 
-    per_rank = []
-    total = 0
-    for keys in rank_keys:
-        if keys is None:
-            per_rank.append(None); continue
-        c = collections.Counter()
-        for path, a, cnt in keys:
-            if path is None:
-                fn, fl = ("0x%x" % a, "?")
-            else:
-                fn, fl = sym.get((path, a), ("0x%x" % a, "?"))
-            c[(group_of(path, fn, app_base), fn, fl)] += cnt
-            total += cnt
-        per_rank.append(c)
-    return hz, total, len(ranks), per_rank
+    def info(fr):
+        path, a = fr
+        fn, fl = sym.get((path, a), ("0x%x" % a, "?")) if path else ("0x%x" % a, "?")
+        return group_of(path, fn, app_base), fn, fl
+
+    for items in raw:
+        if items is None:
+            s.leaf.append(None); s.dom.append(None); s.incf.append(None); continue
+        leaf, dom, incf = collections.Counter(), collections.Counter(), collections.Counter()
+        for cnt, frames in items:
+            g0, f0, l0 = info(frames[0])
+            leaf[(g0, f0, l0)] += cnt
+            s.total += cnt
+            if s.stacks:
+                best, seenf, names = "ETC", set(), []
+                for fr in frames:
+                    g, fn, _ = info(fr)
+                    if GROUP_PRIO.get(g, 0) > GROUP_PRIO.get(best, 0):
+                        best = g
+                    if fn not in seenf:
+                        incf[(g, fn)] += cnt; seenf.add(fn)
+                    names.append(fn)
+                dom[best] += cnt
+                s.folded[";".join(reversed(names))] += cnt
+        s.leaf.append(leaf); s.dom.append(dom); s.incf.append(incf)
+    return s
 
 
 def load(paths):
@@ -329,6 +367,46 @@ def cp_imb(counts, nranks):
     return tot, imb_samp, imb_pct
 
 
+def fmt_flat(title, per_rank, total, nranks, top, labelfn):
+    agg = collections.defaultdict(lambda: collections.defaultdict(int))
+    for pe, c in enumerate(per_rank):
+        if c:
+            for k, n in c.items():
+                agg[k][pe] += n
+    rows = [(k, cp_imb(list(pe.values()), nranks)) for k, pe in agg.items()]
+    rows.sort(key=lambda x: -x[1][0])
+    out = ["", "  " + title, "  " + "-" * 78,
+           "   Samp%      Samp  Imb.Samp  Imb.Samp%  Function",
+           " " + "-" * 78]
+    for k, (tot, is_, ip) in rows[:top or 12]:
+        out.append("%6.1f%% %9d %9.1f %8.1f%%  %s" % (100.0 * tot / total, tot, is_, ip, labelfn(k)[:54]))
+    return "\n".join(out)
+
+
+def fmt_domgroup(s, top):
+    if not s.stacks:
+        return ""
+    grp = collections.defaultdict(lambda: collections.defaultdict(int))
+    for pe, c in enumerate(s.dom):
+        if c:
+            for g, n in c.items():
+                grp[g][pe] += n
+    out = ["", "Table 1:  Profile by Function Group  (sampling @ %d Hz, %d PEs)" % (s.hz, s.nranks),
+           "          time charged to the highest-level group on each sample's stack", "",
+           "   Samp%      Samp  Imb.Samp  Imb.Samp%  Group", " " + "-" * 70]
+    pe_tot = collections.defaultdict(int)
+    for g in grp:
+        for pe, n in grp[g].items():
+            pe_tot[pe] += n
+    t = cp_imb(list(pe_tot.values()), s.nranks)
+    out.append("%6.1f%% %9d %9.1f %8.1f%%  Total" % (100.0, t[0], t[1], t[2]))
+    out.append(" " + "-" * 70)
+    for g in sorted(grp, key=lambda g: -sum(grp[g].values())):
+        gt = cp_imb(list(grp[g].values()), s.nranks)
+        out.append("%6.1f%% %9d %9.1f %8.1f%%  %s" % (100.0 * gt[0] / s.total, gt[0], gt[1], gt[2], g))
+    return "\n".join(out)
+
+
 def fmt_groups(per_rank, hz, total, nranks, top):
     """CrayPAT-style 'Profile by Function Group and Function' for sampling."""
     if total <= 0:
@@ -457,9 +535,18 @@ def main():
     ap.add_argument("--format", choices=["table", "json", "csv"], default="table")
     ap.add_argument("--sort", choices=["t_incl", "t_excl", "count"], default="t_excl")
     ap.add_argument("--top", type=int, default=0)
+    ap.add_argument("--folded", action="store_true",
+                    help="print folded call stacks (for flamegraph.pl) and exit")
     args = ap.parse_args()
 
     ranks = load(args.files)
+
+    if args.folded:
+        s = symbolize_samples(ranks)
+        for stack, n in s.folded.most_common():
+            print("%s %d" % (stack, n))
+        return
+
     rows = reduce_rows(ranks, args.imbalance)
     runtime = max(r.get("runtime_s", 0.0) for r in ranks)
     app = ranks[0].get("application", "")
@@ -486,9 +573,17 @@ def main():
           (len(ranks), runtime, args.imbalance))
 
     # Table 1 — sampling, grouped by function group (CrayPAT-style).
-    hz, total, nranks, per_rank = symbolize_samples(ranks)
+    s = symbolize_samples(ranks)
+    hz, total, per_rank = s.hz, s.total, s.leaf
     if total > 0:
-        print(fmt_groups(per_rank, hz, total, nranks, args.top))
+        if s.stacks:
+            print(fmt_domgroup(s, args.top))
+            print(fmt_flat("Top functions (inclusive)", s.incf, total, s.nranks, args.top,
+                           lambda k: "%s  [%s]" % (k[1], k[0])))
+            print(fmt_flat("Top functions (self)", s.leaf, total, s.nranks, args.top,
+                           lambda k: "%s  %s" % (k[1], k[2])))
+        else:
+            print(fmt_groups(s.leaf, hz, total, s.nranks, args.top))
 
     # Tables 2-3 — exact library tracing (counts/time/imbalance, MPI volume).
     ct = fmt_compute(rows, args.sort, args.top)

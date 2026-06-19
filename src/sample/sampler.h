@@ -12,5 +12,6 @@ void libprof_sample_init(void);      /* install handler + arm the main thread */
 void libprof_sample_stop_all(void);  /* disarm globally before emit */
 void libprof_sample_thread_start(void);  /* arm the calling thread */
 void libprof_sample_thread_stop(void);   /* disarm the calling thread */
+void libprof_sample_emit(void *file);    /* write the "sampling" JSON object */
 
 #endif

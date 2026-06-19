@@ -112,6 +112,9 @@ ok "sampling: USER group present"   "echo \"$OUT\" | grep -qE '^ *[0-9.]+%.* USE
 ok "sampling: hot is the top function" \
    "echo \"$OUT\" | sed -n '/Table 1/,/Table 2/p' | grep -oE '\\b(hot|cold)\\b' | head -1 | grep -qw hot"
 ok "sampling: source line resolved (t5.c:N)" "echo \"$OUT\" | grep -qE 't5\.c:[0-9]+'"
+ok "sampling: inclusive table (call stacks)" "echo \"$OUT\" | grep -q 'Top functions (inclusive)'"
+FOLD=$(python3 "$RPT" --folded "$TMP"/p.*.json 2>&1)
+ok "sampling: folded flamegraph export"  "echo \"$FOLD\" | grep -qE 'main;.*hot [0-9]+'"
 
 # --- driver: one command runs + reports ---
 DRV="$ROOT/bin/scilib-prof"
