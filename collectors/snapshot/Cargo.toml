@@ -1,0 +1,16 @@
+[workspace]
+resolver = "2"
+members = ["crates/*"]
+
+[workspace.package]
+version = "0.0.0"
+edition = "2021"
+license = "MIT OR Apache-2.0"
+repository = "https://github.com/nicejunjie/uaps"
+
+[workspace.dependencies]
+anyhow = "1"
+clap = { version = "4", features = ["derive"] }
+uaps-core = { path = "crates/uaps-core" }
+uaps-collect = { path = "crates/uaps-collect" }
+uaps-report = { path = "crates/uaps-report" }

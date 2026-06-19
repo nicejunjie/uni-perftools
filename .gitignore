@@ -1,10 +1,10 @@
-# Build outputs
-/build/
-*.so
-*.o
-
-# Frida devkit (downloaded by `make`)
-/frida/
-
-# Captured profiler baselines / scratch
-/baselines/
+# Suite-level ignores (each collector also has its own .gitignore)
+baselines/
+**/__pycache__/
+*.pyc
+# profile collector artifacts (also covered by collectors/profile/.gitignore)
+collectors/profile/build/
+collectors/profile/frida/
+collectors/profile/*.so
+# snapshot collector artifacts
+collectors/snapshot/target/

@@ -1,0 +1,15 @@
+[package]
+name = "uaps-collect"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[dependencies]
+anyhow.workspace = true
+uaps-core.workspace = true
+
+# Linux-only backends. Other platforms fall back to stub collectors (see
+# src/fallback.rs); real macOS (kperf) / Windows (ETW) backends are future work.
+[target.'cfg(target_os = "linux")'.dependencies]
+libc = "0.2"
+perf-event-open-sys = "6"

@@ -1,0 +1,10 @@
+# Build outputs
+/build/
+*.so
+*.o
+
+# Frida devkit (downloaded by `make`)
+/frida/
+
+# Captured profiler baselines / scratch
+/baselines/
