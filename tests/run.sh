@@ -54,6 +54,10 @@ if [ "$HAVE_MPI" = 1 ]; then
   ok "mpi: MPI table in profile"    "echo \"$OUT\" | grep -q 'MPI (communication)'"
   ok "mpi: unified imb header"      "echo \"$OUT\" | grep -q 'imb = (max-avg)/max'"
   ok "mpi: dgemm imbalance insight" "echo \"$OUT\" | grep -qiE 'imbalanc'"
+  MOUT=$(OMPI_MCA_rmaps_base_oversubscribe=1 "$DRV" report "$TMP/r2" --view mpi 2>/dev/null)
+  ok "mpi: wait-state view"         "echo \"$MOUT\" | grep -q 'MPI wait-state'"
+  ok "mpi: sync vs transfer split"  "echo \"$MOUT\" | grep -q 'synchronization/wait'"
+  ok "mpi: comm/compute overlap"    "echo \"$MOUT\" | grep -q 'overlap:'"
 fi
 
 rm -rf "$TMP"

@@ -156,6 +156,87 @@ def imbalance_view(profile, out):
         out.append("    %-24s %5.0f%% %10.4f %12.4f" % (name[:24], imb, t, rec))
 
 
+# ----------------------------------------------------------- MPI wait-state
+# Classify MPI calls by what dominates their time. Collectives and blocking
+# receives spend most of their time *blocked on peers* (synchronization / wait);
+# sends and nonblocking initiations are *transfer/initiation*. This is a call-type
+# heuristic — true late-sender/late-receiver attribution needs cross-rank trace
+# replay, which the collectors don't do.
+_MPI_TRANSFER = re.compile(
+    r"MPI_I?[BSR]?send|MPI_Irecv|MPI_Put|MPI_Get|MPI_R?Accumulate|MPI_[PU]npack|MPI_Start",
+    re.I)
+_MPI_WAIT = re.compile(
+    r"MPI_(Barrier|Wait|Test|Recv|Sendrecv|M?Probe|Allreduce|Reduce|Allgather|Gather|"
+    r"Scatter|Alltoall|Bcast|E?Scan|Reduce_scatter|Neighbor)",
+    re.I)
+# nonblocking initiations: I-prefixed p2p + nonblocking collectives + one-sided
+_MPI_NONBLOCK = re.compile(
+    r"MPI_(I[bsr]?send|Issend|Irecv|Iallreduce|Ireduce|Iallgather|Igather|Iscatter|"
+    r"Ialltoall|Ibcast|Ibarrier|Iscan|Put|Get|R?Accumulate)", re.I)
+_MPI_WAITCALL = re.compile(r"MPI_(Wait|Test)", re.I)
+
+
+def _mpi_class(name):
+    # wait first: e.g. MPI_Sendrecv contains "Send" but is a blocking exchange
+    if _MPI_WAIT.search(name):
+        return "wait"
+    if _MPI_TRANSFER.search(name):
+        return "transfer"
+    return "transfer"            # default unknowns to transfer (conservative)
+
+
+def mpi_view(profile, out):
+    fns = [f for f in (profile or {}).get("functions", []) if f.get("group") == "MPI"]
+    if not fns:
+        return
+    nr = (profile or {}).get("nranks", 1)
+    rows, wait_t, xfer_t = [], 0.0, 0.0
+    for f in fns:
+        t = f.get("t_excl", 0.0)
+        cls = _mpi_class(f.get("name", ""))
+        if cls == "wait":
+            wait_t += t
+        else:
+            xfer_t += t
+        rows.append((t, cls, f.get("name", ""), f.get("imb_excl", 0.0)))
+    total = wait_t + xfer_t
+    if total <= 0:
+        return
+    rows.sort(reverse=True)
+    out.append("\n══ MPI wait-state (call-type heuristic) ══")
+    out.append("    synchronization/wait %6.4fs (%2.0f%%) | transfer/initiation %6.4fs (%2.0f%%)"
+               % (wait_t, wait_t / total * 100, xfer_t, xfer_t / total * 100))
+    out.append("    %-22s %10s %7s %6s" % ("call", "excl(s)", "class", "imb%"))
+    for t, cls, name, imb in rows[:10]:
+        out.append("    %-22s %10.5f %7s %5.0f%%" % (name[:22], t, cls, imb))
+    # late-sender / load-imbalance signal: wait dominates AND a wait call is imbalanced
+    wait_imb = max((imb for t, cls, name, imb in rows if cls == "wait"), default=0.0)
+    if nr >= 2 and wait_t / total >= 0.6 and wait_imb >= 15:
+        out.append("    → wait-dominated MPI with imbalanced collectives/receives "
+                   "(%.0f%% imb): likely late-sender / load imbalance — rebalance work "
+                   "across ranks before tuning communication." % wait_imb)
+    elif nr >= 2 and wait_t / total >= 0.6:
+        out.append("    → wait-dominated but balanced: ranks are well-balanced; "
+                   "reduce synchronization (fewer/larger collectives, overlap with compute).")
+    # comm/compute overlap: does the app even attempt overlap, and does Wait eat it?
+    names = [n for _, _, n, _ in rows]
+    has_nb = any(_MPI_NONBLOCK.search(n) for n in names)
+    wait_call_t = sum(t for t, _, n, _ in rows if _MPI_WAITCALL.search(n))
+    # blocking comm = wait-class time that isn't just polling Wait/Test calls
+    has_blocking_comm = (wait_t - wait_call_t) > 0
+    if not has_nb and has_blocking_comm:
+        out.append("    overlap: all communication is blocking — no comm/compute overlap "
+                   "possible. Consider nonblocking calls (Isend/Irecv or Iallreduce-style "
+                   "collectives) + compute + Wait.")
+    elif has_nb and wait_call_t / total >= 0.3:
+        out.append("    overlap: nonblocking comm in use but Wait* is %.0f%% of MPI time — "
+                   "little compute overlapped; move independent work between init and Wait."
+                   % (wait_call_t / total * 100))
+    elif has_nb:
+        out.append("    overlap: nonblocking comm in use with low Wait* time — "
+                   "good comm/compute overlap.")
+
+
 # ------------------------------------------------------------- threading
 def threading_view(snap, out):
     if not snap:
