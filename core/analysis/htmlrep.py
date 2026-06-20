@@ -297,6 +297,19 @@ def build(result_dir, manifest, snap, profile, suite, detail=None, threshold=0.1
             body.append("<h2>Microarchitecture &amp; memory</h2>")
             body.append(_table(["metric", "value"], rows, leftcols=(0,)))
 
+    # APS-style top-5 MPI functions (bird's-eye)
+    mpis = sorted((f for f in (profile or {}).get("functions", []) if f["group"] == "MPI"),
+                  key=lambda f: -f["t_incl"])
+    if mpis and (profile or {}).get("nranks", 1) >= 2:
+        rt = (profile or {}).get("runtime_s", 0.0)
+        mt = sum(f["t_incl"] for f in mpis)
+        body.append("<h2>Top MPI functions</h2>")
+        body.append("<p class='note'>MPI time %.4fs (%.1f%% of runtime, %d ranks)</p>"
+                    % (mt, (mt / rt * 100 if rt else 0), profile.get("nranks", 1)))
+        body.append(_table(["function", "time(s)", "%MPI", "calls", "imb%"],
+                           [[f["name"], "%.4f" % f["t_incl"], "%.1f" % (f["t_incl"] / mt * 100 if mt else 0),
+                             "%.0f" % f["count"], "%.0f" % f.get("imb_excl", 0)] for f in mpis[:5]]))
+
     # UPAT profile tables
     body.append("<h2 style='border-color:#88a'>UPAT — deep profile</h2>")
     body.append(_profile_tables(profile, threshold))

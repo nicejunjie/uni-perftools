@@ -209,6 +209,31 @@ def _mpi_class(name):
     return "transfer"            # default unknowns to transfer (conservative)
 
 
+def mpi_summary_view(snap, profile, out):
+    """APS-style bird's-eye MPI summary: total MPI time, % of runtime, and the
+    top 5 MPI functions by time. (The detailed wait-state breakdown + comm matrix
+    live in the UPAT section / --detail mpi.)"""
+    fns = [f for f in (profile or {}).get("functions", []) if f.get("group") == "MPI"]
+    nr = (profile or {}).get("nranks", 1)
+    if not fns or nr < 2:                      # only meaningful for parallel runs
+        return
+    runtime = (profile or {}).get("runtime_s", 0.0) or (_m(snap, "elapsed_time") or 0.0)
+    mpi_t = sum(f.get("t_incl", 0.0) for f in fns)
+    out.append("\n══ MPI summary ══")
+    out.append("    MPI time %.4fs  (%.1f%% of runtime, %d ranks)"
+               % (mpi_t, (mpi_t / runtime * 100.0) if runtime else 0.0, nr))
+    top = sorted(fns, key=lambda f: -f.get("t_incl", 0.0))[:5]
+    hdr = "    %-20s %10s %7s %10s %6s" % ("function", "time(s)", "%MPI", "calls", "imb%")
+    out.append(hdr)
+    out.append(_rule(hdr))
+    for f in top:
+        ft = f.get("t_incl", 0.0)
+        out.append("    %-20s %10.4f %6.1f%% %10.0f %5.0f%%"
+                   % (f.get("name", "")[:20], ft, (ft / mpi_t * 100.0) if mpi_t else 0.0,
+                      f.get("count", 0), f.get("imb_excl", 0.0)))
+    out.append(_rule(hdr))
+
+
 def mpi_view(profile, out):
     fns = [f for f in (profile or {}).get("functions", []) if f.get("group") == "MPI"]
     if not fns:

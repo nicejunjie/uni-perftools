@@ -88,6 +88,7 @@ if [ "$HAVE_MPI" = 1 ]; then
   ok "mpi: unified imb header"      "echo \"$OUT\" | grep -q 'imb = (max-avg)/max'"
   ok "mpi: dgemm imbalance insight" "echo \"$OUT\" | grep -qiE 'imbalanc'"
   ok "mpi: threshold hides tiny calls" "echo \"$OUT\" | grep -qE 'more below .*% of runtime'"
+  ok "mpi: APS-style top-5 summary"  "echo \"$OUT\" | grep -q 'MPI summary'"
   MOUT=$(OMPI_MCA_rmaps_base_oversubscribe=1 "$DRV" report "$TMP/r2" --view mpi 2>/dev/null)
   ok "mpi: wait-state view"         "echo \"$MOUT\" | grep -q 'MPI wait-state'"
   ok "mpi: sync vs transfer split"  "echo \"$MOUT\" | grep -q 'synchronization/wait'"

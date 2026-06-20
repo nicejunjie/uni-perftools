@@ -23,6 +23,7 @@ VIEWS = {
     "imbalance": lambda snap, prof, out: viewpoints.imbalance_view(prof, out),
     "threading": lambda snap, prof, out: viewpoints.threading_view(snap, out),
     "mpi":       lambda snap, prof, out: viewpoints.mpi_view(prof, out),
+    "mpi-summary": lambda snap, prof, out: viewpoints.mpi_summary_view(snap, prof, out),
     "vectorization": lambda snap, prof, out: viewpoints.vectorization_view(snap, prof, out),
     "roofline-func": lambda snap, prof, out: viewpoints.roofline_func_view(prof, out),
 }
@@ -57,7 +58,7 @@ def _load(path):
 
 
 # which viewpoints belong to which collector's report
-UAPS_VIEWS = ["roofline", "microarch", "memory", "vectorization", "threading"]
+UAPS_VIEWS = ["roofline", "microarch", "memory", "vectorization", "threading", "mpi-summary"]
 UPAT_VIEWS = ["roofline-func", "mpi", "imbalance", "anomaly"]
 
 UAPS_BANNER = ["─" * 78,

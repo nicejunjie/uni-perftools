@@ -99,7 +99,7 @@ def main():
     ap = argparse.ArgumentParser(prog="perfsuite")
     sub = ap.add_subparsers(dest="verb", required=True)
     VIEWS = ["all", "hotspots", "roofline", "roofline-func", "microarch", "memory",
-             "imbalance", "threading", "mpi", "vectorization", "anomaly"]
+             "imbalance", "threading", "mpi", "mpi-summary", "vectorization", "anomaly"]
     for name in ("collect", "run", "roofline"):
         p = sub.add_parser(name, help="per-function roofline (FP/DRAM event sampling)"
                            if name == "roofline" else None)
