@@ -53,7 +53,27 @@ PMU events), real macOS/Windows backends, and `attach` for running processes.
     - **Top-down (pipeline slots), L1:** `topdown.rs` computes retiring / frontend-bound / backend-bound / bad-speculation for AMD Zen 5 using the kernel `amdzen` formulas (slots = 8 × `ls_not_halted_cyc`; events `de_no_dispatch_per_slot` 0x1A0, `de_src_op_disp.all` 0xAA, `ex_ret_ops` 0xC1). The five events run in **one `perf_event` group** opened directly via `perf-event-open-sys` (the `perf-event` crate's `Group` leader is hardwired to pid 0), so the ratios are exact even under PMU multiplexing. Not shelling out to `perf` — that binary isn't installed and AMD top-down is just formulas over these events.
     - **Multi-threaded top-down:** grouped reads can't use `inherit`, so the collector opens a separate group **per thread** (discovered via `/proc/<pid>/task` during the sampling loop) and sums the raw counts across threads before computing ratios. Validated on Zen 5: single- and multi-threaded (pthreads + OpenMP) workloads all sum to ~100% (memory→backend-heavy, SIMD→higher retiring). Threads that start and finish entirely within one sample interval are missed (minor for workloads longer than the interval).
     - **L2 backend split:** of backend-bound slots, the memory-bound vs core-bound share, from `ex_no_retire.load_not_complete`/`.not_complete` (0xD6). Opened as a **second 2-event group** per thread (all 7 events won't fit AMD's 6 PMCs in one group); combined as `backend × (load_not_complete/not_complete)`. Validated on Zen 5: pointer-chase → ~88% memory, dependent-FP chain → ~72% core, AVX FMA → mixed.
-    - Still TODO: Intel memory-source breakdown (needs offcore/PEBS), AMD vectorization split, top-down on non-Zen5 families (needs per-family-verified umasks).
+    - Still TODO: Intel memory-source breakdown (needs offcore/PEBS), AMD vectorization split.
+- **Phase 3c — Data-driven HWPC engine (`pmudb.rs`) ✅:** top-down is no longer
+  hand-coded per family. The engine derives everything from perf's vendored
+  `pmu-events` source data (`collectors/snapshot/pmu-events/`, committed): event
+  codes + metric formulas from the JSON, the config bit-layout from the kernel's
+  `/sys/devices/<pmu>/format/*`, CPU→model from `mapfile.csv`. It detects the
+  model, resolves the canonical metrics (AMD `*_bound` / Intel `tma_*` / ARM),
+  discovers the events each formula references, encodes + counts them
+  (metric-aware grouping keeps a metric's events co-scheduled in one ≤5-event
+  group), and evaluates the formula. **Nothing is guessed** — a missing event,
+  unsupported construct, or absent sysfs field is reported as a gap, never
+  fabricated. `HwpcCollector` supersedes `topdown.rs` when it resolves for the
+  CPU (else the hand-coded path is the fallback). The formula evaluator handles
+  d_ratio/min/max/if, arithmetic, recursive metric refs, both ternary spellings
+  (`?:` and `a if c else b`), comparisons, `#smt_on`/`#num_cpus`/`#core_wide`,
+  escaped event names (`topdown\-retiring`), kernel event aliases (Intel `slots`
+  + `topdown-*` PERF_METRICS), and ARM **ArchStdEvent** references. Validated:
+  Zen5 live top-down matches the hand-coded path; `make validate-hwpc` structurally
+  proves all canonical metrics resolve (or are explicit gaps) for every vendored
+  model — AMD Zen4-6, Intel Haswell→Granite Rapids, NVIDIA Grace — without that
+  hardware (CI: `.github/workflows/hwpc-validate.yml`).
 
   **Counting model (`pmu.rs`):** all hardware counters — generic (`perf.rs`), vendor FP/fill (`raw_pmu.rs`), and top-down (`topdown.rs`) — are opened as **per-thread `perf_event` groups** (no `inherit`), discovered via `/proc/<pid>/task` during the sampling loop and summed across threads. This replaced an earlier `inherit`+individual-counter design whose `time_running` accounting was unreliable under multiplexing and **intermittently undercounted by ~8×** on short multithreaded runs. Groups are kept ≤5 events (a group must fit the core PMUs at once; one PMC may be held by the NMI watchdog) and ratio pairs (instructions+cycles, refs+misses, branches) are co-located so IPC/CPI/miss-rate are exact. Cross-group quantities (GFLOPS, DPKI) use `time_enabled/time_running` scaling. Verified: repeated numpy-matmul runs now give stable GFLOPS (~690) vs. the old 87–690 swing.
 - **Phase 4 — Report ✅:** grouped APS-style sections, bottleneck headline + insights, `--format text|json|html`, `--output`.
