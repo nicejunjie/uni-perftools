@@ -18,8 +18,13 @@ ok(){ if eval "$2"; then echo "  PASS: $1"; PASS=$((PASS+1)); else echo "  FAIL:
 cat > "$TMP/s.c" <<'EOF'
 #include <stdlib.h>
 extern void dgemm_(char*,char*,int*,int*,int*,double*,double*,int*,double*,int*,double*,double*,int*);
-int main(){int n=256;char N='N';double a=1,b=0;double*A=calloc(n*n,8),*B=calloc(n*n,8),*C=calloc(n*n,8);
- for(int i=0;i<40;i++)dgemm_(&N,&N,&n,&n,&n,&a,A,&n,B,&n,&b,C,&n);return 0;}
+extern void sgemm_(char*,char*,int*,int*,int*,float*,float*,int*,float*,int*,float*,float*,int*);
+int main(){int n=256;char N='N';
+ double a=1,b=0;double*A=calloc(n*n,8),*B=calloc(n*n,8),*C=calloc(n*n,8);
+ float fa=1,fb=0;float*FA=calloc(n*n,4),*FB=calloc(n*n,4),*FC=calloc(n*n,4);
+ for(int i=0;i<40;i++)dgemm_(&N,&N,&n,&n,&n,&a,A,&n,B,&n,&b,C,&n);
+ for(int i=0;i<40;i++)sgemm_(&N,&N,&n,&n,&n,&fa,FA,&n,FB,&n,&fb,FC,&n);
+ return 0;}
 EOF
 $CC -O2 "$TMP/s.c" -o "$TMP/s" "$BLAS" 2>/dev/null
 OUT=$("$DRV" run -o "$TMP/r1" -- "$TMP/s" 2>/dev/null)
@@ -28,6 +33,9 @@ ok "serial: INSIGHTS section"       "echo \"$OUT\" | grep -q 'INSIGHTS'"
 ok "serial: math-libs insight"     "echo \"$OUT\" | grep -qi 'math libr'"
 ok "serial: result has prof.0"      "[ -f $TMP/r1/prof.0.json ]"
 ok "serial: result has manifest"    "[ -f $TMP/r1/manifest.json ]"
+ROUT=$("$DRV" report "$TMP/r1" --view roofline 2>/dev/null)
+ok "roofline: FP64 & FP32 ceilings" "echo \"$ROUT\" | grep -q 'FP64' && echo \"$ROUT\" | grep -q 'FP32'"
+ok "roofline: sgemm judged as SP"   "echo \"$ROUT\" | grep -E 'sgemm.* SP ' >/dev/null"
 # snapshot present iff perf available; don't hard-fail when counters are blocked
 if [ -f "$TMP/r1/snap.json" ]; then
   ok "serial: SNAPSHOT section"     "echo \"$OUT\" | grep -q 'SNAPSHOT'"

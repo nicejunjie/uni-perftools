@@ -94,12 +94,25 @@ def peaks(force=False):
     return p
 
 
-def classify(ai, gflops, pk):
-    """Return (ceiling_gflops, pct_of_ceiling, bound) for a point."""
-    if not pk or ai <= 0:
+def peak_compute(pk, prec="dp"):
+    """Compute ceiling for the given precision ('sp' or 'dp'); falls back to the
+    legacy single peak_gflops if a precision-specific peak isn't present."""
+    if not pk:
         return None
-    ridge = pk["peak_gflops"] / pk["peak_bw_gbs"] if pk["peak_bw_gbs"] else 0
-    ceil = min(pk["peak_gflops"], ai * pk["peak_bw_gbs"])
+    if prec == "sp":
+        return pk.get("peak_gflops_sp") or pk.get("peak_gflops")
+    return pk.get("peak_gflops_dp") or pk.get("peak_gflops")
+
+
+def classify(ai, gflops, pk, prec="dp"):
+    """Return (ceiling_gflops, pct_of_ceiling, bound) for a point, against the
+    roofline of its precision (FP32 vs FP64)."""
+    peak = peak_compute(pk, prec)
+    if not peak or ai <= 0 or not pk.get("peak_bw_gbs"):
+        return None
+    bw = pk["peak_bw_gbs"]
+    ridge = peak / bw
+    ceil = min(peak, ai * bw)
     bound = "memory" if ai < ridge else "compute"
     pct = (gflops / ceil * 100.0) if ceil > 0 else 0.0
     return ceil, pct, bound
@@ -110,17 +123,26 @@ def render(points, pk, out):
     if not pk:
         out.append("  (roofline unavailable — calibration failed)")
         return
-    ridge = pk["peak_gflops"] / pk["peak_bw_gbs"] if pk["peak_bw_gbs"] else 0
+    bw = pk.get("peak_bw_gbs") or 0
+    dp, sp = peak_compute(pk, "dp"), peak_compute(pk, "sp")
     out.append("  Roofline (empirical peaks for %s):" % (pk.get("cpu") or "this host"))
-    out.append("    peak compute %.0f GFLOP/s | peak BW %.0f GB/s | ridge AI %.2f FLOP/byte"
-               % (pk["peak_gflops"], pk["peak_bw_gbs"], ridge))
+    if sp and sp != dp:
+        out.append("    peak compute  FP64 %.0f | FP32 %.0f GFLOP/s   peak BW %.0f GB/s"
+                   % (dp, sp, bw))
+        out.append("    ridge AI  FP64 %.2f | FP32 %.2f FLOP/byte  (point judged vs its own precision)"
+                   % (dp / bw if bw else 0, sp / bw if bw else 0))
+    else:
+        out.append("    peak compute %.0f GFLOP/s | peak BW %.0f GB/s | ridge AI %.2f FLOP/byte"
+                   % (dp, bw, dp / bw if bw else 0))
     if not points:
         return
-    out.append("    %-22s %8s %10s %10s %8s  bound" % ("point", "AI", "GFLOP/s", "ceiling", "%peak"))
+    out.append("    %-22s %4s %8s %10s %10s %8s  bound"
+               % ("point", "prec", "AI", "GFLOP/s", "ceiling", "%peak"))
     for p in points:
-        c = classify(p["ai"], p["gflops"], pk)
+        prec = p.get("prec", "dp")
+        c = classify(p["ai"], p["gflops"], pk, prec)
         if not c:
             continue
         ceil, pct, bound = c
-        out.append("    %-22s %8.2f %10.1f %10.1f %7.0f%%  %s"
-                   % (p["label"][:22], p["ai"], p["gflops"], ceil, pct, bound))
+        out.append("    %-22s %4s %8.2f %10.1f %10.1f %7.0f%%  %s"
+                   % (p["label"][:22], prec.upper(), p["ai"], p["gflops"], ceil, pct, bound))

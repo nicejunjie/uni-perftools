@@ -73,8 +73,9 @@ def _kernel_point(row):
     if t_incl <= 1e-3 or byts <= 0:        # skip sub-ms kernels (timer noise)
         return None
     total_flops = flops * row.get("count", 1)
+    prec = "sp" if t in ("s", "c") else "dp"   # s/c → FP32 units, d/z → FP64
     return {"label": name, "ai": flops / byts, "gflops": total_flops / t_incl / 1e9,
-            "flops": total_flops}
+            "flops": total_flops, "prec": prec}
 
 
 def roofline_view(snap, profile, out):
@@ -88,7 +89,10 @@ def roofline_view(snap, profile, out):
         dram_bytes = fills * 64.0
         flops = g * 1e9 * elapsed
         if dram_bytes > 0:
-            points.append({"label": "whole-program (measured)", "ai": flops / dram_bytes, "gflops": g})
+            # whole-program FP counter precision is vendor-dependent (Intel = DP
+            # only; AMD = mixed SP+DP). Judge against the DP ceiling (conservative).
+            points.append({"label": "whole-program (measured)", "ai": flops / dram_bytes,
+                           "gflops": g, "prec": "dp"})
     # per-kernel points from profile shaped rows
     kerns = []
     for r in (profile or {}).get("functions", []):
@@ -102,14 +106,14 @@ def roofline_view(snap, profile, out):
     if not kerns:
         out.append("    (per-kernel points need SCILIB_SHAPE=1 — the suite sets it)")
         return
-    # headroom note for the dominant (most work) kernel
+    # headroom note for the dominant (most work) kernel, vs its own precision
     dom = kerns[0]
-    c = roofline.classify(dom["ai"], dom["gflops"], pk)
+    c = roofline.classify(dom["ai"], dom["gflops"], pk, dom.get("prec", "dp"))
     if c and c[1] < 25:                       # < 25% of its ceiling
         head = c[0] / dom["gflops"] if dom["gflops"] > 0 else 0
-        out.append("    → %s runs at %.0f%% of its roofline ceiling — up to ~%.0fx headroom "
+        out.append("    → %s runs at %.0f%% of its %s roofline ceiling — up to ~%.0fx headroom "
                    "(optimized library / better blocking / vectorization)."
-                   % (dom["label"].split("[")[0], c[1], head))
+                   % (dom["label"].split("[")[0], c[1], dom.get("prec", "dp").upper(), head))
 
 
 # ------------------------------------------------------- microarch / memory

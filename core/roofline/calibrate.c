@@ -99,9 +99,12 @@ static void triad(double *restrict a, const double *restrict b,
 
 /* Peak FP: a vectorizable FMA over an L1-resident array (x[i]=x[i]*b+c), many
  * reps; b<1 keeps values bounded. Independent across i → the compiler emits
- * packed FMA (AVX/AVX-512); aggregate flops/wall over all threads. */
+ * packed FMA (AVX/AVX-512/NEON); aggregate flops/wall over all threads.
+ * Measured at BOTH precisions: SP packs 2x the lanes of DP, so the FP32 peak is
+ * ~2x the FP64 peak — an SP-heavy app must be judged against the FP32 ceiling. */
 static double g_sink = 0.0;
-static double peak_gflops(void)
+
+static double peak_gflops_dp(void)
 {
     enum { N = 2048 };                          /* 16 KiB — L1-resident */
     const long reps = 4000000L;
@@ -124,6 +127,42 @@ static double peak_gflops(void)
                 for (int i = 0; i < N; i++) x[i] = x[i] * b + c;
             }
             double s = 0.0;
+            for (int i = 0; i < N; i++) s += x[i];
+#ifdef _OPENMP
+            #pragma omp atomic
+#endif
+            g_sink += s;                        /* defeat DCE */
+        }
+        double dt = now() - t0;
+        double gf = (2.0 * (double)N * reps * nth) / dt / 1e9;
+        if (gf > best) best = gf;
+    }
+    return best;
+}
+
+static double peak_gflops_sp(void)
+{
+    enum { N = 4096 };                          /* 16 KiB of float — L1-resident */
+    const long reps = 4000000L;
+    int nth = 1;
+#ifdef _OPENMP
+    nth = omp_get_max_threads();
+#endif
+    double best = 0.0;
+    for (int rep = 0; rep < 3; rep++) {
+        double t0 = now();
+#ifdef _OPENMP
+        #pragma omp parallel
+#endif
+        {
+            float x[N];
+            for (int i = 0; i < N; i++) x[i] = 0.001f * i + 0.1f;
+            const float b = 0.99999f, c = 1.0f;
+            for (long r = 0; r < reps; r++) {
+                #pragma omp simd
+                for (int i = 0; i < N; i++) x[i] = x[i] * b + c;
+            }
+            float s = 0.0f;
             for (int i = 0; i < N; i++) s += x[i];
 #ifdef _OPENMP
             #pragma omp atomic
@@ -204,10 +243,13 @@ static void cpu_model(char *out, size_t n)
 
 int main(void)
 {
-    double gf = peak_gflops();
+    double gf_dp = peak_gflops_dp();
+    double gf_sp = peak_gflops_sp();
     double bw = peak_bw_gbs();
     char cpu[256];
     cpu_model(cpu, sizeof(cpu));
-    printf("{\"peak_gflops\": %.1f, \"peak_bw_gbs\": %.1f, \"cpu\": \"%s\"}\n", gf, bw, cpu);
+    /* "peak_gflops" kept as an alias for DP (backward compat). */
+    printf("{\"peak_gflops\": %.1f, \"peak_gflops_dp\": %.1f, \"peak_gflops_sp\": %.1f, "
+           "\"peak_bw_gbs\": %.1f, \"cpu\": \"%s\"}\n", gf_dp, gf_dp, gf_sp, bw, cpu);
     return 0;
 }
