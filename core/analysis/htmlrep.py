@@ -1,7 +1,7 @@
 """Self-contained HTML report generator for the suite.
 
-`perfsuite report --format html`         → the combined report
-`perfsuite report --detail mpi --format html` → the MPI analysis (comm-matrix
+`upat report --format html`         → the combined report
+`upat report --detail mpi --format html` → the MPI analysis (comm-matrix
                                                  heatmap + size histogram)
 
 No external assets/JS: inline CSS, tables, an SVG roofline, and a CSS-coloured
@@ -268,13 +268,18 @@ def build(result_dir, manifest, snap, profile, suite, detail=None, threshold=0.1
 
     pk = roofline.peaks()
     m = _metrics(snap)
-    body = ["<h1>Performance Suite report</h1><div class='sub'><span class='badge'>uaps</span>"
+    body = ["<h1>Universal Performance Tools</h1><div class='sub'><span class='badge'>uaps</span>"
             "<span class='badge'>upat</span> %s</div>" % E(cmd)]
     if suite:
         body.append("<h2>Insights</h2>")
         body += ["<div class='ins'>%s</div>" % E(s) for s in suite]
 
-    # UAPS snapshot cards
+    # Roofline figure (ceilings always available; whole-program point if snap present)
+    if pk:
+        body.append("<h2>Roofline</h2>")
+        body.append(_roofline_svg(pk, _whole_program_point(snap) if snap else None))
+
+    # UAPS snapshot cards (only with a snapshot in the result)
     if snap:
         body.append("<h2>UAPS — snapshot</h2><div class='cards'>")
         for k, lbl in [("elapsed_time", "elapsed"), ("cpu_core_pct", "core util"), ("ipc", "IPC"),
@@ -283,10 +288,6 @@ def build(result_dir, manifest, snap, profile, suite, detail=None, threshold=0.1
                 body.append("<div class='card'><div class='k'>%s</div><div class='v'>%s</div></div>"
                             % (E(lbl), E(m[k].get("display", _fmt(m[k].get("value"))))))
         body.append("</div>")
-        # roofline figure
-        if pk:
-            body.append("<h2>Roofline</h2>")
-            body.append(_roofline_svg(pk, _whole_program_point(snap)))
         # microarch / memory
         rows = [[lbl, m[k]["display"]] for k, lbl in
                 [("topdown_retiring_pct", "retiring"), ("topdown_frontend_pct", "frontend-bound"),
@@ -318,4 +319,4 @@ def build(result_dir, manifest, snap, profile, suite, detail=None, threshold=0.1
     if cm:
         body.append("<h2>MPI communication matrix</h2>")
         body.append(_heatmap_html(result_dir))
-    return _page("Performance Suite report", "".join(body))
+    return _page("Universal Performance Tools", "".join(body))

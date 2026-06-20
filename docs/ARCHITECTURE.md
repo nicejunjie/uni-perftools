@@ -50,8 +50,8 @@ profile attribution) and replaces each tool's own advice in-suite — e.g.
 rebalance / see comm matrix". Time-by-category uses the sampling dominant-group
 breakdown (charges `read()`-under-MPI to MPI via the stack).
 
-## Standalone vs suite
-Each collector also runs standalone (profile: `collectors/profile` make + its
-`upat-report.py`; snapshot: `cargo run`). The suite (`core/cli/perfsuite`)
-composes them and renders one report. See `../SUITE_PLAN.md` for the roadmap and
-open-gap decisions; `../core/contract/SCHEMA.md` for the on-disk format.
+## Two commands, no driver
+Universal Performance Tools ships **two cost-tier commands**, run independently:
+`uaps` (snapshot) and `upat` (deep profile + report, `core/cli/upat`). There is
+no umbrella/driver — `upat report` folds in a `snap.json` if a `uaps` run left
+one in the result dir. See `../core/contract/SCHEMA.md` for the on-disk format.

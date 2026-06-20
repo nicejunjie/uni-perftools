@@ -108,9 +108,8 @@ PREFIX ?= /usr/local
 install: all
 	mkdir -p $(DESTDIR)$(PREFIX)/lib $(DESTDIR)$(PREFIX)/bin
 	install -m 755 $(TARGET_PRE) $(TARGET_FRI) $(DESTDIR)$(PREFIX)/lib/
-	install -m 755 bin/upat $(DESTDIR)$(PREFIX)/bin/upat
 	install -m 755 tools/upat-report.py $(DESTDIR)$(PREFIX)/bin/upat-report
-	@echo "installed to $(DESTDIR)$(PREFIX) — run: upat ./your_app"
+	@echo "installed collector libs + report tool (the upat command comes from the top-level Makefile)"
 
 .PHONY: all preload frida dirs clean veryclean install
 clean:

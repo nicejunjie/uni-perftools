@@ -1,15 +1,19 @@
 #!/usr/bin/env python3
-"""perfsuite — the suite driver (collect / report / run).
+"""upat — the deep-tier command of Universal Performance Tools (uni-perftools).
 
-Composes the two collectors over one result directory:
-  * snapshot (Rust)  = outer parent, perf-counts the target tree → snap.json
-  * profile  (C .so) = injected into the target only → prof.<rank>.json
-Then the analysis core renders one combined report.
+Universal Performance Analysis Tool (← CrayPAT): library tracing (BLAS/LAPACK/
+FFTW/MPI/IO), call-stack sampling, per-function roofline, I/O, heap. Injected
+into the target via LD_PRELOAD; emits prof.<rank>.json and renders the report.
 
-  perfsuite run    -- ./app                 # collect + report (one-liner)
-  perfsuite run    -- mpirun -n 4 ./app
-  perfsuite collect -o RESULT -- ./app      # just collect into RESULT
-  perfsuite report  [RESULT]                # render (default: most recent)
+For the cheap, non-invasive bird's-eye snapshot (HWPC + MPI/OpenMP, APS-style),
+run the OTHER command — `uaps` — instead. The two are cost tiers; run one.
+
+  upat run     -- ./app                 # profile + report (one-liner)
+  upat run     -- mpirun -n 4 ./app
+  upat collect -o RESULT -- ./app       # just collect into RESULT
+  upat report  [RESULT]                 # render (default: most recent)
+  upat roofline -- ./app                # per-function roofline (event sampling)
+  upat scale   R1 R2 ...                # scaling across runs
 """
 import os
 import sys
@@ -34,13 +38,10 @@ def find(env, cands):
     return None
 
 
-def tools(dbi):
-    lib = find("PROFILE_LIB", [os.path.join(
+def profile_lib(dbi):
+    return find("PROFILE_LIB", [os.path.join(
         ROOT, "collectors", "profile",
         "libupat-%s.so" % ("frida" if dbi else "preload"))])
-    snap = find("SNAPSHOT_BIN", [os.path.join(
-        ROOT, "collectors", "snapshot", "target", b, "uaps") for b in ("release", "debug")])
-    return lib, snap
 
 
 def scoped(cmd, env_vars):
@@ -56,47 +57,40 @@ def scoped(cmd, env_vars):
 
 
 def do_collect(args):
-    lib, snap = tools(args.dbi)
+    lib = profile_lib(args.dbi)
     if not lib:
-        sys.exit("perfsuite: profile .so not found (build collectors/profile or set PROFILE_LIB)")
+        sys.exit("upat: profile .so not found (build collectors/profile or set PROFILE_LIB)")
     result = args.outdir or os.path.join(os.getcwd(), "perf.%d" % os.getpid())
     os.makedirs(result, exist_ok=True)
 
     env_vars = {"LD_PRELOAD": lib, "UPAT_OUTPUT": os.path.join(result, "prof"),
                 "UPAT_QUIET": "1",
-                "UPAT_SHAPE": "1"}   # size-resolved rows in the profile drill-down
+                "UPAT_SHAPE": "1"}   # size-resolved rows for --detail
     if args.no_sample:
         env_vars["UPAT_SAMPLE"] = "0"
     if args.heap:
         env_vars["UPAT_HEAP"] = "1"
     if getattr(args, "roofline", False):
-        # characterize pass: FP-op + DRAM-fill event sampling for per-function
-        # roofline (B). Leaf sampling gives clean exclusive-time attribution.
+        # characterize pass: FP-op + DRAM-fill event sampling for per-function roofline
         env_vars["UPAT_ROOFLINE"] = "1"
         env_vars["UPAT_SAMPLE"] = "1"
         env_vars["UPAT_SAMPLE_STACK"] = "1"
-        snap = None       # profile owns the PMU here; running uaps too would
-                          # multiplex the FP counter and starve the sampler.
 
-    inner = scoped(args.cmd, env_vars)
-    # snapshot = outer parent; emits run-level snap.json. (No --mpi: MPI is profile's.)
-    if snap:
-        full = [snap, "run", "--format", "json", "-o", os.path.join(result, contract.SNAP), "--"] + inner
-    else:
-        sys.stderr.write("[perfsuite] snapshot collector not found — profile only\n")
-        full = inner
+    # profile only — upat injects via LD_PRELOAD. The snapshot tier is the
+    # separate `uaps` command; run it on its own (cost tiers, not combined).
+    full = scoped(args.cmd, env_vars)
 
     json.dump({"schema_version": contract.SCHEMA_VERSION, "command": args.cmd,
-               "collectors": (["snapshot"] if snap else []) + ["profile"]},
+               "collectors": ["profile"]},
               open(os.path.join(result, contract.MANIFEST), "w"), indent=2)
 
-    sys.stderr.write("[perfsuite] collecting: %s\n" % " ".join(args.cmd))
+    sys.stderr.write("[upat] collecting: %s\n" % " ".join(args.cmd))
     rc = subprocess.run(full).returncode
     return result, rc
 
 
 def main():
-    ap = argparse.ArgumentParser(prog="perfsuite")
+    ap = argparse.ArgumentParser(prog="upat")
     sub = ap.add_subparsers(dest="verb", required=True)
     VIEWS = ["all", "hotspots", "roofline", "roofline-func", "microarch", "memory",
              "imbalance", "threading", "mpi", "mpi-summary", "vectorization", "anomaly"]
@@ -131,6 +125,11 @@ def main():
     sc = sub.add_parser("scale", help="compare multiple results (scaling analysis)")
     sc.add_argument("results", nargs="+")
 
+    # implicit `run`: `upat ./app` / `upat --no-sample ./app` == `upat run …`
+    VERBS = ("collect", "run", "report", "roofline", "scale")
+    if len(sys.argv) > 1 and sys.argv[1] not in VERBS and sys.argv[1] not in ("-h", "--help"):
+        sys.argv.insert(1, "run")
+
     args = ap.parse_args()
     if args.verb in ("collect", "run", "roofline"):
         if args.verb == "roofline":
@@ -138,10 +137,10 @@ def main():
         if args.cmd and args.cmd[0] == "--":
             args.cmd = args.cmd[1:]
         if not args.cmd:
-            ap.error("no command (use: perfsuite %s -- <command>)" % args.verb)
+            ap.error("no command (use: upat %s -- <command>)" % args.verb)
         result, rc = do_collect(args)
         if args.verb == "collect":
-            sys.stderr.write("[perfsuite] result: %s  (perfsuite report %s)\n" % (result, result))
+            sys.stderr.write("[upat] result: %s  (upat report %s)\n" % (result, result))
         else:
             report.render(result, args.format, args.view, threshold=args.threshold)
         sys.exit(rc)
@@ -151,41 +150,27 @@ def main():
     else:
         result = args.result or contract.latest_result()
         if not result:
-            sys.exit("perfsuite: no result dir given and none found")
-        if args.outdir and args.format == "html":
+            sys.exit("upat: no result dir given and none found")
+        if args.outdir and args.format in ("text", "html"):
             os.makedirs(args.outdir, exist_ok=True)
-            name = "report.%s.html" % args.detail if args.detail else "report.html"
+            ext = "html" if args.format == "html" else "txt"
+            name = "report.%s.%s" % (args.detail, ext) if args.detail else "report.%s" % ext
             path = os.path.join(args.outdir, name)
+            # redirect fd 1 (not just sys.stdout) so the upat-report subprocess
+            # output lands in the file too
             f = open(path, "w")
             saved = os.dup(1)
             try:
-                sys.stdout.flush(); os.dup2(f.fileno(), 1)
-                report.render(result, "html", args.view, collector=args.collector,
+                sys.stdout.flush()
+                os.dup2(f.fileno(), 1)
+                report.render(result, args.format, args.view, collector=args.collector,
                               detail=args.detail, threshold=args.threshold)
                 sys.stdout.flush()
             finally:
-                os.dup2(saved, 1); os.close(saved); f.close()
-            sys.stderr.write("[perfsuite] wrote %s\n" % path)
-        elif args.outdir and args.format == "text" and not args.detail:
-            os.makedirs(args.outdir, exist_ok=True)
-            cols = ["uaps", "upat"] if args.collector == "both" else [args.collector]
-            for col in cols:
-                path = os.path.join(args.outdir, "report.%s.txt" % col)
-                # redirect fd 1 (not just sys.stdout) so the upat-report subprocess
-                # output lands in the file too
-                f = open(path, "w")
-                saved = os.dup(1)
-                try:
-                    sys.stdout.flush()
-                    os.dup2(f.fileno(), 1)
-                    report.render(result, args.format, args.view, collector=col,
-                                  threshold=args.threshold)
-                    sys.stdout.flush()
-                finally:
-                    os.dup2(saved, 1)
-                    os.close(saved)
-                    f.close()
-                sys.stderr.write("[perfsuite] wrote %s\n" % path)
+                os.dup2(saved, 1)
+                os.close(saved)
+                f.close()
+            sys.stderr.write("[upat] wrote %s\n" % path)
         else:
             report.render(result, args.format, args.view,
                           collector=args.collector, detail=args.detail, threshold=args.threshold)

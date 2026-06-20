@@ -29,9 +29,9 @@ clean:
 	$(MAKE) -C $(PROFILE) clean
 	cd $(SNAPSHOT) && cargo clean
 
-# Stage the suite under $(PREFIX)/lib/perfsuite (the driver discovers its
-# collectors via this tree) + a bin/perfsuite wrapper.
-DEST := $(DESTDIR)$(PREFIX)/lib/perfsuite
+# Universal Performance Tools: two commands — uaps (snapshot) + upat (deep tier).
+# Stage the tree under $(PREFIX)/lib/uni-perftools; bin/uaps + bin/upat wrappers.
+DEST := $(DESTDIR)$(PREFIX)/lib/uni-perftools
 install: profile
 	cd $(SNAPSHOT) && cargo build --release
 	mkdir -p $(DEST)/collectors/profile/tools \
@@ -41,6 +41,7 @@ install: profile
 	install -m755 $(PROFILE)/tools/upat-report.py $(DEST)/collectors/profile/tools/
 	install -m755 $(SNAPSHOT)/target/release/uaps $(DEST)/collectors/snapshot/target/release/
 	cp -r core $(DEST)/
-	printf '#!/bin/sh\nexec "%s/lib/perfsuite/core/cli/perfsuite" "$$@"\n' "$(PREFIX)" > $(DESTDIR)$(PREFIX)/bin/perfsuite
-	chmod +x $(DESTDIR)$(PREFIX)/bin/perfsuite
-	@echo "installed → run: perfsuite run -- ./your_app"
+	printf '#!/bin/sh\nexec "%s/lib/uni-perftools/core/cli/upat" "$$@"\n' "$(PREFIX)" > $(DESTDIR)$(PREFIX)/bin/upat
+	printf '#!/bin/sh\nexec "%s/lib/uni-perftools/collectors/snapshot/target/release/uaps" "$$@"\n' "$(PREFIX)" > $(DESTDIR)$(PREFIX)/bin/uaps
+	chmod +x $(DESTDIR)$(PREFIX)/bin/upat $(DESTDIR)$(PREFIX)/bin/uaps
+	@echo "installed → run: uaps run -- ./app   (snapshot)   |   upat run -- ./app   (deep)"

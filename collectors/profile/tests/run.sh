@@ -148,9 +148,9 @@ ok "sampling: inclusive table (call stacks)" "echo \"$OUT\" | grep -q 'Top funct
 FOLD=$(python3 "$RPT" --folded "$TMP"/p.*.json 2>&1)
 ok "sampling: folded flamegraph export"  "echo \"$FOLD\" | grep -qE 'main;.*hot [0-9]+'"
 
-# --- driver: one command runs + reports ---
-DRV="$ROOT/bin/upat"
-OUT=$("$DRV" --no-sample "$TMP/t1" 2>&1)
+# --- driver: one command runs + reports (the suite `upat` command) ---
+DRV="$ROOT/../../core/cli/upat"
+OUT=$("$DRV" --no-sample -o "$TMP/drv" "$TMP/t1" 2>&1)   # bare form = implicit `run`
 ok "driver: prints a report"        "echo \"$OUT\" | grep -q 'UPAT'"
 ok "driver: traced dgemm"           "echo \"$OUT\" | grep -q ' dgemm_ '"
 

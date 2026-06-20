@@ -4,16 +4,22 @@ Guidance for Claude Code working in this repository.
 
 ## What this is
 
-A performance-analysis **suite** (`perfsuite`) with two collectors over a shared
-analysis core, branded after the vendor tools they descend from (made portable):
+**Universal Performance Tools** (uni-perftools) — two independent **cost-tier**
+commands over a shared analysis core, branded after the vendor tools they descend
+from (made portable). There is **no umbrella/driver command** — run one tier:
 
 - **`uaps`** — Universal Application Performance *Snapshot* (← Intel APS). Cheap,
-  counter-based bird's-eye view. Rust, `collectors/snapshot/`.
+  **non-invasive** counter-based bird's-eye view (HWPC + MPI/OpenMP, aggregated
+  across ranks). Rust, `collectors/snapshot/`.
 - **`upat`** — Universal Performance Analysis *Tool* (← CrayPAT). Deep profiler:
-  sci-lib tracing (BLAS/LAPACK/FFTW/MPI), statistical + event-based sampling,
-  call stacks, per-function roofline, I/O, heap. C, `collectors/profile/`.
+  sci-lib tracing (BLAS/LAPACK/FFTW + Fortran/C MPI/IO), statistical + event-based
+  sampling, per-function roofline, heap. C `.so` + `core/cli/upat`.
 - **`core/`** — shared contract, symbolization, roofline ceilings, analysis
-  viewpoints, and the `perfsuite` driver CLI.
+  viewpoints, insights engine, HTML reports, and the `upat` CLI.
+
+`uaps` and `upat` are cost tiers (cheap-noninvasive vs deep-invasive); run one,
+not both. `upat report` opportunistically folds in a `snap.json` if a `uaps` run
+left one in the result dir.
 
 ## Self-contained project rule (IMPORTANT — applies to everything)
 

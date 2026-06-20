@@ -26,36 +26,39 @@ this directory** (not system-wide):
 conda create -y -p ./qenv --override-channels -c conda-forge qe
 ```
 
-Then, from this directory, with `DRV=../../core/cli/perfsuite`:
+Then, from this directory, with `UPAT=../../core/cli/upat` and `UAPS` pointing at
+the built `uaps` binary. The two are cost tiers — run one. To get the combined
+view, drop a `uaps` snapshot into the same result dir and `upat report` folds it in.
 
 ```sh
-# A) full suite (snapshot + profile), serial
-$DRV collect -o out/run_serial -- ./pw -in si.scf.in > out/qe.serial.out
-$DRV report  out/run_serial                          > out/report.serial.txt
+# A) deep profile (upat), serial
+$UPAT run -o out/run_serial -- ./pw -in si.scf.in > out/qe.serial.out
+$UPAT report  out/run_serial                       > out/report.serial.txt
+# optional: add the snapshot tier into the same dir → combined report
+$UAPS run --format json -o out/run_serial/snap.json -- ./pw -in si.scf.in
 
 # B) MPI, 2 ranks (conda openmpi)
-$DRV collect -o out/run_mpi -- qenv/bin/mpirun -np 2 ./pw -in si.scf.in > out/qe.mpi.out
-$DRV report  out/run_mpi                                                 > out/report.mpi.txt
+$UPAT run -o out/run_mpi -- qenv/bin/mpirun -np 2 ./pw -in si.scf.in > out/qe.mpi.out
+$UPAT report  out/run_mpi                                            > out/report.mpi.txt
 
 # C) per-function roofline (event sampling), single-threaded for clean hotspots
 OMP_NUM_THREADS=1 OPENBLAS_NUM_THREADS=1 \
-  $DRV collect --roofline -o out/run_rf1 -- ./pw -in si.scf.in > out/qe.rf1.out
-$DRV report out/run_rf1 --view roofline-func                    > out/roofline_func.txt
+  $UPAT roofline -o out/run_rf1 -- ./pw -in si.scf.in > out/qe.rf1.out
+$UPAT report out/run_rf1 --view roofline-func          > out/roofline_func.txt
+
+# the snapshot tier on its own (APS-style bird's-eye, no injection)
+$UAPS run -- qenv/bin/mpirun -np 2 ./pw -in si.scf.in
 ```
 
-Reporting options (the two collectors print under distinct **UAPS** / **UPAT**
-banners; calls aggregate over input sizes by default):
+Reporting options (calls aggregate over input sizes by default):
 
 ```sh
-$DRV report out/run_mpi                       # combined (uaps + upat)
-$DRV report out/run_mpi -o out                # separate files: report.uaps.txt + report.upat.txt
-$DRV report out/run_serial --collector uaps   # snapshot half only
-$DRV report out/run_serial --detail blas      # per-shape BLAS breakdown (post analysis)
-$DRV report out/run_mpi    --detail mpi        # MPI volume + size histogram (text)
+$UPAT report out/run_serial --detail blas      # per-shape BLAS breakdown (post analysis)
+$UPAT report out/run_mpi    --detail mpi        # MPI volume + size histogram (text)
 
 # HTML reports (self-contained; comm matrix as a heatmap figure, like Intel APS)
-$DRV report out/run_serial --format html -o out            # → out/report.html
-$DRV report out/run_mpi --detail mpi --format html -o out  # → out/report.mpi.html
+$UPAT report out/run_serial --format html -o out            # → out/report.html
+$UPAT report out/run_mpi --detail mpi --format html -o out  # → out/report.mpi.html
 ```
 
 The text MPI report shows the full rank×rank matrix only for small jobs (≤8
@@ -67,8 +70,7 @@ scale.
 
 | file | what |
 |------|------|
-| `report.serial.txt` / `report.mpi.txt` | combined UAPS+UPAT reports |
-| `report.uaps.txt` / `report.upat.txt`  | the two collectors as separate files (MPI run) |
+| `report.serial.txt` / `report.mpi.txt` | `upat report` (deep tier; combined if snap.json present) |
 | `roofline_func.txt`                     | per-function roofline (single-threaded) |
 | `detail.blas.txt`                       | `--detail blas` per-shape breakdown |
 | `detail.mpi.txt`                        | `--detail mpi` comm matrix + size histogram (text) |

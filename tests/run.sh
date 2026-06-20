@@ -1,10 +1,14 @@
 #!/bin/bash
-# Suite end-to-end tests: drive both collectors via core/cli/perfsuite and check
-# the combined result + report. Assumes `make` has built both collectors.
+# Universal Performance Tools — end-to-end tests for the two commands:
+#   uaps  (snapshot, Rust)         and   upat  (deep profile, core/cli/upat).
+# They are cost tiers, run independently; `upat report` merges a snap.json if one
+# happens to be in the result dir. Assumes `make` has built both collectors.
 set -u
 cd "$(dirname "$0")/.."
 ROOT=$(pwd)
-DRV="$ROOT/core/cli/perfsuite"
+UPAT="$ROOT/core/cli/upat"
+UAPS=$(ls "$ROOT"/collectors/snapshot/target/release/uaps \
+          "$ROOT"/collectors/snapshot/target/debug/uaps 2>/dev/null | head -1)
 CC=${CC:-mpicc}
 TMP=$(mktemp -d)
 PASS=0; FAIL=0
@@ -14,7 +18,7 @@ ok(){ if eval "$2"; then echo "  PASS: $1"; PASS=$((PASS+1)); else echo "  FAIL:
 
 [ -f "$ROOT/collectors/profile/libupat-preload.so" ] || { echo "build first (make)"; exit 1; }
 
-# --- serial BLAS/LAPACK app ---
+# --- serial BLAS/LAPACK app, deep tier (upat) ---
 cat > "$TMP/s.c" <<'EOF'
 #include <stdlib.h>
 extern void dgemm_(char*,char*,int*,int*,int*,double*,double*,int*,double*,int*,double*,double*,int*);
@@ -27,34 +31,40 @@ int main(){int n=256;char N='N';
  return 0;}
 EOF
 $CC -O2 "$TMP/s.c" -o "$TMP/s" "$BLAS" 2>/dev/null
-OUT=$("$DRV" run -o "$TMP/r1" -- "$TMP/s" 2>/dev/null)
-ok "serial: UPAT profile section"   "echo \"$OUT\" | grep -q 'UPAT'"
-ok "serial: INSIGHTS section"       "echo \"$OUT\" | grep -q 'INSIGHTS'"
-ok "serial: math-libs insight"     "echo \"$OUT\" | grep -qi 'math libr'"
-ok "serial: result has prof.0"      "[ -f $TMP/r1/prof.0.json ]"
-ok "serial: result has manifest"    "[ -f $TMP/r1/manifest.json ]"
-ROUT=$("$DRV" report "$TMP/r1" --view roofline 2>/dev/null)
+OUT=$("$UPAT" run -o "$TMP/r1" -- "$TMP/s" 2>/dev/null)
+ok "upat: UPAT report section"      "echo \"$OUT\" | grep -q 'UPAT'"
+ok "upat: INSIGHTS section"         "echo \"$OUT\" | grep -q 'INSIGHTS'"
+ok "upat: math-libs insight"       "echo \"$OUT\" | grep -qi 'math libr'"
+ok "upat: result has prof.0"       "[ -f $TMP/r1/prof.0.json ]"
+ok "upat: profile-only manifest"   "grep -q '\"profile\"' $TMP/r1/manifest.json && ! grep -q snapshot $TMP/r1/manifest.json"
+ok "upat: no snap.json (tier)"     "[ ! -f $TMP/r1/snap.json ]"
+ROUT=$("$UPAT" report "$TMP/r1" --view roofline 2>/dev/null)
 ok "roofline: FP64 & FP32 ceilings" "echo \"$ROUT\" | grep -q 'FP64' && echo \"$ROUT\" | grep -q 'FP32'"
-ok "roofline: whole-program only"   "echo \"$ROUT\" | grep -q 'Roofline (whole program)'"
-# snapshot present iff perf available; don't hard-fail when counters are blocked
-if [ -f "$TMP/r1/snap.json" ]; then
-  ok "serial: UAPS snapshot section" "echo \"$OUT\" | grep -q 'UAPS'"
-fi
-# aggregation + detail + separate files
 ok "agg: zgemm/zgemv not per-shape" "! echo \"$OUT\" | grep -qE 'gemm_\[m='"
-ok "detail: per-shape on request"  "$DRV report $TMP/r1 --detail blas 2>/dev/null | grep -qE 'gemm_\[m=|calls by shape'"
+ok "detail: per-shape on request"  "$UPAT report $TMP/r1 --detail blas 2>/dev/null | grep -qE 'gemm_\[m=|calls by shape'"
 ok "footnote: legend present"      "echo \"$OUT\" | grep -q 'legend:'"
-$DRV report "$TMP/r1" -o "$TMP/split" >/dev/null 2>&1
-ok "split: report.uaps.txt"        "[ -s $TMP/split/report.uaps.txt ]"
-ok "split: report.upat.txt"        "[ -s $TMP/split/report.upat.txt ]"
-ok "split: uaps file has no sci-lib table" "! grep -q 'Library calls by group' $TMP/split/report.uaps.txt"
-ok "split: upat file has sci-lib table"    "grep -q 'Library calls by group' $TMP/split/report.upat.txt"
-$DRV report "$TMP/r1" --format html -o "$TMP/html" >/dev/null 2>&1
-ok "html: report.html written"     "[ -s $TMP/html/report.html ]"
-ok "html: svg roofline figure"     "grep -q '<svg' $TMP/html/report.html"
+$UPAT report "$TMP/r1" -o "$TMP/o" >/dev/null 2>&1
+ok "report -o: single report.txt"  "[ -s $TMP/o/report.txt ]"
+ok "report.txt has sci-lib table"  "grep -q 'Library calls by group' $TMP/o/report.txt"
+$UPAT report "$TMP/r1" --format html -o "$TMP/o" >/dev/null 2>&1
+ok "html: report.html written"     "[ -s $TMP/o/report.html ]"
+ok "html: svg roofline figure"     "grep -q '<svg' $TMP/o/report.html"
+
+# --- merge: snapshot tier (uaps) into the same dir, then upat report combines ---
+if [ -n "$UAPS" ]; then
+  "$UAPS" run --format json -o "$TMP/r1/snap.json" -- "$TMP/s" >/dev/null 2>&1
+  if [ -f "$TMP/r1/snap.json" ]; then
+    MOUT=$("$UPAT" report "$TMP/r1" 2>/dev/null)
+    ok "merge: UAPS section appears"  "echo \"$MOUT\" | grep -q 'UAPS'"
+  else
+    echo "  SKIP: merge (uaps produced no snap.json — perf blocked?)"
+  fi
+else
+  echo "  SKIP: merge (uaps binary not built)"
+fi
 
 # per-function roofline (B): needs perf_event sampling access; skip if blocked
-RFOUT=$("$DRV" roofline -o "$TMP/rf" -- "$TMP/s" 2>/dev/null)
+RFOUT=$("$UPAT" roofline -o "$TMP/rf" -- "$TMP/s" 2>/dev/null)
 if echo "$RFOUT" | grep -q 'Roofline (per function'; then
   ok "roofline-func: per-function view" "echo \"$RFOUT\" | grep -q 'Roofline (per function'"
   ok "roofline-func: dgemm characterized" "echo \"$RFOUT\" | grep -q 'dgemm_'"
@@ -62,7 +72,7 @@ else
   echo "  SKIP: roofline-func (no perf_event sampling access)"
 fi
 
-# --- MPI app with rank imbalance ---
+# --- MPI app with rank imbalance (deep tier) ---
 cat > "$TMP/m.c" <<'EOF'
 #include <mpi.h>
 #include <stdlib.h>
@@ -80,25 +90,24 @@ EOF
 $CC -O2 "$TMP/m.c" -o "$TMP/m" "$BLAS" 2>/dev/null
 OMPI_MCA_rmaps_base_oversubscribe=1 mpirun --oversubscribe -n 4 true >/dev/null 2>&1 && HAVE_MPI=1 || HAVE_MPI=0
 if [ "$HAVE_MPI" = 1 ]; then
-  OUT=$(OMPI_MCA_rmaps_base_oversubscribe=1 "$DRV" run -o "$TMP/r2" -- mpirun --oversubscribe -n 4 "$TMP/m" 2>/dev/null)
+  OUT=$(OMPI_MCA_rmaps_base_oversubscribe=1 "$UPAT" run -o "$TMP/r2" -- mpirun --oversubscribe -n 4 "$TMP/m" 2>/dev/null)
   ok "mpi: 4 prof files"            "[ \$(ls $TMP/r2/prof.*.json | wc -l) -eq 4 ]"
-  ok "mpi: exactly one snap-or-none, no stray prof" "[ \$(ls $TMP/r2/prof.*.json | wc -l) -eq 4 ]"
-  OUT0=$("$DRV" report "$TMP/r2" --threshold 0 2>/dev/null)   # show all (tiny MPI in a compute-heavy app)
+  OUT0=$("$UPAT" report "$TMP/r2" --threshold 0 2>/dev/null)   # show all (tiny MPI in a compute-heavy app)
   ok "mpi: MPI table in profile"    "echo \"$OUT0\" | grep -q 'MPI (communication)'"
   ok "mpi: unified imb header"      "echo \"$OUT\" | grep -q 'imb = (max-avg)/max'"
   ok "mpi: dgemm imbalance insight" "echo \"$OUT\" | grep -qiE 'imbalanc'"
   ok "mpi: threshold hides tiny calls" "echo \"$OUT\" | grep -qE 'more below .*% of runtime'"
   ok "mpi: APS-style top-5 summary"  "echo \"$OUT\" | grep -q 'MPI summary'"
-  MOUT=$(OMPI_MCA_rmaps_base_oversubscribe=1 "$DRV" report "$TMP/r2" --view mpi 2>/dev/null)
+  MOUT=$(OMPI_MCA_rmaps_base_oversubscribe=1 "$UPAT" report "$TMP/r2" --view mpi 2>/dev/null)
   ok "mpi: wait-state view"         "echo \"$MOUT\" | grep -q 'MPI wait-state'"
   ok "mpi: sync vs transfer split"  "echo \"$MOUT\" | grep -q 'synchronization/wait'"
   ok "mpi: comm/compute overlap"    "echo \"$MOUT\" | grep -q 'overlap:'"
-  AOUT=$(OMPI_MCA_rmaps_base_oversubscribe=1 "$DRV" report "$TMP/r2" --view anomaly 2>/dev/null)
+  AOUT=$(OMPI_MCA_rmaps_base_oversubscribe=1 "$UPAT" report "$TMP/r2" --view anomaly 2>/dev/null)
   ok "anomaly: variance view"       "echo \"$AOUT\" | grep -q 'Anomaly / variance'"
   ok "anomaly: per-call variance"   "echo \"$AOUT\" | grep -q 'most variable call:'"
-  "$DRV" report "$TMP/r2" --detail mpi --format html -o "$TMP/html" >/dev/null 2>&1
-  ok "html mpi: comm-matrix heatmap" "grep -qE \"class=.hm.\" $TMP/html/report.mpi.html"
-  ok "html mpi: size histogram bars" "grep -qE \"class=.bar.\" $TMP/html/report.mpi.html"
+  "$UPAT" report "$TMP/r2" --detail mpi --format html -o "$TMP/o" >/dev/null 2>&1
+  ok "html mpi: comm-matrix heatmap" "grep -qE \"class=.hm.\" $TMP/o/report.mpi.html"
+  ok "html mpi: size histogram bars" "grep -qE \"class=.bar.\" $TMP/o/report.mpi.html"
 fi
 
 rm -rf "$TMP"

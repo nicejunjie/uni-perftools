@@ -58,8 +58,8 @@ def _load(path):
 
 
 # which viewpoints belong to which collector's report
-UAPS_VIEWS = ["roofline", "microarch", "memory", "vectorization", "threading", "mpi-summary"]
-UPAT_VIEWS = ["roofline-func", "mpi", "imbalance", "anomaly"]
+UAPS_VIEWS = ["roofline", "microarch", "memory", "vectorization", "threading"]
+UPAT_VIEWS = ["roofline-func", "mpi-summary", "mpi", "imbalance", "anomaly"]
 
 UAPS_BANNER = ["─" * 78,
                "  UAPS  —  Universal Application Performance Snapshot   (bird's-eye: HW counters)",
@@ -137,17 +137,19 @@ def render(result_dir, fmt="text", view="all", collector="both", detail=None, th
         return
 
     suite = insights.suite_insights(snap, profile)
-    do_uaps = collector in ("both", "uaps")
+    # snapshot section only when snap.json is actually present (e.g. a uaps run
+    # into the same dir); otherwise this is a pure upat (deep-tier) report.
+    do_uaps = collector in ("both", "uaps") and snap is not None
     do_upat = collector in ("both", "upat")
 
     head = []
     if collector == "both":
         head += ["=" * 78,
-                 "                        Performance Suite  (uaps + upat)",
+                 "                        Universal Performance Tools",
                  "=" * 78]
     if manifest.get("command"):
         head.append(" command: %s" % " ".join(manifest["command"]))
-    head.append("\n── INSIGHTS  (combined uaps + upat) " + "─" * 42)
+    head.append("\n── INSIGHTS " + "─" * 66)
     for s in suite:
         head.append("  ▶ " + s)
     print("\n".join(head))

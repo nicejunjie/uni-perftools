@@ -1,3 +1,0 @@
-[perfsuite] snapshot collector not found — profile only
-[perfsuite] collecting: ./pw -in si.scf.in
-[perfsuite] result: out/run_rf1  (perfsuite report out/run_rf1)

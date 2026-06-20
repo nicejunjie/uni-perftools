@@ -1,34 +1,52 @@
-# Performance Suite (snapshot + profile)
+# Universal Performance Tools (uni-perftools)
 
-A polyglot HPC performance suite combining two collectors and a shared analysis
-core, modeled on VTune's *collect → result → finalize → report* pipeline:
+A portable HPC performance suite — two independent **cost-tier** commands over a
+shared analysis core. They descend from the vendor tools they emulate, made
+universal (vendor-neutral):
 
-- **snapshot** (`collectors/snapshot`, Rust) — APS-like bird's-eye view from
-  hardware counters: **roofline** + microarchitecture characterization (IPC,
-  %peak, top-down, DRAM/NUMA, vectorization) and coarse time-by-category. Answers
-  *"what kind of bottleneck, how efficient?"*
-- **profile** (`collectors/profile`, C `.so`) — CrayPAT-like detail via call
-  interception + call-stack sampling: top functions/lines, scientific-library
-  tracing (BLAS/LAPACK/PBLAS/ScaLAPACK/CBLAS/LAPACKe/FFTW), MPI (portable PMPI),
-  per-call I/O, heap. Answers *"where exactly does the time go?"*
-- **core** (`core/`) — the shared spine: result/contract format, symbolization,
-  cross-rank aggregation + the one imbalance metric, the analysis **viewpoints**,
-  the unified insights engine, and the driver CLI.
+- **`uaps`** — *Universal Application Performance Snapshot* (← Intel **APS**).
+  Cheap, **non-invasive** bird's-eye view from hardware counters: roofline +
+  microarchitecture (IPC, %peak, top-down, DRAM/NUMA, vectorization), MPI &
+  OpenMP/thread imbalance, memory, I/O — aggregated across ranks. Run it first
+  on anything (no injection needed): *"what kind of bottleneck, how efficient?"*
+  Rust, `collectors/snapshot/`.
+- **`upat`** — *Universal Performance Analysis Tool* (← **CrayPAT**). The deep
+  dive via LD_PRELOAD interception + call-stack/event sampling: sci-lib tracing
+  (BLAS/LAPACK/FFTW + Fortran/C **MPI** + I/O), per-function roofline, comm
+  matrix, heap. *"where exactly does the time go?"* C `.so` + report,
+  `collectors/profile/`.
+- **`core/`** — shared spine: result/contract format, symbolization, the one
+  imbalance metric, empirical roofline ceilings, analysis **viewpoints**, the
+  insights engine, HTML reports, and the `upat` CLI.
+
+They are **cost tiers, run one or the other** — there is no umbrella driver. If a
+`snap.json` from a `uaps` run happens to sit in the result dir, `upat report`
+folds it in automatically.
+
+## Usage
+```
+uaps run -- mpirun -n 4 ./app      # snapshot: HWPC + MPI/OpenMP, one screen across ranks
+upat run -- ./app                  # deep profile + report
+upat run -- mpirun -n 4 ./app
+upat report  RESULT                # re-render (text); --format html for the HTML report
+upat report  RESULT --detail mpi   # per-facility detail (comm matrix, per-shape calls)
+upat roofline -- ./app             # per-function roofline (event sampling)
+upat scale   R1 R2 ...             # strong/weak scaling across runs
+```
 
 ## Layout
 ```
-collectors/profile/    C profiler  → libprofile (LD_PRELOAD / Frida)
-collectors/snapshot/   Rust counters → snapshot binary
-core/{contract,symbolize,analysis,cli}   shared spine
-testbench/  tests/  docs/
+collectors/profile/    C profiler  → libupat-{preload,frida}.so + upat-report.py
+collectors/snapshot/   Rust counters → uaps
+core/{contract,symbolize,roofline,analysis,cli}   shared spine (upat command in core/cli/upat)
+tests/  docs/
 ```
 
 ## Build
 ```
 make            # builds both collectors
-make test       # profile tests + snapshot tests
+make test       # profile tests + snapshot tests + suite end-to-end tests
+make install    # installs bin/uaps + bin/upat under PREFIX
 ```
 Each collector also builds standalone (`make -C collectors/profile`,
 `cd collectors/snapshot && cargo build`).
-
-> Status: mid-restructure into the monorepo. See `SUITE_PLAN.md` for the roadmap.

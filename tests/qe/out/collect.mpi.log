@@ -1,3 +1,0 @@
-[perfsuite] collecting: qenv/bin/mpirun -np 2 ./pw -in si.scf.in
-uaps: report written to out/run_mpi/snap.json
-[perfsuite] result: out/run_mpi  (perfsuite report out/run_mpi)

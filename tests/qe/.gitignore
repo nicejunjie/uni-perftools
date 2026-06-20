@@ -6,3 +6,4 @@ pkg/
 # QE scratch + raw per-run result dirs (regenerable); rendered reports are kept
 scratch/
 out/run_*/
+out/collect.*.log
