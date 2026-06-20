@@ -56,7 +56,8 @@ def samp_head(imb, last="Function"):
 
 
 def samp_cols(samp, total, imbs, imbp, imb):
-    """Leading numeric columns of a sampling row, with/without imbalance."""
+    """Leading numeric columns of a sampling row, with/without imbalance. A
+    balanced row legitimately reads 0.0% (measured, not missing)."""
     p = 100.0 * samp / total if total else 0.0
     return ("%6.1f%% %9d %9.1f %8.1f%%" % (p, samp, imbs, imbp)) if imb \
         else ("%6.1f%% %9d" % (p, samp))
