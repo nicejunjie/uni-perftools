@@ -5,52 +5,52 @@ uaps — Application Performance Snapshot
 Bottleneck: Frontend-bound
 
 Overview
-  Elapsed time                   2.921 s
-  Physical core utilization      28.1%
-  CPU utilization                9.00 cores
+  Elapsed time                   2.843 s
+  Physical core utilization      28.3%
+  CPU utilization                9.05 cores
   Threads (peak)                 33
 
 Compute
-  CPU time                       26.29 s
-  IPC (instructions/cycle)       0.27
-  CPI (cycles/instruction)       3.66
-  FP throughput                  6.47 GFLOP/s
-  Branch mispredict rate         0.3%
+  CPU time                       25.74 s
+  IPC (instructions/cycle)       0.28
+  CPI (cycles/instruction)       3.58
+  FP throughput                  6.55 GFLOP/s
+  Branch mispredict rate         0.4%
 
 Top-down (% of pipeline slots)
-  Retiring                       4.7%
+  Retiring                       4.8%
   Frontend bound                 41.0%
-  Backend bound                  50.5%
+  Backend bound                  50.3%
   Bad speculation                0.3%
 
 Memory
-  Memory footprint (peak RSS)    69.6 MiB
-  Cache miss rate                15.4%
-  LLC misses / 1K instr          7.01 MPKI
-  DRAM fills / 1K instr          0.35 DPKI
-  DRAM-bound (of demand fills)   2.0%
+  Memory footprint (peak RSS)    70.0 MiB
+  Cache miss rate                15.0%
+  LLC misses / 1K instr          6.90 MPKI
+  DRAM fills / 1K instr          0.37 DPKI
+  DRAM-bound (of demand fills)   2.1%
   NUMA remote access             0.0%
-  Memory bound                   2.9%
+  Memory bound                   3.1%
 
 Parallelism (MPI / threads)
   Active worker threads          17
   Thread imbalance               13.7%
 
 I/O
-  Disk read                      0 B
-  Disk write                     1.2 MiB
-  I/O read (logical)             890.4 KiB
-  I/O write (logical)            1.1 MiB
+  Disk read                      4.0 KiB
+  Disk write                     284.0 KiB
+  I/O read (logical)             740.4 KiB
+  I/O write (logical)            281.0 KiB
 
 Hardware counters
-  Instructions                   39356414057
-  CPU cycles                     144207696710
-  Cache references               1796831579
-  Cache misses (LLC)             275917434
-  Branch instructions            5624930600
-  Branch misses                  18939234
-  Demand fills (all sources)     688244506
-  Demand fills from DRAM         13953676
+  Instructions                   39405287851
+  CPU cycles                     140924451692
+  Cache references               1817623021
+  Cache misses (LLC)             272086884
+  Branch instructions            5609294162
+  Branch misses                  20062779
+  Demand fills (all sources)     699960489
+  Demand fills from DRAM         14651907
   Demand fills from remote node  0
 
 Insights

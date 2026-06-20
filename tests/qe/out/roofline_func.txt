@@ -4,16 +4,16 @@
     function                    self(s)      AI   GFLOP/s   ceiling   %peak  bound
     ──────────────────────────────────────────────────────────────────────────────
     epoll_wait                    1.508     inf       0.0      1112      0%  compute
-    __GI___poll                   1.442     inf       0.0      1112      0%  compute
-    n1bv_32                       0.222     inf      23.9      1112      2%  compute
-    n1fv_32                       0.217     inf      18.9      1112      2%  compute
-    __pthread_rwlock_rdunlock     0.108     inf       1.5      1112      0%  compute
-    0x7f72ac5e4c4b                0.078     inf       2.6      1112      0%  compute
-    n1_32                         0.071     inf       5.3      1112      0%  compute
-    __fft_scalar_fftw3_MOD_cff    0.050     inf      21.6      1112      2%  compute
-    vloc_psi_k_acc_               0.044     inf      25.2      1112      2%  compute
-    apply                         0.026     inf      13.5      1112      1%  compute
-    libprof_now                   0.025     inf       3.4      1112      0%  compute
-    libc_feholdsetround_sse_ct    0.025     inf       5.2      1112      0%  compute
+    __GI___poll                   1.444     inf       0.0      1112      0%  compute
+    n1bv_32                       0.252     inf      21.5      1112      2%  compute
+    n1fv_32                       0.185     inf      22.4      1112      2%  compute
+    __pthread_rwlock_rdunlock     0.122     inf       1.2      1112      0%  compute
+    0x7c9d7d1b6c4b                0.080     inf       4.3      1112      0%  compute
+    n1_32                         0.070     inf       5.2      1112      0%  compute
+    __fft_scalar_fftw3_MOD_cff    0.040     inf      26.6      1112      2%  compute
+    libc_feholdsetround_sse_ct    0.037     inf       3.1      1112      0%  compute
+    vloc_psi_k_acc_               0.035     inf      30.9      1112      3%  compute
+    __fft_helper_subroutines_M    0.025     inf       0.0      1112      0%  compute
+    n1fv_8                        0.024     inf       3.4      1112      0%  compute
     ──────────────────────────────────────────────────────────────────────────────
     (AI=inf → no DRAM traffic sampled = cache-resident/compute-bound; precision assumed DP)

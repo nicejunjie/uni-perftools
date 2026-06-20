@@ -5,40 +5,40 @@ uaps — Application Performance Snapshot
 Bottleneck: Frontend-bound
 
 Overview
-  Elapsed time                   1.857 s
+  Elapsed time                   1.763 s
   Physical core utilization      0.0%
   CPU utilization                0.01 cores
   Threads (peak)                 3
 
 Compute
   CPU time                       0.01 s
-  IPC (instructions/cycle)       0.75
-  CPI (cycles/instruction)       1.33
+  IPC (instructions/cycle)       1.29
+  CPI (cycles/instruction)       0.77
   FP throughput                  0.00 GFLOP/s
-  Branch mispredict rate         1.1%
+  Branch mispredict rate         1.4%
 
 Top-down (% of pipeline slots)
-  Retiring                       20.7%
-  Frontend bound                 56.7%
-  Backend bound                  18.8%
-  Bad speculation                2.4%
+  Retiring                       18.3%
+  Frontend bound                 39.1%
+  Backend bound                  39.7%
+  Bad speculation                2.1%
 
 Memory
   Memory footprint (peak RSS)    12.8 MiB
-  Cache miss rate                18.7%
-  LLC misses / 1K instr          12.46 MPKI
-  DRAM fills / 1K instr          2.35 DPKI
-  DRAM-bound (of demand fills)   17.6%
+  Cache miss rate                15.8%
+  LLC misses / 1K instr          7.35 MPKI
+  DRAM fills / 1K instr          0.69 DPKI
+  DRAM-bound (of demand fills)   8.6%
   NUMA remote access             0.0%
-  Memory bound                   53.0%
+  Memory bound                   26.8%
 
 Parallelism (MPI / threads)
   MPI ranks                      2
   MPI time (avg/rank)            0.08 s
-  MPI time                       14.4%
-  MPI imbalance                  5.5%
-    MPI_Alltoall  (65% of MPI)   0.10 s
-    MPI_Barrier  (13% of MPI)    0.02 s
+  MPI time                       14.5%
+  MPI imbalance                  8.8%
+    MPI_Alltoall  (66% of MPI)   0.11 s
+    MPI_Barrier  (12% of MPI)    0.02 s
     MPI_Allreduce  (11% of MPI)  0.02 s
     MPI_Bcast  (10% of MPI)      0.02 s
     MPI_Send  (1% of MPI)        0.00 s
@@ -46,19 +46,19 @@ Parallelism (MPI / threads)
 I/O
   Disk read                      0 B
   Disk write                     312.0 KiB
-  I/O read (logical)             207.1 KiB
+  I/O read (logical)             207.2 KiB
   I/O write (logical)            386.7 KiB
 
 Hardware counters
-  Instructions                   43431707
-  CPU cycles                     57709055
-  Cache references               2894227
-  Cache misses (LLC)             541048
-  Branch instructions            12848288
-  Branch misses                  135663
-  Demand fills (all sources)     577715
-  Demand fills from DRAM         101962
+  Instructions                   112155837
+  CPU cycles                     86708079
+  Cache references               5221919
+  Cache misses (LLC)             824154
+  Branch instructions            20233188
+  Branch misses                  292168
+  Demand fills (all sources)     898046
+  Demand fills from DRAM         77446
   Demand fills from remote node  0
 
 Insights
-  • Frontend-bound: 56.7% of pipeline slots stalled on instruction supply. Reduce code footprint / I-cache pressure; check for excessive branching or large unrolled hot paths.
+  • Frontend-bound: 39.1% of pipeline slots stalled on instruction supply. Reduce code footprint / I-cache pressure; check for excessive branching or large unrolled hot paths.

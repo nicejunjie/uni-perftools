@@ -26,6 +26,12 @@ this directory** (not system-wide):
 conda create -y -p ./qenv --override-channels -c conda-forge qe
 ```
 
+**Canonical run: `bash run.sh`** — it wipes all prior outputs first (so stale
+files can never be mistaken for fresh results), pins every tier to physical cores
+(no SMT oversubscription), runs serial + MPI + per-function roofline, and
+regenerates every saved report under `out/` (text + HTML). The manual commands
+below are the same steps, broken out for reference.
+
 Then, from this directory, with `UPAT=../../core/cli/upat` and `UAPS` pointing at
 the built `uaps` binary. The two are cost tiers — run one. To get the combined
 view, drop a `uaps` snapshot into the same result dir and `upat report` folds it in.

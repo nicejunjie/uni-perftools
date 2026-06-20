@@ -1,6 +1,6 @@
 [upat] collecting: ./pw -in si.scf.in
 
-     Program PWSCF v.7.5 starts on 20Jun2026 at 15:10: 5 
+     Program PWSCF v.7.5 starts on 20Jun2026 at 15:40:25 
 
      This program is part of the open-source Quantum ESPRESSO suite
      for quantum simulation of materials; please cite
@@ -16,7 +16,7 @@
      Threads/MPI process:                    16
 
      MPI processes distributed on     1 nodes
-     4911 MiB available memory on the printing compute node when the environment starts
+     4893 MiB available memory on the printing compute node when the environment starts
 
      Reading input from si.scf.in
 
@@ -186,7 +186,7 @@
      Davidson diagonalization with overlap
      ethr =  7.41E-04,  avg # of iterations =  1.0
 
-     total cpu time spent up to now is        0.9 secs
+     total cpu time spent up to now is        0.8 secs
 
      total energy              =     -15.85255314 Ry
      estimated scf accuracy    <       0.00219617 Ry
@@ -222,7 +222,7 @@
      Davidson diagonalization with overlap
      ethr =  9.80E-10,  avg # of iterations =  3.2
 
-     total cpu time spent up to now is        1.8 secs
+     total cpu time spent up to now is        1.7 secs
 
      End of self-consistent calculation
 
@@ -481,8 +481,8 @@
 
      Forces acting on atoms (cartesian axes, Ry/au):
 
-     atom    1 type  1   force =    -0.00000000   -0.00000000    0.00000000
-     atom    2 type  1   force =     0.00000000    0.00000000   -0.00000000
+     atom    1 type  1   force =     0.00000000   -0.00000000    0.00000000
+     atom    2 type  1   force =    -0.00000000    0.00000000   -0.00000000
 
      Total force =     0.000000     Total SCF correction =     0.000000
 
@@ -490,8 +490,8 @@
      Computing stress (Cartesian axis) and pressure
 
           total   stress  (Ry/bohr**3)                   (kbar)     P=      -14.83
-  -0.00010081   0.00000000  -0.00000000          -14.83        0.00       -0.00
-   0.00000000  -0.00010081   0.00000000            0.00      -14.83        0.00
+  -0.00010081  -0.00000000  -0.00000000          -14.83       -0.00       -0.00
+  -0.00000000  -0.00010081   0.00000000           -0.00      -14.83        0.00
   -0.00000000   0.00000000  -0.00010081           -0.00        0.00      -14.83
 
 
@@ -499,48 +499,48 @@
      XML data file, charge density, pseudopotentials, collected wavefunctions
 
      init_run     :      3.83s CPU      0.33s WALL (       1 calls)
-     electrons    :     23.41s CPU      1.42s WALL (       1 calls)
+     electrons    :     23.56s CPU      1.41s WALL (       1 calls)
      forces       :      0.14s CPU      0.01s WALL (       1 calls)
-     stress       :      0.19s CPU      0.05s WALL (       1 calls)
+     stress       :      0.18s CPU      0.05s WALL (       1 calls)
 
      Called by init_run:
-     wfcinit      :      3.17s CPU      0.22s WALL (       1 calls)
+     wfcinit      :      3.16s CPU      0.22s WALL (       1 calls)
      potinit      :      0.06s CPU      0.00s WALL (       1 calls)
-     hinit0       :      0.59s CPU      0.11s WALL (       1 calls)
+     hinit0       :      0.60s CPU      0.11s WALL (       1 calls)
 
      Called by electrons:
-     c_bands      :     19.63s CPU      1.18s WALL (       7 calls)
-     sum_band     :      3.62s CPU      0.22s WALL (       7 calls)
-     v_of_rho     :      0.02s CPU      0.00s WALL (       7 calls)
-     mix_rho      :      0.05s CPU      0.00s WALL (       7 calls)
+     c_bands      :     19.83s CPU      1.19s WALL (       7 calls)
+     sum_band     :      3.66s CPU      0.22s WALL (       7 calls)
+     v_of_rho     :      0.05s CPU      0.00s WALL (       7 calls)
+     mix_rho      :      0.03s CPU      0.00s WALL (       7 calls)
 
      Called by c_bands:
-     init_us_2    :      0.81s CPU      0.05s WALL (    1020 calls)
-     cegterg      :     19.20s CPU      1.14s WALL (     420 calls)
+     init_us_2    :      0.90s CPU      0.05s WALL (    1020 calls)
+     cegterg      :     19.10s CPU      1.15s WALL (     420 calls)
 
      Called by *egterg:
-     cdiaghg      :      0.49s CPU      0.03s WALL (    1372 calls)
-     h_psi        :     20.53s CPU      1.25s WALL (    1492 calls)
-     g_psi        :      0.09s CPU      0.01s WALL (    1012 calls)
+     cdiaghg      :      0.58s CPU      0.03s WALL (    1372 calls)
+     h_psi        :     20.24s CPU      1.26s WALL (    1492 calls)
+     g_psi        :      0.20s CPU      0.01s WALL (    1012 calls)
 
      Called by h_psi:
-     h_psi:calbec :      0.13s CPU      0.01s WALL (    1492 calls)
-     vloc_psi     :     20.01s CPU      1.22s WALL (    1492 calls)
+     h_psi:calbec :      0.20s CPU      0.01s WALL (    1492 calls)
+     vloc_psi     :     19.76s CPU      1.23s WALL (    1492 calls)
                                         0.00s GPU  (    1492 calls)
-     add_vuspsi   :      0.27s CPU      0.01s WALL (    1492 calls)
+     add_vuspsi   :      0.15s CPU      0.01s WALL (    1492 calls)
 
      General routines
-     calbec       :      0.15s CPU      0.02s WALL (    2512 calls)
-     fft          :      0.58s CPU      0.10s WALL (      26 calls)
-     ffts         :      0.02s CPU      0.00s WALL (       7 calls)
-     fftw         :     19.71s CPU      1.22s WALL (   12434 calls)
+     calbec       :      0.25s CPU      0.02s WALL (    2512 calls)
+     fft          :      0.62s CPU      0.10s WALL (      26 calls)
+     ffts         :      0.00s CPU      0.00s WALL (       7 calls)
+     fftw         :     19.55s CPU      1.22s WALL (   12434 calls)
 
      Parallel routines
 
-     PWSCF        :     27.71s CPU      1.83s WALL
+     PWSCF        :     27.87s CPU      1.82s WALL
 
 
-   This run was terminated on:  15:10: 7  20Jun2026            
+   This run was terminated on:  15:40:27  20Jun2026            
 
 =------------------------------------------------------------------------------=
    JOB DONE.
@@ -560,212 +560,208 @@
 
 ══ MPI wait-state (call-type heuristic) ══
     synchronization/wait 0.0004s (100%) | transfer/initiation 0.0000s ( 0%)
-    call                      excl(s)   class   imb%
-    ────────────────────────────────────────────────
-    mpi_alltoallv_            0.00011    wait     0%
-    mpi_bcast_                0.00010    wait     0%
-    mpi_gatherv_              0.00010    wait     0%
-    mpi_allreduce_            0.00004    wait     0%
-    mpi_barrier_              0.00004    wait     0%
-    mpi_alltoall_             0.00000    wait     0%
-    ────────────────────────────────────────────────
+    call                      excl(s)   class
+    ─────────────────────────────────────────
+    mpi_alltoallv_            0.00013    wait
+    mpi_gatherv_              0.00010    wait
+    mpi_bcast_                0.00010    wait
+    mpi_allreduce_            0.00004    wait
+    mpi_barrier_              0.00003    wait
+    mpi_alltoall_             0.00000    wait
+    ─────────────────────────────────────────
     overlap: all communication is blocking — no comm/compute overlap possible. Consider nonblocking calls (Isend/Irecv or Iallreduce-style collectives) + compute + Wait.
  application: /home/junjie/vibe-coding/scilib-prof/tests/qe/qenv/bin/pw.x
- ranks: 1   max runtime (s): 1.971   imbalance: active   imb = (max-avg)/max
+ ranks: 1   max runtime (s): 1.962   imbalance: active   imb = (max-avg)/max
 
 Table 1:  Profile by Function Group  (sampling @ 1000 Hz, 1 PEs)
           time charged to the highest-level group on each sample's stack
 
-   Samp%      Samp  Imb.Samp  Imb.Samp%  Group
+   Samp%      Samp  Group
  ----------------------------------------------------------------------
- 100.0%     32863       0.0      0.0%  Total
+ 100.0%     32706  Total
  ----------------------------------------------------------------------
-  82.8%     27223       0.0      0.0%  ETC
-   8.0%      2644       0.0      0.0%  FFTW
-   6.1%      2007       0.0      0.0%  MPI
-   2.8%       907       0.0      0.0%  USER
-   0.2%        82       0.0      0.0%  BLAS
+  82.6%     27026  ETC
+   8.3%      2702  FFTW
+   6.1%      1993  MPI
+   2.8%       919  USER
+   0.2%        66  BLAS
   ----------------------------------------------------------------------
   legend:
     Samp%        percent of samples here (~ percent of wall time)
     Samp         sample count (wall time ~ Samp / sampling-Hz)
-    Imb.Samp     max-rank samples minus average across ranks (recoverable)
-    Imb.Samp%    Imb.Samp / max = (max-avg)/max
     groups       USER=your code, ETC=other/system; MPI/BLAS/LAPACK/FFTW/IO as named
 
   Top functions (inclusive)
   ------------------------------------------------------------------------------
-   Samp%      Samp  Imb.Samp  Imb.Samp%  Function
+   Samp%      Samp  Function
  ------------------------------------------------------------------------------
-  94.4%     31008       0.0      0.0%  tramp  [ETC]
-  94.4%     31008       0.0      0.0%  start_thread  [ETC]
-  94.4%     31008       0.0      0.0%  clone3  [ETC]
-  72.6%     23861       0.0      0.0%  gomp_thread_start  [ETC]
-  65.9%     21658       0.0      0.0%  do_spin  [ETC]
-  10.0%      3300       0.0      0.0%  gomp_finish_task  [ETC]
-   7.2%      2352       0.0      0.0%  apply  [FFTW]
-   7.0%      2316       0.0      0.0%  __futex_wait  [ETC]
-   6.0%      1961       0.0      0.0%  epoll_wait  [ETC]
-   6.0%      1960       0.0      0.0%  event_base_loop  [ETC]
-   6.0%      1960       0.0      0.0%  progress_engine  [MPI]
-   6.0%      1959       0.0      0.0%  epoll_dispatch  [ETC]
-   5.8%      1892       0.0      0.0%  cuEGLApiInit  [ETC]
-   5.8%      1892       0.0      0.0%  cuVDPAUCtxCreate  [ETC]
-   5.7%      1885       0.0      0.0%  __GI___poll  [ETC]
-   5.6%      1849       0.0      0.0%  MAIN__  [USER]
-   5.6%      1848       0.0      0.0%  main  [USER]
-   5.6%      1846       0.0      0.0%  __libc_start_call_main  [ETC]
-   5.6%      1846       0.0      0.0%  call_init  [ETC]
-   5.6%      1845       0.0      0.0%  _start  [USER]
-   5.5%      1806       0.0      0.0%  run_pwscf_  [USER]
-   5.3%      1747       0.0      0.0%  fftw_spawn_loop._omp_fn.0  [FFTW]
-   4.9%      1605       0.0      0.0%  spawn_apply  [FFTW]
-   4.3%      1399       0.0      0.0%  electrons_scf_  [USER]
-   4.3%      1399       0.0      0.0%  electrons_  [USER]
-   3.8%      1265       0.0      0.0%  h_psi__  [USER]
-   3.8%      1265       0.0      0.0%  h_psi_  [USER]
-   3.8%      1235       0.0      0.0%  vloc_psi_k_acc_  [USER]
-   3.6%      1180       0.0      0.0%  __fft_scalar_fftw3_MOD_cfft3ds  [USER]
-   3.6%      1172       0.0      0.0%  c_bands_  [USER]
-   3.5%      1149       0.0      0.0%  diag_bands_  [USER]
-   3.5%      1144       0.0      0.0%  cegterg_  [USER]
-   2.7%       877       0.0      0.0%  fftw_execute_dft  [ETC]
-   2.5%       809       0.0      0.0%  invfft_y_  [USER]
-   2.4%       779       0.0      0.0%  __fft_wave_MOD_wave_g2r  [USER]
-   2.3%       772       0.0      0.0%  n1fv_32  [FFTW]
-   2.3%       743       0.0      0.0%  n1bv_32  [FFTW]
-   1.9%       634       0.0      0.0%  gomp_barrier_wait_final_start  [ETC]
-   1.9%       618       0.0      0.0%  fftw_spawn_loop  [FFTW]
-   1.9%       611       0.0      0.0%  gomp_barrier_wait_start  [ETC]
-   1.6%       532       0.0      0.0%  __fft_wave_MOD_wave_r2g  [USER]
-   1.6%       524       0.0      0.0%  fwfft_y_  [USER]
-   1.0%       333       0.0      0.0%  init_run_  [USER]
-   1.0%       314       0.0      0.0%  gomp_team_end  [ETC]
-   0.9%       300       0.0      0.0%  GOMP_parallel  [ETC]
-   0.7%       221       0.0      0.0%  sum_band_  [USER]
-   0.7%       217       0.0      0.0%  sum_band_k.5  [USER]
-   0.7%       216       0.0      0.0%  wfcinit_  [USER]
-   0.7%       215       0.0      0.0%  init_wfc_  [USER]
-   0.6%       199       0.0      0.0%  rotate_wfc_  [USER]
-   0.6%       198       0.0      0.0%  rotate_wfc_k_  [USER]
-   0.6%       184       0.0      0.0%  gomp_team_start  [ETC]
-   0.6%       183       0.0      0.0%  mkplan  [FFTW]
-   0.6%       183       0.0      0.0%  fftw_mkapiplan  [FFTW]
-   0.6%       183       0.0      0.0%  fftw_plan_many_dft  [FFTW]
-   0.6%       182       0.0      0.0%  search0  [FFTW]
-   0.5%       175       0.0      0.0%  fftw_measure_execution_time  [FFTW]
-   0.5%       175       0.0      0.0%  evaluate_plan  [FFTW]
-   0.5%       170       0.0      0.0%  fftw_mkplan_d  [FFTW]
-   0.5%       169       0.0      0.0%  libprof_exit  [ETC]
-   0.4%       137       0.0      0.0%  an_exec  [ETC]
-   0.4%       134       0.0      0.0%  __pthread_rwlock_rdunlock  [ETC]
-   0.4%       123       0.0      0.0%  futex_wake  [ETC]
-   0.4%       119       0.0      0.0%  libprof_now  [ETC]
-   0.3%       115       0.0      0.0%  fftw_mkplan_f_d  [FFTW]
-   0.3%       114       0.0      0.0%  gomp_simple_barrier_wait  [ETC]
-   0.3%       108       0.0      0.0%  hinit0_  [USER]
-   0.3%       102       0.0      0.0%  __GI___clock_gettime  [ETC]
-   0.3%        97       0.0      0.0%  __fft_rho_MOD_rho_g2r_1spin  [USER]
-   0.3%        97       0.0      0.0%  setlocal_  [USER]
-   0.3%        96       0.0      0.0%  __fft_scalar_fftw3_MOD_cfft3d  [USER]
-   0.3%        95       0.0      0.0%  fftw_plan_dft  [FFTW]
-   0.3%        95       0.0      0.0%  fftw_plan_dft_3d  [FFTW]
-   0.2%        69       0.0      0.0%  0x765a3404cc4b  [ETC]
-   0.2%        66       0.0      0.0%  __fft_helper_subroutines_MOD_fftx_c2psi_k._omp_fn.0  [
-   0.2%        66       0.0      0.0%  __fft_helper_subroutines_MOD_fftx_c2psi_k  [USER]
-   0.2%        65       0.0      0.0%  omp_get_num_threads  [ETC]
-   0.2%        64       0.0      0.0%  ylmr2_  [USER]
-   0.2%        61       0.0      0.0%  n2fv_32  [FFTW]
-   0.2%        57       0.0      0.0%  gomp_icv  [ETC]
-   0.2%        55       0.0      0.0%  n2bv_32  [FFTW]
-   0.2%        52       0.0      0.0%  stress_  [USER]
-   0.2%        51       0.0      0.0%  init_us_2_acc_  [USER]
-   0.2%        51       0.0      0.0%  __uspp_init_MOD_init_us_2  [USER]
-   0.2%        51       0.0      0.0%  stres_knl_  [USER]
-   0.2%        50       0.0      0.0%  zgemm_  [BLAS]
-   0.1%        49       0.0      0.0%  gomp_team_barrier_wait_end  [ETC]
-   0.1%        47       0.0      0.0%  stres_us_  [USER]
-   0.1%        42       0.0      0.0%  ompi_mpi_instance_init_common  [MPI]
-   0.1%        42       0.0      0.0%  ompi_mpi_instance_init  [MPI]
-   0.1%        42       0.0      0.0%  ompi_mpi_init  [MPI]
-   0.1%        42       0.0      0.0%  MPI_Init_thread  [MPI]
-   0.1%        42       0.0      0.0%  MPI_Init_thread_f08  [MPI]
-   0.1%        42       0.0      0.0%  __mp_world_MOD_mp_world_start  [USER]
-   0.1%        42       0.0      0.0%  __mp_global_MOD_mp_startup  [USER]
-   ... 515 more below 0.1% of runtime (report --threshold 0 to show all)
+  94.3%     30843  tramp  [ETC]
+  94.3%     30843  start_thread  [ETC]
+  94.3%     30843  clone3  [ETC]
+  72.4%     23686  gomp_thread_start  [ETC]
+  66.7%     21831  do_spin  [ETC]
+  10.2%      3329  gomp_finish_task  [ETC]
+   7.4%      2404  apply  [FFTW]
+   6.3%      2051  __futex_wait  [ETC]
+   6.0%      1950  epoll_wait  [ETC]
+   6.0%      1948  epoll_dispatch  [ETC]
+   6.0%      1948  event_base_loop  [ETC]
+   6.0%      1948  progress_engine  [MPI]
+   5.8%      1882  cuEGLApiInit  [ETC]
+   5.8%      1882  cuVDPAUCtxCreate  [ETC]
+   5.7%      1877  __GI___poll  [ETC]
+   5.7%      1859  MAIN__  [USER]
+   5.7%      1858  main  [USER]
+   5.7%      1858  __libc_start_call_main  [ETC]
+   5.7%      1857  call_init  [ETC]
+   5.7%      1856  _start  [USER]
+   5.6%      1817  run_pwscf_  [USER]
+   5.4%      1770  fftw_spawn_loop._omp_fn.0  [FFTW]
+   5.0%      1644  spawn_apply  [FFTW]
+   4.3%      1412  electrons_scf_  [USER]
+   4.3%      1412  electrons_  [USER]
+   3.9%      1272  h_psi_  [USER]
+   3.9%      1271  h_psi__  [USER]
+   3.8%      1250  vloc_psi_k_acc_  [USER]
+   3.6%      1189  __fft_scalar_fftw3_MOD_cfft3ds  [USER]
+   3.6%      1185  c_bands_  [USER]
+   3.5%      1159  diag_bands_  [USER]
+   3.5%      1149  cegterg_  [USER]
+   2.8%       903  fftw_execute_dft  [ETC]
+   2.5%       833  n1bv_32  [FFTW]
+   2.4%       787  invfft_y_  [USER]
+   2.3%       768  __fft_wave_MOD_wave_g2r  [USER]
+   2.2%       709  n1fv_32  [FFTW]
+   1.9%       629  fftw_spawn_loop  [FFTW]
+   1.8%       594  gomp_barrier_wait_start  [ETC]
+   1.7%       566  gomp_barrier_wait_final_start  [ETC]
+   1.7%       552  __fft_wave_MOD_wave_r2g  [USER]
+   1.7%       542  fwfft_y_  [USER]
+   1.1%       358  GOMP_parallel  [ETC]
+   1.0%       332  init_run_  [USER]
+   0.9%       285  gomp_team_end  [ETC]
+   0.7%       227  gomp_team_start  [ETC]
+   0.7%       221  sum_band_  [USER]
+   0.7%       219  sum_band_k.5  [USER]
+   0.7%       216  wfcinit_  [USER]
+   0.7%       213  init_wfc_  [USER]
+   0.6%       199  rotate_wfc_k_  [USER]
+   0.6%       199  rotate_wfc_  [USER]
+   0.6%       183  mkplan  [FFTW]
+   0.6%       183  fftw_mkapiplan  [FFTW]
+   0.6%       183  fftw_plan_many_dft  [FFTW]
+   0.6%       182  search0  [FFTW]
+   0.5%       177  fftw_measure_execution_time  [FFTW]
+   0.5%       177  evaluate_plan  [FFTW]
+   0.5%       171  fftw_mkplan_d  [FFTW]
+   0.5%       156  libprof_exit  [ETC]
+   0.4%       140  an_exec  [ETC]
+   0.4%       136  __pthread_rwlock_rdunlock  [ETC]
+   0.4%       130  libprof_now  [ETC]
+   0.4%       127  gomp_simple_barrier_wait  [ETC]
+   0.4%       123  futex_wake  [ETC]
+   0.3%       111  fftw_mkplan_f_d  [FFTW]
+   0.3%       106  hinit0_  [USER]
+   0.3%       105  __GI___clock_gettime  [ETC]
+   0.3%        96  __fft_scalar_fftw3_MOD_cfft3d  [USER]
+   0.3%        95  __fft_rho_MOD_rho_g2r_1spin  [USER]
+   0.3%        95  setlocal_  [USER]
+   0.3%        95  fftw_plan_dft  [FFTW]
+   0.3%        95  fftw_plan_dft_3d  [FFTW]
+   0.3%        84  n1_32  [FFTW]
+   0.2%        79  __fft_helper_subroutines_MOD_fftx_c2psi_k._omp_fn.0  [
+   0.2%        77  __fft_helper_subroutines_MOD_fftx_c2psi_k  [USER]
+   0.2%        76  0x799ce4893c4b  [ETC]
+   0.2%        68  omp_get_num_threads  [ETC]
+   0.2%        61  n2bv_32  [FFTW]
+   0.2%        56  ylmr2_  [USER]
+   0.2%        54  init_us_2_acc_  [USER]
+   0.2%        54  __uspp_init_MOD_init_us_2  [USER]
+   0.2%        51  stres_knl_  [USER]
+   0.2%        51  stress_  [USER]
+   0.1%        46  gomp_team_barrier_wait_end  [ETC]
+   0.1%        46  stres_us_  [USER]
+   0.1%        41  ompi_mpi_instance_init_common  [MPI]
+   0.1%        41  ompi_mpi_instance_init  [MPI]
+   0.1%        41  ompi_mpi_init  [MPI]
+   0.1%        41  MPI_Init_thread  [MPI]
+   0.1%        41  MPI_Init_thread_f08  [MPI]
+   0.1%        41  __mp_world_MOD_mp_world_start  [USER]
+   0.1%        41  __mp_global_MOD_mp_startup  [USER]
+   0.1%        37  gomp_icv  [ETC]
+   0.1%        34  zgemm_  [BLAS]
+   ... 496 more below 0.1% of runtime (report --threshold 0 to show all)
   ------------------------------------------------------------------------------
   legend:
     Samp%        percent of samples here (~ percent of wall time)
     Samp         sample count (wall time ~ Samp / sampling-Hz)
-    Imb.Samp     max-rank samples minus average across ranks (recoverable)
-    Imb.Samp%    Imb.Samp / max = (max-avg)/max
     groups       USER=your code, ETC=other/system; MPI/BLAS/LAPACK/FFTW/IO as named
 
   Top functions (self)
   ------------------------------------------------------------------------------
-   Samp%      Samp  Imb.Samp  Imb.Samp%  Function
+   Samp%      Samp  Function
  ------------------------------------------------------------------------------
-  59.7%     19635       0.0      0.0%  do_spin  wait.h:56
-   7.0%      2316       0.0      0.0%  __futex_wait  futex.h:39
-   6.2%      2023       0.0      0.0%  do_spin  wait.h:57
-   6.0%      1961       0.0      0.0%  epoll_wait  epoll_wait.c:30
-   5.7%      1885       0.0      0.0%  __GI___poll  poll.c:29
-   2.3%       772       0.0      0.0%  n1fv_32  n1fv_32.c:?
-   2.3%       743       0.0      0.0%  n1bv_32  n1bv_32.c:?
-   1.9%       614       0.0      0.0%  gomp_barrier_wait_final_start  bar.h:118
-   1.8%       597       0.0      0.0%  gomp_barrier_wait_start  bar.h:98
-   0.6%       200       0.0      0.0%  gomp_finish_task  libgomp.h:1117
-   0.5%       149       0.0      0.0%  gomp_team_start  team.c:570
-   0.4%       132       0.0      0.0%  __pthread_rwlock_rdunlock  pthread_rwlock_common.c:254
-   0.4%       128       0.0      0.0%  gomp_thread_start  team.c:136
-   0.4%       123       0.0      0.0%  futex_wake  futex.h:111
-   0.3%        85       0.0      0.0%  spawn_apply  dft-vrank-geq1.c:?
-   0.3%        85       0.0      0.0%  vloc_psi_k_acc_  pw.x
-   0.3%        83       0.0      0.0%  __fft_scalar_fftw3_MOD_cfft3ds  pw.x
-   0.2%        75       0.0      0.0%  fftw_spawn_loop._omp_fn.0  openmp.c:?
-   0.2%        69       0.0      0.0%  0x765a3404cc4b  ?
-   0.2%        65       0.0      0.0%  __fft_helper_subroutines_MOD_fftx_c2psi_k._omp_fn.0  f
-   0.2%        61       0.0      0.0%  n2fv_32  n2fv_32.c:?
-   0.2%        57       0.0      0.0%  omp_get_num_threads  parallel.c:281
-   0.2%        55       0.0      0.0%  n2bv_32  n2bv_32.c:?
-   ... 263 more below 0.1% of runtime (report --threshold 0 to show all)
+  60.8%     19874  do_spin  wait.h:56
+   6.3%      2051  __futex_wait  futex.h:39
+   6.0%      1952  do_spin  wait.h:57
+   6.0%      1950  epoll_wait  epoll_wait.c:30
+   5.7%      1877  __GI___poll  poll.c:29
+   2.5%       833  n1bv_32  n1bv_32.c:?
+   2.2%       709  n1fv_32  n1fv_32.c:?
+   1.8%       573  gomp_barrier_wait_start  bar.h:98
+   1.7%       546  gomp_barrier_wait_final_start  bar.h:118
+   0.6%       187  gomp_finish_task  libgomp.h:1117
+   0.5%       175  gomp_team_start  team.c:570
+   0.4%       136  __pthread_rwlock_rdunlock  pthread_rwlock_common.c:254
+   0.4%       123  futex_wake  futex.h:111
+   0.4%       119  gomp_thread_start  team.c:136
+   0.3%        93  vloc_psi_k_acc_  pw.x
+   0.3%        92  spawn_apply  dft-vrank-geq1.c:?
+   0.3%        84  n1_32  n1_32.c:?
+   0.2%        81  __fft_scalar_fftw3_MOD_cfft3ds  pw.x
+   0.2%        76  0x799ce4893c4b  ?
+   0.2%        74  __fft_helper_subroutines_MOD_fftx_c2psi_k._omp_fn.0  f
+   0.2%        63  omp_get_num_threads  parallel.c:281
+   0.2%        61  n2bv_32  n2bv_32.c:?
+   0.2%        60  fftw_spawn_loop._omp_fn.0  openmp.c:?
+   0.1%        39  __fft_helper_subroutines_MOD_fftx_c2psi_k  pw.x
+   ... 261 more below 0.1% of runtime (report --threshold 0 to show all)
   ------------------------------------------------------------------------------
   legend:
     Samp%        percent of samples here (~ percent of wall time)
     Samp         sample count (wall time ~ Samp / sampling-Hz)
-    Imb.Samp     max-rank samples minus average across ranks (recoverable)
-    Imb.Samp%    Imb.Samp / max = (max-avg)/max
     groups       USER=your code, ETC=other/system; MPI/BLAS/LAPACK/FFTW/IO as named
 
 Table 2:  Library calls by group and function  (tracing)
 
   Compute (BLAS / LAPACK / PBLAS / ScaLAPACK / CBLAS / LAPACKe / FFTW)
   ------------------------------------------------------------------------------
-   group     function                   count[imb]     incl(s)     excl(s)
+   group     function                     count     incl(s)     excl(s)
   ------------------------------------------------------------------------------
-   FFTW      fftw_execute_dft           2549003  0.0%      0.7559      0.7559
-   FFTW      fftw_plan_dft_3d                 2  0.0%      0.0957      0.0957
-   BLAS      zgemm_                       13233  0.0%      0.0561      0.0561
-   LAPACK    dlaebz_                       3216  0.0%      0.0048      0.0048
-   LAPACK    zstein_                       1072  0.0%      0.0055      0.0040
-   LAPACK    zhegs2_                       1372  0.0%      0.0042      0.0031
-   LAPACK    zhetd2_                       1372  0.0%      0.0054      0.0017
-   LAPACK    zlarfg_                       7821  0.0%      0.0028      0.0014
-   LAPACK    zheevx_                       1072  0.0%      0.0199      0.0004
-   LAPACK    zhegvx_                       1072  0.0%      0.0249      0.0004
-   LAPACK    dstebz_                       1072  0.0%      0.0052      0.0003
-   LAPACK    zunm2l_                       1072  0.0%      0.0020      0.0003
-   LAPACK    zhegst_                       1372  0.0%      0.0044      0.0001
-   LAPACK    zhetrd_                       1372  0.0%      0.0056      0.0001
-   LAPACK    zhegv_                         300  0.0%      0.0028      0.0001
-   LAPACK    zunmtr_                       1072  0.0%      0.0023      0.0001
-   LAPACK    zunmql_                       1072  0.0%      0.0022      0.0001
-   LAPACK    zheev_                         300  0.0%      0.0020      0.0001
-   ... 51 more below 0.1% of runtime (report --threshold 0 to show all)
+   FFTW      fftw_execute_dft           2549003      0.7695      0.7695
+   FFTW      fftw_plan_dft_3d                 2      0.0952      0.0952
+   BLAS      zgemm_                       13233      0.0585      0.0585
+   LAPACK    dlaebz_                       3216      0.0049      0.0049
+   LAPACK    zstein_                       1072      0.0056      0.0040
+   LAPACK    zhegs2_                       1372      0.0043      0.0031
+   LAPACK    zhetd2_                       1372      0.0054      0.0017
+   LAPACK    zlarf1l_                      7821      0.0020      0.0016
+   LAPACK    zlarfg_                       7821      0.0028      0.0014
+   LAPACK    zheevx_                       1072      0.0201      0.0004
+   LAPACK    zhegvx_                       1072      0.0252      0.0004
+   LAPACK    dstebz_                       1072      0.0052      0.0004
+   LAPACK    zunm2l_                       1072      0.0021      0.0003
+   LAPACK    zhegst_                       1372      0.0044      0.0001
+   LAPACK    zunmtr_                       1072      0.0024      0.0001
+   LAPACK    zhetrd_                       1372      0.0056      0.0001
+   LAPACK    zhegv_                         300      0.0028      0.0001
+   LAPACK    zunmql_                       1072      0.0022      0.0001
+   LAPACK    zheev_                         300      0.0020      0.0001
+   ... 50 more below 0.1% of runtime (report --threshold 0 to show all)
   ------------------------------------------------------------------------------
   legend:
     group        library family: BLAS/CBLAS, LAPACK/LAPACKe, P/ScaLAPACK, FFTW
-    count[imb]   total calls over ranks [Imb% = (max-avg)/max load imbalance]
+    count        total calls over ranks
     incl(s)      inclusive time: this routine + everything it calls
     excl(s)      exclusive time: this routine only (callees excluded)
     note         calls aggregated over input sizes; per-shape: report --detail blas|lapack|fftw
@@ -774,18 +770,17 @@ Table 4:  I/O statistics  (tracing)
 
   I/O
   ----------------------------------------------------------------------
-   call            count[imb]   r/R    incl(s)        bytes     GB/s
+   call              count   r/R    incl(s)        bytes     GB/s
   ----------------------------------------------------------------------
-   read               2095  0.0%   1/1       0.1089       253807     0.00
-   write                78  0.0%   1/1       0.0210       107571     0.01
-   openat             2413  0.0%   1/1       0.0049            0     0.00
+   read               2104   1/1       0.1098       253879     0.00
+   openat             2413   1/1       0.0044            0     0.00
   ----------------------------------------------------------------------
    total I/O volume: 0.000 GB  (sum over ranks)
-   ... 7 more below 0.1% of runtime (report --threshold 0 to show all)
+   ... 8 more below 0.1% of runtime (report --threshold 0 to show all)
   ----------------------------------------------------------------------
   legend:
     call         POSIX I/O syscall (read/write/open/...)
-    count[imb]   total calls over ranks [Imb% = (max-avg)/max]
+    count        total calls over ranks
     r/R          ranks that called it / total ranks
     bytes,GB/s   bytes transferred and bytes / inclusive-time
 
