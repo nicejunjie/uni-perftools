@@ -27,14 +27,26 @@ def _build():
     return False
 
 
+def _stale():
+    """True if the binary is missing or older than calibrate.c."""
+    if not os.path.exists(_BIN):
+        return True
+    try:
+        return os.path.getmtime(_SRC) > os.path.getmtime(_BIN)
+    except OSError:
+        return True
+
+
 def peaks(force=False):
     """Return {peak_gflops, peak_bw_gbs, cpu} — empirical, cached per build."""
-    if not force and os.path.exists(_PEAKS):
+    if not force and os.path.exists(_PEAKS) and not _stale():
         try:
             return json.load(open(_PEAKS))
         except Exception:
             pass
-    if not (os.path.exists(_BIN) or _build()):
+    if (force or _stale()) and not _build():
+        return None
+    if not os.path.exists(_BIN):
         return None
     try:
         r = subprocess.run([_BIN], capture_output=True, text=True, timeout=120)

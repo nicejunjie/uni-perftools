@@ -21,38 +21,44 @@ static double now(void)
     return t.tv_sec + t.tv_nsec * 1e-9;
 }
 
-/* Peak FP: many independent FMA chains kept in registers (hide latency), summed
- * so the compiler can't elide them. flops counted as 2 per FMA. */
+/* Peak FP: a vectorizable FMA over an L1-resident array (x[i]=x[i]*b+c), many
+ * reps; b<1 keeps values bounded. Independent across i → the compiler emits
+ * packed FMA (AVX/AVX-512); aggregate flops/wall over all threads. */
+static double g_sink = 0.0;
 static double peak_gflops(void)
 {
-    const long iters = 200000000L;
-    double best = 0.0;
+    enum { N = 2048 };                          /* 16 KiB — L1-resident */
+    const long reps = 4000000L;
+    int nth = 1;
 #ifdef _OPENMP
-    #pragma omp parallel reduction(max:best)
+    nth = omp_get_max_threads();
 #endif
-    {
-        double a0 = 0.1, a1 = 0.2, a2 = 0.3, a3 = 0.4, a4 = 0.5, a5 = 0.6, a6 = 0.7, a7 = 0.8;
-        const double b = 1.0000001, c = 0.9999999;
+    double best = 0.0;
+    for (int rep = 0; rep < 3; rep++) {
         double t0 = now();
-        for (long i = 0; i < iters; i++) {
-            a0 = a0 * b + c; a1 = a1 * b + c; a2 = a2 * b + c; a3 = a3 * b + c;
-            a4 = a4 * b + c; a5 = a5 * b + c; a6 = a6 * b + c; a7 = a7 * b + c;
+#ifdef _OPENMP
+        #pragma omp parallel
+#endif
+        {
+            double x[N];
+            for (int i = 0; i < N; i++) x[i] = 0.001 * i + 0.1;
+            const double b = 0.99999, c = 1.0;
+            for (long r = 0; r < reps; r++) {
+                #pragma omp simd
+                for (int i = 0; i < N; i++) x[i] = x[i] * b + c;
+            }
+            double s = 0.0;
+            for (int i = 0; i < N; i++) s += x[i];
+#ifdef _OPENMP
+            #pragma omp atomic
+#endif
+            g_sink += s;                        /* defeat DCE */
         }
         double dt = now() - t0;
-        volatile double sink = a0 + a1 + a2 + a3 + a4 + a5 + a6 + a7;
-        (void)sink;
-        double gf = (2.0 * 8.0 * iters) / dt / 1e9;   /* 8 FMA chains * 2 flops */
-#ifdef _OPENMP
-        #pragma omp critical
-#endif
-        { if (gf > best) best = gf; }
+        double gf = (2.0 * (double)N * reps * nth) / dt / 1e9;
+        if (gf > best) best = gf;
     }
-    /* scale single-thread chain throughput by core count for an aggregate ceiling */
-#ifdef _OPENMP
-    return best * omp_get_max_threads();
-#else
     return best;
-#endif
 }
 
 /* Peak bandwidth: STREAM triad on arrays far larger than LLC. 24 bytes/iter
@@ -70,14 +76,16 @@ static double peak_bw_gbs(void)
     for (long i = 0; i < n; i++) { b[i] = i * 1e-9; c[i] = i * 2e-9; a[i] = 0; }
     const double s = 1.5;
     double best = 0.0;
-    for (int rep = 0; rep < 5; rep++) {
+    /* 32 bytes/iter: read b, read c, write a + write-allocate (read-for-ownership)
+     * of a — the actual DRAM traffic a normal (non-NT) store stream incurs. */
+    for (int rep = 0; rep < 8; rep++) {
         double t0 = now();
 #ifdef _OPENMP
-        #pragma omp parallel for
+        #pragma omp parallel for schedule(static)
 #endif
         for (long i = 0; i < n; i++) a[i] = b[i] + s * c[i];
         double dt = now() - t0;
-        double gb = (3.0 * sizeof(double) * n) / dt / 1e9;
+        double gb = (4.0 * sizeof(double) * n) / dt / 1e9;
         if (gb > best) best = gb;
         if (a[rep] < 0) printf("%f", a[rep]);   /* defeat DCE */
     }
