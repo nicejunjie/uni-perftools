@@ -26,9 +26,10 @@ def base_name(name):
     return name[:i] if i != -1 else name
 
 
-def foot(pairs):
-    """A CrayPAT-style legend explaining a table's columns/acronyms."""
-    out = ["  legend:"]
+def foot(pairs, width=78):
+    """A CrayPAT-style legend explaining a table's columns/acronyms, preceded by
+    a divider separating it from the table body."""
+    out = ["  " + "-" * width, "  legend:"]
     for k, v in pairs:
         out.append("    %-12s %s" % (k, v))
     return "\n".join(out)
@@ -474,7 +475,7 @@ def fmt_io(rows, sortkey, top):
         ("call", "POSIX I/O syscall (read/write/open/...)"),
         ("count[imb]", "total calls over ranks [Imb% = (max-avg)/max]"),
         ("r/R", "ranks that called it / total ranks"),
-        ("bytes,GB/s", "bytes transferred and bytes / inclusive-time")]))
+        ("bytes,GB/s", "bytes transferred and bytes / inclusive-time")], 70))
     return "\n".join(out)
 
 
@@ -526,7 +527,7 @@ def fmt_domgroup(s, top):
     for g in sorted(grp, key=lambda g: -sum(grp[g].values())):
         gt = cp_imb(list(grp[g].values()), s.nranks)
         out.append("%6.1f%% %9d %9.1f %8.1f%%  %s" % (100.0 * gt[0] / s.total, gt[0], gt[1], gt[2], g))
-    out.append(foot(SAMP_LEGEND))
+    out.append(foot(SAMP_LEGEND, 70))
     return "\n".join(out)
 
 

@@ -14,6 +14,11 @@ import contract   # noqa: E402
 import roofline   # noqa: E402
 
 
+def _rule(header):
+    """A horizontal divider matching a 4-space-indented table header's width."""
+    return "    " + "─" * (len(header) - 4)
+
+
 def _load_json(path):
     try:
         return json.load(open(path))
@@ -101,8 +106,10 @@ def roofline_func_view(profile, out):
     rows.sort(reverse=True)                       # by exclusive time = the hotspots
     out.append("\n══ Roofline (per function — measured, event-based sampling) ══")
     out.append("  flops = FP-op samples x period (ops-based proxy); bytes = DRAM-fill samples x line.")
-    out.append("    %-26s %8s %7s %9s %9s %7s  bound"
-               % ("function", "self(s)", "AI", "GFLOP/s", "ceiling", "%peak"))
+    hdr = ("    %-26s %8s %7s %9s %9s %7s  bound"
+           % ("function", "self(s)", "AI", "GFLOP/s", "ceiling", "%peak"))
+    out.append(hdr)
+    out.append(_rule(hdr))
     for self_s, fn, grp, t, gflops, ai in rows[:12]:
         c = roofline.classify(ai if ai is not None else 1e12, gflops, pk, "dp")
         if not c:
@@ -113,6 +120,7 @@ def roofline_func_view(profile, out):
             bound = "compute"
         out.append("    %-26s %8.3f %7s %9.1f %9.0f %6.0f%%  %s"
                    % (fn[:26], t, ais, gflops, ceil, pct, bound))
+    out.append(_rule(hdr))
     out.append("    (AI=inf → no DRAM traffic sampled = cache-resident/compute-bound; precision assumed DP)")
 
 
@@ -164,9 +172,12 @@ def imbalance_view(profile, out):
         return
     rows.sort(reverse=True)
     out.append("\n══ Load imbalance (across %d ranks, ranked by recoverable time) ══" % nr)
-    out.append("    %-24s %6s %10s %12s" % ("function", "imb%", "avg excl(s)", "recover(s)"))
+    hdr = "    %-24s %6s %10s %12s" % ("function", "imb%", "avg excl(s)", "recover(s)")
+    out.append(hdr)
+    out.append(_rule(hdr))
     for rec, imb, t, name, grp in rows[:10]:
         out.append("    %-24s %5.0f%% %10.4f %12.4f" % (name[:24], imb, t, rec))
+    out.append(_rule(hdr))
 
 
 # ----------------------------------------------------------- MPI wait-state
@@ -219,9 +230,12 @@ def mpi_view(profile, out):
     out.append("\n══ MPI wait-state (call-type heuristic) ══")
     out.append("    synchronization/wait %6.4fs (%2.0f%%) | transfer/initiation %6.4fs (%2.0f%%)"
                % (wait_t, wait_t / total * 100, xfer_t, xfer_t / total * 100))
-    out.append("    %-22s %10s %7s %6s" % ("call", "excl(s)", "class", "imb%"))
+    hdr = "    %-22s %10s %7s %6s" % ("call", "excl(s)", "class", "imb%")
+    out.append(hdr)
+    out.append(_rule(hdr))
     for t, cls, name, imb in rows[:10]:
         out.append("    %-22s %10.5f %7s %5.0f%%" % (name[:22], t, cls, imb))
+    out.append(_rule(hdr))
     # late-sender / load-imbalance signal: wait dominates AND a wait call is imbalanced
     wait_imb = max((imb for t, cls, name, imb in rows if cls == "wait"), default=0.0)
     if nr >= 2 and wait_t / total >= 0.6 and wait_imb >= 15:

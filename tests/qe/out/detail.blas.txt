@@ -580,6 +580,7 @@
    BLAS      dsyr_                                     10      0.0000      0.0000
    BLAS      dswap_                                    16      0.0000      0.0000
    BLAS      dgemv_[m=3,n=2]                            1      0.0000      0.0000
+  ------------------------------------------------------------------------------
   legend:
     [shape]      call dimensions, e.g. gemm[m,n,k], fft[nx x ny x nz]
     count        calls of this exact shape (summed over ranks)

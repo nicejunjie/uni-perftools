@@ -2,6 +2,7 @@
 ══ Roofline (per function — measured, event-based sampling) ══
   flops = FP-op samples x period (ops-based proxy); bytes = DRAM-fill samples x line.
     function                    self(s)      AI   GFLOP/s   ceiling   %peak  bound
+    ──────────────────────────────────────────────────────────────────────────────
     epoll_wait                    1.514     inf       0.0      1112      0%  compute
     __GI___poll                   1.447     inf       0.0      1112      0%  compute
     n1bv_32                       0.227     inf      24.3      1112      2%  compute
@@ -14,4 +15,5 @@
     libc_feholdsetround_sse_ct    0.035     inf       3.4      1112      0%  compute
     n1fv_8                        0.027     inf       2.9      1112      0%  compute
     libprof_now                   0.026     inf       3.6      1112      0%  compute
+    ──────────────────────────────────────────────────────────────────────────────
     (AI=inf → no DRAM traffic sampled = cache-resident/compute-bound; precision assumed DP)
