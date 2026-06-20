@@ -56,8 +56,29 @@ def _load(path):
         return None
 
 
+# which viewpoints belong to which collector's report
+UAPS_VIEWS = ["roofline", "microarch", "memory", "vectorization", "threading"]
+UPAT_VIEWS = ["roofline-func", "mpi", "imbalance", "anomaly"]
+
+UAPS_BANNER = ["─" * 78,
+               "  UAPS  —  Universal Application Performance Snapshot   (bird's-eye: HW counters)",
+               "─" * 78]
+UPAT_BANNER = ["─" * 78,
+               "  UPAT  —  Universal Performance Analysis Tool   (deep profile: tracing + sampling)",
+               "─" * 78]
+
+
+def _run_view(v, snap, profile, result_dir, out):
+    try:
+        if v == "anomaly":                       # needs raw per-rank files
+            viewpoints.anomaly_view(result_dir, out)
+        elif v in VIEWS:
+            VIEWS[v](snap, profile, out)
+    except Exception as e:
+        out.append("\n(%s viewpoint failed: %s)" % (v, e))
+
+
 def _render_snapshot(snap, out):
-    out.append("\n── SNAPSHOT  (bird's-eye: hardware counters / roofline) " + "─" * 22)
     m = {x["key"]: x for x in snap.get("metrics", [])}
     # NOTE: snapshot's own insights[] are intentionally not shown here — the
     # unified suite insights engine (below) replaces them.
@@ -72,47 +93,75 @@ def _render_snapshot(snap, out):
         out.append("    " + "   |   ".join(cells[i:i + 2]))
 
 
-def render(result_dir, fmt="text", view="all"):
+def render(result_dir, fmt="text", view="all", collector="both", detail=None):
     manifest = _load(os.path.join(result_dir, contract.MANIFEST)) or {}
     snap = _load(os.path.join(result_dir, contract.SNAP))
     profs = contract.prof_glob(result_dir)
     profile = _profile_json(profs)
-    suite = insights.suite_insights(snap, profile)
 
     if fmt == "json":
+        suite = insights.suite_insights(snap, profile)
         json.dump({"schema_version": contract.SCHEMA_VERSION, "manifest": manifest,
                    "snapshot": snap, "profile": profile, "insights": suite},
                   sys.stdout, indent=2)
         print()
         return
 
-    out = ["=" * 78,
-           "                        Performance Suite  (snapshot + profile)",
-           "=" * 78]
-    if manifest.get("command"):
-        out.append(" command: %s" % " ".join(manifest["command"]))
-    if snap:
-        _render_snapshot(snap, out)
-    else:
-        out.append("\n(no snapshot — hardware counters unavailable or not collected)")
-    out.append("\n── INSIGHTS  (combined snapshot + profile) " + "─" * 35)
-    for s in suite:
-        out.append("  ▶ " + s)
-    # analysis viewpoints (recipes over the result)
-    sel = VIEW_ORDER if view in ("all", None) else [view]
-    for v in sel:
-        try:
-            if v == "anomaly":                       # needs raw per-rank files
-                viewpoints.anomaly_view(result_dir, out)
-            elif v in VIEWS:
-                VIEWS[v](snap, profile, out)
-        except Exception as e:
-            out.append("\n(%s viewpoint failed: %s)" % (v, e))
-    print("\n".join(out))
+    # focused per-facility detail (a UPAT post-recording analysis)
+    if detail:
+        if not profs:
+            print("(no profile data for --detail %s)" % detail)
+            return
+        print("\n".join(UPAT_BANNER))
+        sys.stdout.flush()
+        subprocess.run([sys.executable, PROFILE_REPORT, "--detail", detail] + profs)
+        return
 
-    if profs and view in ("all", "hotspots", None):
-        print("\n── PROFILE  (drill-down: sampling + sci-lib + MPI tracing) " + "─" * 19)
-        sys.stdout.flush()   # ensure our header precedes the subprocess output
-        subprocess.run([sys.executable, PROFILE_REPORT, "--no-observations"] + profs)
-    elif not profs:
-        print("\n(no profile data)")
+    # focused single viewpoint: print just that section (no banners/insights)
+    if view not in ("all", None):
+        if view != "hotspots":
+            out = []
+            _run_view(view, snap, profile, result_dir, out)
+            if out:
+                print("\n".join(out))
+        if view == "hotspots" and profs:
+            subprocess.run([sys.executable, PROFILE_REPORT, "--no-observations"] + profs)
+        return
+
+    suite = insights.suite_insights(snap, profile)
+    do_uaps = collector in ("both", "uaps")
+    do_upat = collector in ("both", "upat")
+
+    head = []
+    if collector == "both":
+        head += ["=" * 78,
+                 "                        Performance Suite  (uaps + upat)",
+                 "=" * 78]
+    if manifest.get("command"):
+        head.append(" command: %s" % " ".join(manifest["command"]))
+    head.append("\n── INSIGHTS  (combined uaps + upat) " + "─" * 42)
+    for s in suite:
+        head.append("  ▶ " + s)
+    print("\n".join(head))
+
+    if do_uaps:
+        out = ["", ""] + UAPS_BANNER
+        if snap:
+            _render_snapshot(snap, out)
+        else:
+            out.append("  (no snapshot — hardware counters unavailable or not collected)")
+        for v in UAPS_VIEWS:
+            _run_view(v, snap, profile, result_dir, out)
+        print("\n".join(out))
+
+    if do_upat:
+        out = ["", ""] + UPAT_BANNER
+        for v in UPAT_VIEWS:
+            _run_view(v, snap, profile, result_dir, out)
+        print("\n".join(out))
+        if profs:
+            sys.stdout.flush()   # our banner precedes the subprocess tables
+            subprocess.run([sys.executable, PROFILE_REPORT,
+                            "--no-observations", "--no-header"] + profs)
+        else:
+            print("\n(no profile data)")

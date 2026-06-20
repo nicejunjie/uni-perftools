@@ -28,7 +28,7 @@ int main(){int n=256;char N='N';
 EOF
 $CC -O2 "$TMP/s.c" -o "$TMP/s" "$BLAS" 2>/dev/null
 OUT=$("$DRV" run -o "$TMP/r1" -- "$TMP/s" 2>/dev/null)
-ok "serial: PROFILE section"        "echo \"$OUT\" | grep -q 'PROFILE'"
+ok "serial: UPAT profile section"   "echo \"$OUT\" | grep -q 'UPAT'"
 ok "serial: INSIGHTS section"       "echo \"$OUT\" | grep -q 'INSIGHTS'"
 ok "serial: math-libs insight"     "echo \"$OUT\" | grep -qi 'math libr'"
 ok "serial: result has prof.0"      "[ -f $TMP/r1/prof.0.json ]"
@@ -38,8 +38,17 @@ ok "roofline: FP64 & FP32 ceilings" "echo \"$ROUT\" | grep -q 'FP64' && echo \"$
 ok "roofline: whole-program only"   "echo \"$ROUT\" | grep -q 'Roofline (whole program)'"
 # snapshot present iff perf available; don't hard-fail when counters are blocked
 if [ -f "$TMP/r1/snap.json" ]; then
-  ok "serial: SNAPSHOT section"     "echo \"$OUT\" | grep -q 'SNAPSHOT'"
+  ok "serial: UAPS snapshot section" "echo \"$OUT\" | grep -q 'UAPS'"
 fi
+# aggregation + detail + separate files
+ok "agg: zgemm/zgemv not per-shape" "! echo \"$OUT\" | grep -qE 'gemm_\[m='"
+ok "detail: per-shape on request"  "$DRV report $TMP/r1 --detail blas 2>/dev/null | grep -qE 'gemm_\[m=|calls by shape'"
+ok "footnote: legend present"      "echo \"$OUT\" | grep -q 'legend:'"
+$DRV report "$TMP/r1" -o "$TMP/split" >/dev/null 2>&1
+ok "split: report.uaps.txt"        "[ -s $TMP/split/report.uaps.txt ]"
+ok "split: report.upat.txt"        "[ -s $TMP/split/report.upat.txt ]"
+ok "split: uaps file has no sci-lib table" "! grep -q 'Library calls by group' $TMP/split/report.uaps.txt"
+ok "split: upat file has sci-lib table"    "grep -q 'Library calls by group' $TMP/split/report.upat.txt"
 
 # per-function roofline (B): needs perf_event sampling access; skip if blocked
 RFOUT=$("$DRV" roofline -o "$TMP/rf" -- "$TMP/s" 2>/dev/null)

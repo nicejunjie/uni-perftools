@@ -43,6 +43,27 @@ OMP_NUM_THREADS=1 OPENBLAS_NUM_THREADS=1 \
 $DRV report out/run_rf1 --view roofline-func                    > out/roofline_func.txt
 ```
 
+Reporting options (the two collectors print under distinct **UAPS** / **UPAT**
+banners; calls aggregate over input sizes by default):
+
+```sh
+$DRV report out/run_mpi                       # combined (uaps + upat)
+$DRV report out/run_mpi -o out                # separate files: report.uaps.txt + report.upat.txt
+$DRV report out/run_serial --collector uaps   # snapshot half only
+$DRV report out/run_serial --detail blas      # per-shape BLAS breakdown (post analysis)
+$DRV report out/run_mpi    --detail mpi        # MPI comm matrix + size histogram
+```
+
+## Saved reports (`out/`)
+
+| file | what |
+|------|------|
+| `report.serial.txt` / `report.mpi.txt` | combined UAPS+UPAT reports |
+| `report.uaps.txt` / `report.upat.txt`  | the two collectors as separate files (MPI run) |
+| `roofline_func.txt`                     | per-function roofline (single-threaded) |
+| `detail.blas.txt`                       | `--detail blas` per-shape breakdown |
+| `qe.*.out`                              | QE's own stdout for each run |
+
 ## What it validated
 
 - **`upat` traces QE's real sci-lib calls**: BLAS (`zgemv`, `zdotc`, …),

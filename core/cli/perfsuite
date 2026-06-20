@@ -117,6 +117,12 @@ def main():
     rp.add_argument("result", nargs="?")
     rp.add_argument("--format", default="text", choices=["text", "json"])
     rp.add_argument("--view", default="all", choices=VIEWS)
+    rp.add_argument("--collector", default="both", choices=["both", "uaps", "upat"],
+                    help="render only one collector's report")
+    rp.add_argument("--detail", choices=["blas", "lapack", "fftw", "mpi", "io"],
+                    help="per-facility detail analysis (per-shape calls / MPI comm matrix)")
+    rp.add_argument("-o", "--outdir",
+                    help="write report.uaps.txt + report.upat.txt into this dir (separate files)")
     sc = sub.add_parser("scale", help="compare multiple results (scaling analysis)")
     sc.add_argument("results", nargs="+")
 
@@ -141,7 +147,28 @@ def main():
         result = args.result or contract.latest_result()
         if not result:
             sys.exit("perfsuite: no result dir given and none found")
-        report.render(result, args.format, args.view)
+        if args.outdir and args.format == "text" and not args.detail:
+            os.makedirs(args.outdir, exist_ok=True)
+            cols = ["uaps", "upat"] if args.collector == "both" else [args.collector]
+            for col in cols:
+                path = os.path.join(args.outdir, "report.%s.txt" % col)
+                # redirect fd 1 (not just sys.stdout) so the upat-report subprocess
+                # output lands in the file too
+                f = open(path, "w")
+                saved = os.dup(1)
+                try:
+                    sys.stdout.flush()
+                    os.dup2(f.fileno(), 1)
+                    report.render(result, args.format, args.view, collector=col)
+                    sys.stdout.flush()
+                finally:
+                    os.dup2(saved, 1)
+                    os.close(saved)
+                    f.close()
+                sys.stderr.write("[perfsuite] wrote %s\n" % path)
+        else:
+            report.render(result, args.format, args.view,
+                          collector=args.collector, detail=args.detail)
 
 
 if __name__ == "__main__":

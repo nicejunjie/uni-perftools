@@ -10,9 +10,37 @@ Usage:
   upat-report out/                       # a directory of json files
   upat-report --imbalance world --format csv upat.*.json
 """
-import sys, os, json, glob, argparse, subprocess, collections
+import sys, os, re, json, glob, argparse, subprocess, collections
 
 COMPUTE_GROUPS = ["BLAS", "LAPACK", "PBLAS", "ScaLAPACK", "CBLAS", "LAPACKe", "FFTW"]
+
+# --detail FACILITY -> the function groups it covers (post-recording analysis)
+DETAIL_GROUPS = {"blas": ["BLAS", "CBLAS"],
+                 "lapack": ["LAPACK", "LAPACKe", "ScaLAPACK", "PBLAS"],
+                 "fftw": ["FFTW"], "mpi": ["MPI"], "io": ["IO"]}
+
+
+def base_name(name):
+    """Strip a trailing [shape] so one function aggregates across input sizes."""
+    i = name.find("[")
+    return name[:i] if i != -1 else name
+
+
+def foot(pairs):
+    """A CrayPAT-style legend explaining a table's columns/acronyms."""
+    out = ["  legend:"]
+    for k, v in pairs:
+        out.append("    %-12s %s" % (k, v))
+    return "\n".join(out)
+
+
+SAMP_LEGEND = [
+    ("Samp%", "percent of samples here (~ percent of wall time)"),
+    ("Samp", "sample count (wall time ~ Samp / sampling-Hz)"),
+    ("Imb.Samp", "max-rank samples minus average across ranks (recoverable)"),
+    ("Imb.Samp%", "Imb.Samp / max = (max-avg)/max"),
+    ("groups", "USER=your code, ETC=other/system; MPI/BLAS/LAPACK/FFTW/IO as named"),
+]
 
 # ---------------------------------------------------------------- sampling ----
 _etype_cache = {}
@@ -260,19 +288,27 @@ def load(paths):
     return ranks
 
 
-def reduce_rows(ranks, imbalance):
+def reduce_rows(ranks, imbalance, keep_shapes=False):
     nranks = len(ranks)
-    # key -> per-rank accumulation
+    # key -> per-rank accumulation. By default the [shape] suffix is stripped so
+    # one function aggregates across input sizes; --detail keeps shapes.
     agg = {}
     for r in ranks:
+        # sum within this rank first (so shape-stripped entries collapse to one
+        # per-rank value before the cross-rank imbalance lists are built)
+        per = {}
         for fn in r["functions"]:
-            key = (fn["group"], fn["function"])
-            a = agg.setdefault(key, {"group": fn["group"], "name": fn["function"],
+            name = fn["function"] if keep_shapes else base_name(fn["function"])
+            key = (fn["group"], name)
+            d = per.setdefault(key, [0.0, 0.0, 0.0, 0])
+            d[0] += fn["count"]; d[1] += fn["t_incl"]; d[2] += fn["t_excl"]; d[3] += fn["bytes"]
+        for key, (c, inc, exc, by) in per.items():
+            a = agg.setdefault(key, {"group": key[0], "name": key[1],
                                      "counts": [], "incl": [], "excl": [], "bytes": 0})
-            a["counts"].append(fn["count"])
-            a["incl"].append(fn["t_incl"])
-            a["excl"].append(fn["t_excl"])
-            a["bytes"] += fn["bytes"]
+            a["counts"].append(c)
+            a["incl"].append(inc)
+            a["excl"].append(exc)
+            a["bytes"] += by
     rows = []
     for a in agg.values():
         active = len(a["counts"])
@@ -319,6 +355,12 @@ def fmt_compute(rows, sortkey, top):
         out.append("   %-9s %-24s %9.0f %5s %11.4f %11.4f" % (
             r["group"], r["name"][:24], r["count"], imb_s(r["imb_count"]),
             r["t_incl"], r["t_excl"]))
+    out.append(foot([
+        ("group", "library family: BLAS/CBLAS, LAPACK/LAPACKe, P/ScaLAPACK, FFTW"),
+        ("count[imb]", "total calls over ranks [Imb% = (max-avg)/max load imbalance]"),
+        ("incl(s)", "inclusive time: this routine + everything it calls"),
+        ("excl(s)", "exclusive time: this routine only (callees excluded)"),
+        ("note", "calls aggregated over input sizes; per-shape: report --detail blas|lapack|fftw")]))
     return "\n".join(out)
 
 
@@ -341,6 +383,13 @@ def fmt_mpi(rows, sortkey, top):
             r["active"], r["nranks"], r["t_incl"], r["bytes"], gbs))
     out.append("  " + "-" * 78)
     out.append("   total communication volume: %.3f GB  (sum over ranks)" % (total_bytes / 1e9))
+    out.append(foot([
+        ("count[imb]", "total calls over ranks [Imb% = (max-avg)/max]"),
+        ("r/R", "ranks that called it / total ranks"),
+        ("incl(s)", "inclusive wall time spent in the call"),
+        ("bytes", "message bytes moved (summed over ranks)"),
+        ("GB/s", "bytes / inclusive-time"),
+        ("note", "comm matrix + size histogram: report --detail mpi")]))
     return "\n".join(out)
 
 
@@ -421,6 +470,11 @@ def fmt_io(rows, sortkey, top):
             r["active"], r["nranks"], r["t_incl"], r["bytes"], gbs))
     out.append("  " + "-" * 70)
     out.append("   total I/O volume: %.3f GB  (sum over ranks)" % (total_bytes / 1e9))
+    out.append(foot([
+        ("call", "POSIX I/O syscall (read/write/open/...)"),
+        ("count[imb]", "total calls over ranks [Imb% = (max-avg)/max]"),
+        ("r/R", "ranks that called it / total ranks"),
+        ("bytes,GB/s", "bytes transferred and bytes / inclusive-time")]))
     return "\n".join(out)
 
 
@@ -447,6 +501,7 @@ def fmt_flat(title, per_rank, total, nranks, top, labelfn):
            " " + "-" * 78]
     for k, (tot, is_, ip) in rows[:top or 12]:
         out.append("%6.1f%% %9d %9.1f %8.1f%%  %s" % (100.0 * tot / total, tot, is_, ip, labelfn(k)[:54]))
+    out.append(foot(SAMP_LEGEND))
     return "\n".join(out)
 
 
@@ -471,6 +526,7 @@ def fmt_domgroup(s, top):
     for g in sorted(grp, key=lambda g: -sum(grp[g].values())):
         gt = cp_imb(list(grp[g].values()), s.nranks)
         out.append("%6.1f%% %9d %9.1f %8.1f%%  %s" % (100.0 * gt[0] / s.total, gt[0], gt[1], gt[2], g))
+    out.append(foot(SAMP_LEGEND))
     return "\n".join(out)
 
 
@@ -521,6 +577,29 @@ def fmt_groups(per_rank, hz, total, nranks, top):
             label = k[1] if fl in ("?", "") else "%s  [%s]" % (k[1], fl)
             out.append(line(ft, fis, fip, label[:52], "  "))
         out.append(" " + "-" * 78)
+    out.append(foot(SAMP_LEGEND))
+    return "\n".join(out)
+
+
+def fmt_detail(rows, groups, title, sortkey, top):
+    """Per-shape/size breakdown for one facility (post-recording detail)."""
+    rows = [r for r in rows if r["group"] in groups]
+    rows.sort(key=lambda r: r[sortkey], reverse=True)
+    if top:
+        rows = rows[:top]
+    if not rows:
+        return "  (no %s calls recorded)" % title
+    out = ["", "  %s calls by shape/size" % title, "  " + "-" * 78,
+           "   %-9s %-33s %10s %11s %11s" % ("group", "function[shape]", "count", "incl(s)", "excl(s)"),
+           "  " + "-" * 78]
+    for r in rows:
+        out.append("   %-9s %-33s %10.0f %11.4f %11.4f" % (
+            r["group"], r["name"][:33], r["count"], r["t_incl"], r["t_excl"]))
+    out.append(foot([
+        ("[shape]", "call dimensions, e.g. gemm[m,n,k], fft[nx x ny x nz]"),
+        ("count", "calls of this exact shape (summed over ranks)"),
+        ("incl(s)", "inclusive time: routine + callees"),
+        ("excl(s)", "exclusive time: routine only")]))
     return "\n".join(out)
 
 
@@ -606,6 +685,11 @@ def main():
                     help="print folded call stacks (for flamegraph.pl) and exit")
     ap.add_argument("--no-observations", action="store_true",
                     help="suppress the Observations section (suite supplies unified insights)")
+    ap.add_argument("--no-header", action="store_true",
+                    help="suppress the banner (the suite prints its own UPAT banner)")
+    ap.add_argument("--detail", choices=list(DETAIL_GROUPS),
+                    help="per-facility detail (per-shape calls / MPI comm matrix); "
+                         "otherwise calls aggregate over input sizes")
     args = ap.parse_args()
 
     ranks = load(args.files)
@@ -614,6 +698,30 @@ def main():
         s = symbolize_samples(ranks)
         for stack, n in s.folded.most_common():
             print("%s %d" % (stack, n))
+        return
+
+    if args.detail:
+        app = ranks[0].get("application", "")
+        det = reduce_rows(ranks, args.imbalance, keep_shapes=True)
+        print("\n" + "=" * 80)
+        print("  UPAT detail analysis — %s" % args.detail.upper())
+        print("=" * 80)
+        print(" application: %s   ranks: %d" % (app, len(ranks)))
+        if args.detail == "mpi":
+            mt, md = fmt_mpi(det, args.sort, args.top), fmt_mpi_detail(ranks, det)
+            if mt or md:
+                print(mt)
+                print(md)
+            else:
+                print("\n  (no MPI calls traced by name. upat traces the C MPI ABI;")
+                print("   Fortran codes calling the mpi_*_ bindings are captured by")
+                print("   sampling only — see the function-group table in --collector upat.)")
+        elif args.detail == "io":
+            print(fmt_io(det, args.sort, args.top))
+        else:
+            print(fmt_detail(det, DETAIL_GROUPS[args.detail], args.detail.upper(),
+                             args.sort, args.top))
+        print()
         return
 
     rows = reduce_rows(ranks, args.imbalance)
@@ -648,9 +756,11 @@ def main():
                 gbs, r["imb_count"], r["imb_excl"], r["active"], r["nranks"]))
         return
 
-    print("\n" + "=" * 80)
-    print("                      Scientific Library Profiler")
-    print("=" * 80)
+    if not args.no_header:
+        print("\n" + "=" * 80)
+        print("  UPAT  —  Universal Performance Analysis Tool  (deep profile)")
+        print("         tracing (sci-libs / MPI / I/O) + statistical sampling")
+        print("=" * 80)
     print(" application: %s" % app)
     print(" ranks: %d   max runtime (s): %.3f   imbalance: %s   imb = (max-avg)/max" %
           (len(ranks), runtime, args.imbalance))

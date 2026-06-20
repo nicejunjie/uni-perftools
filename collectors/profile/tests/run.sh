@@ -68,8 +68,12 @@ int main(){int n=1024;fftw_complex*a=calloc(n,16),*b=calloc(n,16);
  for(int i=0;i<100;i++)fftw_execute(p); fftw_destroy_plan(p); return 0;}
 EOF
 $CC -O2 "$TMP/t3.c" -o "$TMP/t3" "$FFTW" 2>/dev/null
-OUT=$(run "$TMP/t3" "UPAT_SHAPE=1")
-ok "fftw_execute[1024] counted 100x" "echo \"$OUT\" | grep -E 'fftw_execute\[1024\]' | grep -qE ' 100 '"
+rm -f "$TMP"/p.*.json
+env UPAT_QUIET=1 UPAT_SHAPE=1 UPAT_OUTPUT="$TMP/p" LD_PRELOAD="$LIB" "$TMP/t3" >/dev/null 2>&1
+OUT=$(python3 "$RPT" "$TMP"/p.*.json 2>&1)
+ok "fftw_execute aggregated 100x"  "echo \"$OUT\" | grep -E ' fftw_execute ' | grep -qE ' 100 '"
+DET=$(python3 "$RPT" --detail fftw "$TMP"/p.*.json 2>&1)
+ok "fftw_execute[1024] in --detail" "echo \"$DET\" | grep -E 'fftw_execute\[1024\]' | grep -qE ' 100 '"
 fi
 
 # --- MPI: per-rank files, dedicated MPI table, imbalance ---
@@ -120,7 +124,7 @@ ok "sampling: folded flamegraph export"  "echo \"$FOLD\" | grep -qE 'main;.*hot 
 # --- driver: one command runs + reports ---
 DRV="$ROOT/bin/upat"
 OUT=$("$DRV" --no-sample "$TMP/t1" 2>&1)
-ok "driver: prints a report"        "echo \"$OUT\" | grep -q 'Scientific Library Profiler'"
+ok "driver: prints a report"        "echo \"$OUT\" | grep -q 'UPAT'"
 ok "driver: traced dgemm"           "echo \"$OUT\" | grep -q ' dgemm_ '"
 
 # --- I/O tracing ---

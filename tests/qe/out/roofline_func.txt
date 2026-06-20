@@ -1,12 +1,3 @@
-==============================================================================
-                        Performance Suite  (snapshot + profile)
-==============================================================================
- command: ./pw -in si.scf.in
-
-(no snapshot — hardware counters unavailable or not collected)
-
-── INSIGHTS  (combined snapshot + profile) ───────────────────────────────────
-  ▶ Compute is dominated by math libraries (47%, top: fftw_execute_dft) (running efficiently) — the main tuning target.
 
 ══ Roofline (per function — measured, event-based sampling) ══
   flops = FP-op samples x period (ops-based proxy); bytes = DRAM-fill samples x line.
