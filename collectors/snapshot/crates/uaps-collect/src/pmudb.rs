@@ -206,6 +206,46 @@ fn sysfs_format(pmu: &str) -> HashMap<String, Vec<(u8, u8)>> {
     m
 }
 
+/// Resolve an event name to its definition. JSON wins; otherwise fall back to a
+/// kernel-provided event alias under `/sys/devices/<pmu>/events/<name>`. Intel's
+/// `slots` and the `topdown-*` PERF_METRICS pseudo-events are not in the JSON —
+/// the kernel exposes their encoding here, so this is still sourced, not guessed.
+fn resolve_event(db: &PmuDb, name: &str) -> Option<EventDef> {
+    if let Some(ev) = db.events.get(name) {
+        return Some(ev.clone());
+    }
+    kernel_event(name)
+}
+
+/// Read a kernel event alias (`event=0x..,umask=0x..`) from any PMU that defines
+/// one with this name, parsing it into the same field/value form as the JSON.
+fn kernel_event(name: &str) -> Option<EventDef> {
+    for dev in std::fs::read_dir("/sys/devices").into_iter().flatten().flatten() {
+        let unit = dev.file_name().to_string_lossy().into_owned();
+        let path = dev.path().join("events").join(name);
+        let Ok(spec) = std::fs::read_to_string(&path) else { continue };
+        let mut fields = Vec::new();
+        let mut ok = true;
+        for kv in spec.trim().split(',') {
+            let Some((k, v)) = kv.split_once('=') else { continue };
+            let v = v.trim();
+            let val = if let Some(h) = v.strip_prefix("0x").or_else(|| v.strip_prefix("0X")) {
+                u64::from_str_radix(h, 16).ok()
+            } else {
+                v.parse().ok()
+            };
+            match val {
+                Some(val) => fields.push((k.trim().to_string(), val)),
+                None => { ok = false; break } // e.g. "config1=..." with non-numeric → skip alias
+            }
+        }
+        if ok && !fields.is_empty() {
+            return Some(EventDef { fields, unit });
+        }
+    }
+    None
+}
+
 /// Encode an event into perf_event_attr.config using the PMU's sysfs bit layout.
 /// None = a gap (a field has no sysfs layout — we don't guess bit positions).
 pub fn encode(ev: &EventDef, fmt: &HashMap<String, Vec<(u8, u8)>>) -> Option<u64> {
@@ -259,7 +299,8 @@ fn eval_expr(
 enum Tok {
     Num(f64),
     Ident(String),
-    Op(char), // + - * / ( ) ,
+    Sys(String), // #smt_on, #num_cpus, … (perf "system constants")
+    Op(String),  // + - * / ( ) , and multi-char relops + ternary ? :
 }
 
 fn tokenize(s: &str) -> Option<Vec<Tok>> {
@@ -284,20 +325,55 @@ fn tokenize(s: &str) -> Option<Vec<Tok>> {
                 }
                 out.push(Tok::Num(s[start..i].parse().ok()?));
             }
-        } else if c.is_ascii_alphabetic() || c == '_' {
+        } else if c == '#' {
+            // perf system constant: #smt_on, #num_cpus, #core_wide, …
+            i += 1;
             let start = i;
             while i < b.len() && {
                 let ch = b[i] as char;
-                ch.is_ascii_alphanumeric() || ch == '_' || ch == '.'
+                ch.is_ascii_alphanumeric() || ch == '_'
             } {
                 i += 1;
             }
-            out.push(Tok::Ident(s[start..i].to_lowercase()));
-        } else if "+-*/(),".contains(c) {
-            out.push(Tok::Op(c));
+            out.push(Tok::Sys(s[start..i].to_lowercase()));
+        } else if c.is_ascii_alphabetic() || c == '_' || c == '\\' {
+            // Identifier (event/metric/function). perf escapes characters that
+            // are otherwise operators inside event names: `topdown\-retiring`,
+            // `EVENT\,umask`, `cmask\=1`. Consume `\X` as the literal X so the
+            // name matches the JSON/kernel spelling (minus the backslash).
+            let mut name = String::new();
+            while i < b.len() {
+                let ch = b[i] as char;
+                if ch == '\\' && i + 1 < b.len() {
+                    name.push(b[i + 1] as char);
+                    i += 2;
+                } else if ch.is_ascii_alphanumeric() || ch == '_' || ch == '.' {
+                    name.push(ch);
+                    i += 1;
+                } else {
+                    break;
+                }
+            }
+            if name.is_empty() {
+                return None;
+            }
+            out.push(Tok::Ident(name.to_lowercase()));
+        } else if c == '<' || c == '>' || c == '=' || c == '!' {
+            // relational / equality; may be one or two chars (<, <=, ==, !=)
+            if i + 1 < b.len() && b[i + 1] == b'=' {
+                out.push(Tok::Op(format!("{c}=")));
+                i += 2;
+            } else if c == '<' || c == '>' {
+                out.push(Tok::Op(c.to_string()));
+                i += 1;
+            } else {
+                return None; // lone '=' or '!' → gap
+            }
+        } else if "+-*/(),?:".contains(c) {
+            out.push(Tok::Op(c.to_string()));
             i += 1;
         } else {
-            return None; // unsupported character (e.g. @, #, <, ?) → gap
+            return None; // unsupported character (e.g. @ event modifier) → gap
         }
     }
     Some(out)
@@ -315,23 +391,69 @@ impl Parser<'_> {
     fn peek(&self) -> Option<&Tok> {
         self.toks.get(self.pos)
     }
+    fn is_op(&self, op: &str) -> bool {
+        matches!(self.peek(), Some(Tok::Op(o)) if o == op)
+    }
+    /// Top of the grammar: ternary `cond ? a : b` (lowest precedence).
     fn expr(&mut self) -> Option<f64> {
-        let mut v = self.term()?;
-        while let Some(Tok::Op(c @ ('+' | '-'))) = self.peek() {
-            let c = *c;
+        let cond = self.cmp()?;
+        if self.is_op("?") {
             self.pos += 1;
-            let r = self.term()?;
-            v = if c == '+' { v + r } else { v - r };
+            let then = self.expr()?;
+            self.is_op(":").then(|| ())?;
+            self.pos += 1;
+            let els = self.expr()?;
+            Some(if cond != 0.0 { then } else { els })
+        } else {
+            Some(cond)
+        }
+    }
+    /// Relational/equality, yielding 1.0/0.0 (perf uses these inside `?:`/min/max).
+    fn cmp(&mut self) -> Option<f64> {
+        let l = self.add()?;
+        if let Some(Tok::Op(o)) = self.peek() {
+            if matches!(o.as_str(), "<" | ">" | "<=" | ">=" | "==" | "!=") {
+                let o = o.clone();
+                self.pos += 1;
+                let r = self.add()?;
+                let b = match o.as_str() {
+                    "<" => l < r,
+                    ">" => l > r,
+                    "<=" => l <= r,
+                    ">=" => l >= r,
+                    "==" => l == r,
+                    _ => l != r,
+                };
+                return Some(if b { 1.0 } else { 0.0 });
+            }
+        }
+        Some(l)
+    }
+    fn add(&mut self) -> Option<f64> {
+        let mut v = self.term()?;
+        while let Some(Tok::Op(o)) = self.peek() {
+            let o = o.clone();
+            if o == "+" || o == "-" {
+                self.pos += 1;
+                let r = self.term()?;
+                v = if o == "+" { v + r } else { v - r };
+            } else {
+                break;
+            }
         }
         Some(v)
     }
     fn term(&mut self) -> Option<f64> {
         let mut v = self.factor()?;
-        while let Some(Tok::Op(c @ ('*' | '/'))) = self.peek() {
-            let c = *c;
-            self.pos += 1;
-            let r = self.factor()?;
-            v = if c == '*' { v * r } else if r != 0.0 { v / r } else { 0.0 };
+        while let Some(Tok::Op(o)) = self.peek() {
+            let o = o.clone();
+            if o == "*" || o == "/" {
+                self.pos += 1;
+                let r = self.factor()?;
+                v = if o == "*" { v * r } else if r != 0.0 { v / r } else { 0.0 };
+            } else {
+                break;
+            }
         }
         Some(v)
     }
@@ -341,33 +463,38 @@ impl Parser<'_> {
                 self.pos += 1;
                 Some(n)
             }
-            Tok::Op('(') => {
+            Tok::Sys(name) => {
+                self.pos += 1;
+                sys_const(&name)
+            }
+            Tok::Op(ref o) if o == "(" => {
                 self.pos += 1;
                 let v = self.expr()?;
-                matches!(self.peek(), Some(Tok::Op(')'))).then(|| ())?;
+                self.is_op(")").then(|| ())?;
                 self.pos += 1;
                 Some(v)
             }
-            Tok::Op('-') => {
+            Tok::Op(ref o) if o == "-" => {
                 self.pos += 1;
                 Some(-self.factor()?)
             }
             Tok::Ident(name) => {
                 self.pos += 1;
                 // function call?
-                if matches!(self.peek(), Some(Tok::Op('('))) {
+                if self.is_op("(") {
                     self.pos += 1;
                     let mut args = Vec::new();
-                    if !matches!(self.peek(), Some(Tok::Op(')'))) {
+                    if !self.is_op(")") {
                         loop {
                             args.push(self.expr()?);
-                            match self.peek() {
-                                Some(Tok::Op(',')) => self.pos += 1,
-                                _ => break,
+                            if self.is_op(",") {
+                                self.pos += 1;
+                            } else {
+                                break;
                             }
                         }
                     }
-                    matches!(self.peek(), Some(Tok::Op(')'))).then(|| ())?;
+                    self.is_op(")").then(|| ())?;
                     self.pos += 1;
                     return apply_fn(&name, &args);
                 }
@@ -388,8 +515,50 @@ fn apply_fn(name: &str, args: &[f64]) -> Option<f64> {
         ("d_ratio", [a, b]) => Some(if *b != 0.0 { a / b } else { 0.0 }),
         ("min", [a, b]) => Some(a.min(*b)),
         ("max", [a, b]) => Some(a.max(*b)),
+        // perf's `if(c, t, e)` (a few metric files use the functional form)
+        ("if", [c, t, e]) => Some(if *c != 0.0 { *t } else { *e }),
         _ => None, // unsupported function → gap
     }
+}
+
+/// perf "system constants" (`#name`). Resolve the few that are knowable from the
+/// host without guessing; anything else is a gap (`None`).
+fn sys_const(name: &str) -> Option<f64> {
+    match name {
+        "smt_on" => Some(if smt_on() { 1.0 } else { 0.0 }),
+        "num_cpus" | "num_cpus_online" => Some(num_cpus_online() as f64),
+        // We count the whole process (not one logical CPU), so a metric written
+        // for a single hardware thread (#core_wide / #num_packages-scaled) can't
+        // be reproduced faithfully → gap rather than a wrong number.
+        _ => None,
+    }
+}
+
+/// SMT enabled? True when any core lists more than one thread sibling.
+fn smt_on() -> bool {
+    if let Ok(s) = std::fs::read_to_string("/sys/devices/system/cpu/cpu0/topology/thread_siblings_list") {
+        return s.contains(',') || s.contains('-');
+    }
+    false
+}
+
+fn num_cpus_online() -> usize {
+    std::fs::read_to_string("/sys/devices/system/cpu/online")
+        .ok()
+        .map(|s| {
+            s.trim()
+                .split(',')
+                .map(|r| match r.split_once('-') {
+                    Some((a, b)) => {
+                        let (a, b) = (a.trim().parse::<usize>().unwrap_or(0), b.trim().parse::<usize>().unwrap_or(0));
+                        b.saturating_sub(a) + 1
+                    }
+                    None => 1,
+                })
+                .sum()
+        })
+        .filter(|&n| n > 0)
+        .unwrap_or(1)
 }
 
 // ---------------------------------------------------------------- public detect
@@ -452,9 +621,9 @@ impl HwpcCollector {
         if let Some(db) = &db {
             let mut fmts: HashMap<String, HashMap<String, Vec<(u8, u8)>>> = HashMap::new();
             let mut encodes = |e: &str| -> bool {
-                db.events.get(e).is_some_and(|ev| {
+                resolve_event(db, e).is_some_and(|ev| {
                     let f = fmts.entry(ev.unit.clone()).or_insert_with(|| sysfs_format(&ev.unit));
-                    encode(ev, f).is_some()
+                    encode(&ev, f).is_some()
                 })
             };
             for &(key, label, cands) in CANON {
@@ -505,9 +674,9 @@ impl HwpcCollector {
                 .map(|g| {
                     g.iter()
                         .filter_map(|e| {
-                            let ev = db.events.get(e)?;
+                            let ev = resolve_event(db, e)?;
                             let f = fmts.entry(ev.unit.clone()).or_insert_with(|| sysfs_format(&ev.unit));
-                            Some(EventCfg { etype: pmu_type(&ev.unit), config: encode(ev, f)? })
+                            Some(EventCfg { etype: pmu_type(&ev.unit), config: encode(&ev, f)? })
                         })
                         .collect()
                 })
@@ -623,5 +792,64 @@ mod tests {
         let r = eval_metric(&db, "retiring", &mut counts).expect("retiring resolves");
         // 2000 / (8 * 1000) = 0.25
         assert!((r - 0.25).abs() < 1e-9, "got {r}");
+    }
+
+    /// Build a db whose only content is the named test formulas (no hardware).
+    fn db_with(metrics: &[(&str, &str)]) -> PmuDb {
+        PmuDb {
+            model_dir: "test".into(),
+            events: HashMap::new(),
+            metrics: metrics.iter().map(|(k, v)| (k.to_string(), v.to_string())).collect(),
+        }
+    }
+
+    #[test]
+    fn evaluator_ternary_and_comparison() {
+        // ternary over a comparison, the two flavours perf uses.
+        let db = db_with(&[("m", "(a > b) ? 10 : 20")]);
+        let mut hi = |e: &str| match e { "a" => Some(3.0), "b" => Some(2.0), _ => None };
+        assert_eq!(eval_metric(&db, "m", &mut hi), Some(10.0));
+        let mut lo = |e: &str| match e { "a" => Some(1.0), "b" => Some(2.0), _ => None };
+        assert_eq!(eval_metric(&db, "m", &mut lo), Some(20.0));
+    }
+
+    #[test]
+    fn evaluator_if_function() {
+        let db = db_with(&[("m", "if(c, 5, 7)")]);
+        let mut z = |e: &str| if e == "c" { Some(0.0) } else { None };
+        assert_eq!(eval_metric(&db, "m", &mut z), Some(7.0));
+        let mut nz = |e: &str| if e == "c" { Some(1.0) } else { None };
+        assert_eq!(eval_metric(&db, "m", &mut nz), Some(5.0));
+    }
+
+    #[test]
+    fn evaluator_escaped_hyphen_event() {
+        // Intel TMA writes `topdown\-retiring` — the backslash escapes the '-' so
+        // it's part of the event name, not subtraction. The token must resolve to
+        // the kernel-alias spelling "topdown-retiring".
+        let db = db_with(&[("m", "topdown\\-retiring / 4")]);
+        let mut c = |e: &str| if e == "topdown-retiring" { Some(8.0) } else { None };
+        assert_eq!(eval_metric(&db, "m", &mut c), Some(2.0));
+    }
+
+    #[test]
+    fn evaluator_system_constant_smt() {
+        // #smt_on resolves to a real host fact (0 or 1) — not a gap.
+        let db = db_with(&[("m", "#smt_on")]);
+        let mut none = |_: &str| None;
+        let v = eval_metric(&db, "m", &mut none).expect("smt_on resolves on Linux");
+        assert!(v == 0.0 || v == 1.0, "got {v}");
+        // An unknown #constant is an honest gap, not a fabricated number.
+        let db2 = db_with(&[("m", "#bogus_constant")]);
+        assert_eq!(eval_metric(&db2, "m", &mut none), None);
+    }
+
+    #[test]
+    fn unsupported_at_modifier_is_a_gap() {
+        // Event `@…@` modifiers aren't implemented → the metric must gap, never
+        // silently drop the modifier and return a wrong count.
+        let db = db_with(&[("m", "cpu@event\\=0x3c@ / 2")]);
+        let mut c = |_: &str| Some(100.0);
+        assert_eq!(eval_metric(&db, "m", &mut c), None);
     }
 }
