@@ -83,9 +83,11 @@ if [ "$HAVE_MPI" = 1 ]; then
   OUT=$(OMPI_MCA_rmaps_base_oversubscribe=1 "$DRV" run -o "$TMP/r2" -- mpirun --oversubscribe -n 4 "$TMP/m" 2>/dev/null)
   ok "mpi: 4 prof files"            "[ \$(ls $TMP/r2/prof.*.json | wc -l) -eq 4 ]"
   ok "mpi: exactly one snap-or-none, no stray prof" "[ \$(ls $TMP/r2/prof.*.json | wc -l) -eq 4 ]"
-  ok "mpi: MPI table in profile"    "echo \"$OUT\" | grep -q 'MPI (communication)'"
+  OUT0=$("$DRV" report "$TMP/r2" --threshold 0 2>/dev/null)   # show all (tiny MPI in a compute-heavy app)
+  ok "mpi: MPI table in profile"    "echo \"$OUT0\" | grep -q 'MPI (communication)'"
   ok "mpi: unified imb header"      "echo \"$OUT\" | grep -q 'imb = (max-avg)/max'"
   ok "mpi: dgemm imbalance insight" "echo \"$OUT\" | grep -qiE 'imbalanc'"
+  ok "mpi: threshold hides tiny calls" "echo \"$OUT\" | grep -qE 'more below .*% of runtime'"
   MOUT=$(OMPI_MCA_rmaps_base_oversubscribe=1 "$DRV" report "$TMP/r2" --view mpi 2>/dev/null)
   ok "mpi: wait-state view"         "echo \"$MOUT\" | grep -q 'MPI wait-state'"
   ok "mpi: sync vs transfer split"  "echo \"$MOUT\" | grep -q 'synchronization/wait'"

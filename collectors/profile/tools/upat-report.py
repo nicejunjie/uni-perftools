@@ -341,9 +341,23 @@ def imb_s(p):
     return ">=999%" if p >= 999 else "%.1f%%" % p
 
 
-def fmt_compute(rows, sortkey, top):
+def _thr_filter(rows, runtime, thr):
+    """Keep rows whose inclusive time is >= thr% of the run; return (kept, hidden)."""
+    if thr <= 0 or runtime <= 0:
+        return rows, 0
+    keep = [r for r in rows if r["t_incl"] / runtime * 100.0 >= thr]
+    return keep, len(rows) - len(keep)
+
+
+def _hidden_note(hidden, thr):
+    return ("   ... %d more below %.3g%% of runtime (report --threshold 0 to show all)"
+            % (hidden, thr)) if hidden else None
+
+
+def fmt_compute(rows, sortkey, top, runtime=0.0, thr=0.0):
     rows = [r for r in rows if r["group"] in COMPUTE_GROUPS]
     rows.sort(key=lambda r: r[sortkey], reverse=True)
+    rows, hidden = _thr_filter(rows, runtime, thr)
     if top:
         rows = rows[:top]
     if not rows:
@@ -356,6 +370,9 @@ def fmt_compute(rows, sortkey, top):
         out.append("   %-9s %-24s %9.0f %5s %11.4f %11.4f" % (
             r["group"], r["name"][:24], r["count"], imb_s(r["imb_count"]),
             r["t_incl"], r["t_excl"]))
+    n = _hidden_note(hidden, thr)
+    if n:
+        out.append(n)
     out.append(foot([
         ("group", "library family: BLAS/CBLAS, LAPACK/LAPACKe, P/ScaLAPACK, FFTW"),
         ("count[imb]", "total calls over ranks [Imb% = (max-avg)/max load imbalance]"),
@@ -365,9 +382,10 @@ def fmt_compute(rows, sortkey, top):
     return "\n".join(out)
 
 
-def fmt_mpi(rows, sortkey, top):
+def fmt_mpi(rows, sortkey, top, runtime=0.0, thr=0.0):
     rows = [r for r in rows if r["group"] == "MPI"]
     rows.sort(key=lambda r: r[sortkey], reverse=True)
+    rows, hidden = _thr_filter(rows, runtime, thr)
     if top:
         rows = rows[:top]
     if not rows:
@@ -384,6 +402,9 @@ def fmt_mpi(rows, sortkey, top):
             r["active"], r["nranks"], r["t_incl"], r["bytes"], gbs))
     out.append("  " + "-" * 78)
     out.append("   total communication volume: %.3f GB  (sum over ranks)" % (total_bytes / 1e9))
+    n = _hidden_note(hidden, thr)
+    if n:
+        out.append(n)
     out.append(foot([
         ("count[imb]", "total calls over ranks [Imb% = (max-avg)/max]"),
         ("r/R", "ranks that called it / total ranks"),
@@ -461,9 +482,10 @@ def fmt_mpi_detail(ranks, rows):
     return "\n".join(out)
 
 
-def fmt_io(rows, sortkey, top):
+def fmt_io(rows, sortkey, top, runtime=0.0, thr=0.0):
     rows = [r for r in rows if r["group"] == "IO"]
     rows.sort(key=lambda r: r[sortkey], reverse=True)
+    rows, hidden = _thr_filter(rows, runtime, thr)
     if top:
         rows = rows[:top]
     if not rows:
@@ -479,6 +501,9 @@ def fmt_io(rows, sortkey, top):
             r["active"], r["nranks"], r["t_incl"], r["bytes"], gbs))
     out.append("  " + "-" * 70)
     out.append("   total I/O volume: %.3f GB  (sum over ranks)" % (total_bytes / 1e9))
+    n = _hidden_note(hidden, thr)
+    if n:
+        out.append(n)
     out.append(foot([
         ("call", "POSIX I/O syscall (read/write/open/...)"),
         ("count[imb]", "total calls over ranks [Imb% = (max-avg)/max]"),
@@ -497,7 +522,7 @@ def cp_imb(counts, nranks):
     return tot, imb_samp, imb_pct
 
 
-def fmt_flat(title, per_rank, total, nranks, top, labelfn):
+def fmt_flat(title, per_rank, total, nranks, top, labelfn, thr=0.0):
     agg = collections.defaultdict(lambda: collections.defaultdict(int))
     for pe, c in enumerate(per_rank):
         if c:
@@ -505,11 +530,21 @@ def fmt_flat(title, per_rank, total, nranks, top, labelfn):
                 agg[k][pe] += n
     rows = [(k, cp_imb(list(pe.values()), nranks)) for k, pe in agg.items()]
     rows.sort(key=lambda x: -x[1][0])
+    if thr > 0 and total > 0:
+        kept = [x for x in rows if 100.0 * x[1][0] / total >= thr]
+    else:
+        kept = rows
+    hidden = len(rows) - len(kept)
+    if top:
+        kept = kept[:top]
     out = ["", "  " + title, "  " + "-" * 78,
            "   Samp%      Samp  Imb.Samp  Imb.Samp%  Function",
            " " + "-" * 78]
-    for k, (tot, is_, ip) in rows[:top or 12]:
+    for k, (tot, is_, ip) in kept:
         out.append("%6.1f%% %9d %9.1f %8.1f%%  %s" % (100.0 * tot / total, tot, is_, ip, labelfn(k)[:54]))
+    n = _hidden_note(hidden, thr)
+    if n:
+        out.append(n)
     out.append(foot(SAMP_LEGEND))
     return "\n".join(out)
 
@@ -539,7 +574,7 @@ def fmt_domgroup(s, top):
     return "\n".join(out)
 
 
-def fmt_groups(per_rank, hz, total, nranks, top):
+def fmt_groups(per_rank, hz, total, nranks, top, thr=0.0):
     """CrayPAT-style 'Profile by Function Group and Function' for sampling."""
     if total <= 0:
         return ""
@@ -580,11 +615,21 @@ def fmt_groups(per_rank, hz, total, nranks, top):
         out.append(line(gt, gis, gip, g, ""))
         funcs = [k for k in fn_pe if k[0] == g]
         funcs.sort(key=lambda k: sum(fn_pe[k].values()), reverse=True)
-        for k in funcs[:top or 8]:
+        if thr > 0:
+            kept = [k for k in funcs if 100.0 * sum(fn_pe[k].values()) / total >= thr]
+        else:
+            kept = funcs
+        hidden = len(funcs) - len(kept)
+        if top:
+            kept = kept[:top]
+        for k in kept:
             ft, fis, fip = cp_imb(list(fn_pe[k].values()), nranks)
             fl = fn_line[k].most_common(1)[0][0]
             label = k[1] if fl in ("?", "") else "%s  [%s]" % (k[1], fl)
             out.append(line(ft, fis, fip, label[:52], "  "))
+        n = _hidden_note(hidden, thr)
+        if n:
+            out.append(n)
         out.append(" " + "-" * 78)
     out.append(foot(SAMP_LEGEND))
     return "\n".join(out)
@@ -690,6 +735,8 @@ def main():
     ap.add_argument("--format", choices=["table", "json", "csv"], default="table")
     ap.add_argument("--sort", choices=["t_incl", "t_excl", "count"], default="t_excl")
     ap.add_argument("--top", type=int, default=0)
+    ap.add_argument("--threshold", type=float, default=0.1,
+                    help="hide functions below this %% of runtime (default 0.1; 0 = show all)")
     ap.add_argument("--folded", action="store_true",
                     help="print folded call stacks (for flamegraph.pl) and exit")
     ap.add_argument("--no-observations", action="store_true",
@@ -781,23 +828,24 @@ def main():
         if s.stacks:
             print(fmt_domgroup(s, args.top))
             print(fmt_flat("Top functions (inclusive)", s.incf, total, s.nranks, args.top,
-                           lambda k: "%s  [%s]" % (k[1], k[0])))
+                           lambda k: "%s  [%s]" % (k[1], k[0]), args.threshold))
             print(fmt_flat("Top functions (self)", s.leaf, total, s.nranks, args.top,
-                           lambda k: "%s  %s" % (k[1], k[2])))
+                           lambda k: "%s  %s" % (k[1], k[2]), args.threshold))
         else:
-            print(fmt_groups(s.leaf, hz, total, s.nranks, args.top))
+            print(fmt_groups(s.leaf, hz, total, s.nranks, args.top, args.threshold))
 
     # Tables 2-3 — exact library tracing (counts/time/imbalance, MPI volume).
-    ct = fmt_compute(rows, args.sort, args.top)
+    thr = args.threshold
+    ct = fmt_compute(rows, args.sort, args.top, runtime, thr)
     if ct:
         print("\nTable 2:  Library calls by group and function  (tracing)")
         print(ct)
-    mt = fmt_mpi(rows, args.sort, args.top)
+    mt = fmt_mpi(rows, args.sort, args.top, runtime, thr)
     if mt:
         print("\nTable 3:  MPI message statistics  (tracing)")
         print(mt)
         print(fmt_mpi_detail(ranks, rows))
-    iot = fmt_io(rows, args.sort, args.top)
+    iot = fmt_io(rows, args.sort, args.top, runtime, thr)
     if iot:
         print("\nTable 4:  I/O statistics  (tracing)")
         print(iot)

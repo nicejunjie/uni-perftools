@@ -93,7 +93,7 @@ rm -f "$TMP"/p.*.json
 OMPI_MCA_rmaps_base_oversubscribe=1 mpirun --oversubscribe -n 4 \
   -x UPAT_QUIET=1 -x UPAT_OUTPUT="$TMP/p" -x LD_PRELOAD="$LIB" "$TMP/t4" >/dev/null 2>&1
 NFILES=$(ls "$TMP"/p.*.json 2>/dev/null | wc -l)
-OUT=$(python3 "$RPT" "$TMP"/p.*.json 2>&1)
+OUT=$(python3 "$RPT" --threshold 0 "$TMP"/p.*.json 2>&1)
 ok "4 per-rank files written"  "[ $NFILES -eq 4 ]"
 ok "dedicated MPI table"        "echo \"$OUT\" | grep -q 'MPI (communication)'"
 ok "MPI_Allreduce has GB/s"     "echo \"$OUT\" | grep -q MPI_Allreduce"
@@ -122,7 +122,7 @@ EOF
   rm -f "$TMP"/p.*.json
   OMPI_MCA_rmaps_base_oversubscribe=1 mpirun --oversubscribe -n 2 \
     -x UPAT_QUIET=1 -x UPAT_OUTPUT="$TMP/p" -x LD_PRELOAD="$LIB" "$TMP/t4f" >/dev/null 2>&1
-  FOUT=$(python3 "$RPT" "$TMP"/p.*.json 2>&1)
+  FOUT=$(python3 "$RPT" --threshold 0 "$TMP"/p.*.json 2>&1)
   ok "fortran MPI: app survived"     "[ $(ls $TMP/p.*.json 2>/dev/null | wc -l) -eq 2 ]"
   ok "fortran MPI: mpi_allreduce_ traced" "echo \"$FOUT\" | grep -q 'mpi_allreduce_'"
   ok "fortran MPI: nonzero byte volume"   "echo \"$FOUT\" | grep -E 'mpi_allreduce_' | grep -qvE ' 0 +[0-9.]+ *$'"

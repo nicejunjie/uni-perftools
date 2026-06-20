@@ -122,6 +122,151 @@ Table 1:  Profile by Function Group  (sampling @ 1000 Hz, 2 PEs)
   25.3%      7243       2.5      0.1%  epoll_wait  [ETC]
   25.3%      7239       2.5      0.1%  epoll_dispatch  [ETC]
   25.0%      7168       6.0      0.2%  MAIN__  [USER]
+  25.0%      7168       6.0      0.2%  main  [USER]
+  25.0%      7167       6.5      0.2%  __libc_start_call_main  [ETC]
+  25.0%      7167       6.5      0.2%  call_init  [ETC]
+  25.0%      7166       6.0      0.2%  _start  [USER]
+  24.6%      7037       5.5      0.2%  run_pwscf_  [USER]
+  23.6%      6767      26.5      0.8%  gomp_thread_start  [ETC]
+  23.4%      6709       5.5      0.2%  electrons_scf_  [USER]
+  23.4%      6709       5.5      0.2%  electrons_  [USER]
+  21.6%      6175       4.5      0.1%  c_bands_  [USER]
+  21.3%      6105      29.5      1.0%  diag_bands_  [USER]
+  21.2%      6077      35.5      1.2%  cegterg_  [USER]
+  19.2%      5489      37.5      1.3%  h_psi__  [USER]
+  19.2%      5489      37.5      1.3%  h_psi_  [USER]
+  16.4%      4706      45.0      1.9%  vloc_psi_k_acc_  [USER]
+  16.1%      4595     111.5      4.6%  __fft_parallel_2d_MOD_tg_cft3s  [USER]
+  11.0%      3152     171.0      9.8%  __fft_wave_MOD_wave_g2r  [USER]
+   9.5%      2733      36.5      2.6%  ompi_sync_wait_mt  [MPI]
+   9.5%      2712      40.0      2.9%  opal_progress  [MPI]
+   9.3%      2667      88.5      6.2%  invfft_y_  [USER]
+   9.0%      2574      12.0      0.9%  gomp_team_end  [ETC]
+   8.5%      2425       9.5      0.8%  __fft_scatter_2d_MOD_fft_scatter  [USER]
+   8.2%      2356     113.0      8.8%  apply  [FFTW]
+   7.9%      2250      16.0      1.4%  ompi_coll_base_sendrecv_actual  [MPI]
+   7.8%      2218      18.0      1.6%  mca_pml_ob1_send  [MPI]
+   7.7%      2216      13.0      1.2%  mpi_alltoall_  [MPI]
+   7.7%      2216      19.0      1.7%  ompi_request_wait_completion.part.0  [MPI]
+   7.7%      2215      13.5      1.2%  mpi_alltoall__  [MPI]
+   7.7%      2214      13.0      1.2%  ompi_coll_tuned_alltoall_intra_dec_fixed  [MPI]
+   7.7%      2214      13.0      1.2%  MPI_Alltoall  [MPI]
+   7.7%      2212      12.0      1.1%  ompi_coll_base_alltoall_intra_pairwise  [MPI]
+   6.9%      1970     104.0      9.6%  fftw_execute_dft  [ETC]
+   6.8%      1952     200.0     17.0%  __fft_wave_MOD_wave_r2g  [USER]
+   6.8%      1951     200.5     17.0%  fwfft_y_  [USER]
+   6.8%      1943     116.5     10.7%  fftw_spawn_loop  [FFTW]
+   5.7%      1640      20.0      2.4%  mca_part_persist_progress  [MPI]
+   2.6%       746      51.0     12.0%  __fft_scalar_fftw3_MOD_cft_2xy  [USER]
+   2.6%       737      34.5      8.6%  fftw_spawn_loop._omp_fn.0  [FFTW]
+   2.6%       736      35.0      8.7%  spawn_apply  [FFTW]
+   2.2%       625       7.5      2.3%  mca_btl_sm_component_progress  [MPI]
+   2.0%       582      81.0     21.8%  __fft_helper_subroutines_MOD_fftx_c2psi_k  [USER]
+   1.9%       543      23.5      8.0%  __becmod_MOD_calbec_bec_type  [USER]
+   1.9%       542      24.0      8.1%  __becmod_MOD_calbec_k  [USER]
+   1.8%       525       9.5      3.5%  sum_band_  [USER]
+   1.8%       517      58.5     18.5%  ompi_request_default_wait  [MPI]
+   1.8%       514      10.0      3.7%  sum_band_k.5  [USER]
+   1.6%       465      25.5      9.9%  reduce_base_real_  [USER]
+   1.6%       455      39.5     14.8%  mpi_barrier_  [MPI]
+   1.6%       455      39.5     14.8%  mp_synchronize_  [USER]
+   1.6%       454      39.0     14.7%  ompi_coll_base_barrier_intra_recursivedoubling  [MPI]
+   1.6%       454      39.0     14.7%  MPI_Barrier  [MPI]
+   1.6%       454      39.0     14.7%  PMPI_BARRIER  [MPI]
+   1.6%       449       8.5      3.6%  lll_mutex_lock_optimized  [ETC]
+   1.5%       426      11.0      4.9%  n1bv_32  [FFTW]
+   1.3%       376      15.0      7.4%  lll_mutex_unlock_optimized  [ETC]
+   1.3%       372      23.0     11.0%  gomp_icv  [ETC]
+   1.2%       334      11.0      6.2%  n1fv_32  [FFTW]
+   1.1%       318      25.0     13.6%  __futex_wait  [ETC]
+   1.1%       302     126.0     45.5%  __fft_scalar_fftw3_MOD_cft_1z  [USER]
+   0.9%       271      23.5     14.8%  zgemv_  [BLAS]
+   0.9%       270      23.0     14.6%  exec_blas  [BLAS]
+   0.9%       270      23.0     14.6%  zgemv_thread_c  [BLAS]
+   0.9%       268      23.0     14.6%  exec_blas_async_wait  [BLAS]
+   0.9%       265      43.5     24.7%  __mp_MOD_mp_sum_cm  [USER]
+   0.8%       228       0.0      0.0%  init_run_  [USER]
+   0.8%       220       8.0      6.8%  opal_progress_events.isra.0  [MPI]
+   0.7%       199      17.5     15.0%  __mp_MOD_mp_sum_rv  [USER]
+   0.6%       170      10.0     10.5%  opal_timer_linux_get_cycles_sys_timer  [MPI]
+   0.6%       160      34.0     29.8%  gomp_finish_task  [ETC]
+   0.5%       133       6.5      8.9%  ___pthread_mutex_lock  [ETC]
+   0.4%       115      28.5     33.1%  GOMP_parallel  [ETC]
+   0.4%       112      29.0     34.1%  gomp_simple_barrier_wait  [ETC]
+   0.4%       109      17.5     24.3%  init_us_2_acc_  [USER]
+   0.4%       109      17.5     24.3%  __uspp_init_MOD_init_us_2  [USER]
+   0.4%       106       0.0      0.0%  hinit0_  [USER]
+   0.4%       104       1.0      1.9%  search0  [FFTW]
+   0.4%       104       1.0      1.9%  mkplan  [FFTW]
+   0.4%       104       1.0      1.9%  fftw_mkapiplan  [FFTW]
+   0.4%       104       1.0      1.9%  fftw_plan_many_dft  [FFTW]
+   0.4%       104       0.0      0.0%  wfcinit_  [USER]
+   0.4%       102       1.0      1.9%  fftw_mkplan_d  [FFTW]
+   0.3%        97       0.5      1.0%  __fft_rho_MOD_rho_g2r_1spin  [USER]
+   0.3%        97       0.5      1.0%  fftw_measure_execution_time  [FFTW]
+   0.3%        97       0.5      1.0%  evaluate_plan  [FFTW]
+   0.3%        97       1.5      3.0%  init_wfc_  [USER]
+   0.3%        96       0.0      0.0%  setlocal_  [USER]
+   0.3%        89       8.5     16.0%  ylmr2_  [USER]
+   0.3%        86       0.0      0.0%  __futex_abstimed_wait_common64  [ETC]
+   0.3%        86       0.0      0.0%  __pthread_cond_wait_common  [ETC]
+   0.3%        84       0.0      0.0%  ompi_mpi_finalize  [MPI]
+   0.3%        84       0.0      0.0%  PMPI_FINALIZE  [MPI]
+   0.3%        84       0.0      0.0%  __mp_world_MOD_mp_world_end  [USER]
+   0.3%        83       0.5      1.2%  ompi_mpi_instance_finalize_common  [MPI]
+   0.3%        83       0.5      1.2%  ompi_mpi_instance_finalize  [MPI]
+   0.3%        82       1.0      2.4%  PMIx_Finalize  [MPI]
+   0.3%        82       1.0      2.4%  ompi_rte_finalize  [MPI]
+   0.3%        80       1.0      2.4%  rotate_wfc_k_  [USER]
+   0.3%        80       1.0      2.4%  rotate_wfc_  [USER]
+   0.2%        68      10.0     22.7%  apply_extra_iter  [FFTW]
+   0.2%        62       1.0      3.1%  fftw_mkplan_f_d  [FFTW]
+   0.2%        57       2.5      8.1%  zgemm_  [BLAS]
+   0.2%        57       7.5     20.8%  laxlib_cdiaghg_  [USER]
+   0.2%        56       0.0      0.0%  stres_knl_  [USER]
+   0.2%        56       0.0      0.0%  stress_  [USER]
+   0.2%        51       0.5      1.9%  stres_us_  [USER]
+   0.2%        50       3.0     10.7%  __getrusage  [ETC]
+   0.2%        50       3.0     10.7%  scnds  [USER]
+   0.2%        47       1.5      6.0%  ___pthread_mutex_unlock  [ETC]
+   0.2%        44       0.0      0.0%  __GI___pthread_mutex_unlock_usercnt  [ETC]
+   0.2%        43       2.5     10.4%  ompi_coll_base_allreduce_intra_recursivedoubling  [MPI
+   0.2%        43       2.5     10.4%  ompi_coll_tuned_allreduce_intra_dec_fixed  [MPI]
+   0.2%        43       2.5     10.4%  mca_coll_cuda_allreduce  [MPI]
+   0.2%        43       2.5     10.4%  MPI_Allreduce  [MPI]
+   0.2%        43       2.5     10.4%  PMPI_Allreduce_f  [MPI]
+   0.2%        43       2.5     10.4%  mpi_allreduce_  [MPI]
+   0.1%        42       0.0      0.0%  ompi_mpi_instance_init_common  [MPI]
+   0.1%        42       0.0      0.0%  ompi_mpi_instance_init  [MPI]
+   0.1%        42       0.0      0.0%  ompi_mpi_init  [MPI]
+   0.1%        42       0.0      0.0%  MPI_Init_thread  [MPI]
+   0.1%        42       0.0      0.0%  MPI_Init_thread_f08  [MPI]
+   0.1%        42       0.0      0.0%  __mp_world_MOD_mp_world_start  [USER]
+   0.1%        42       0.0      0.0%  __mp_global_MOD_mp_startup  [USER]
+   0.1%        41       3.5     14.6%  ompi_coll_libnbc_progress  [MPI]
+   0.1%        37       2.5     11.9%  libc_feholdsetround_sse_ctx  [ETC]
+   0.1%        37      17.5     48.6%  ompi_coll_base_bcast_intra_generic  [MPI]
+   0.1%        37      17.5     48.6%  ompi_coll_tuned_bcast_intra_dec_fixed  [MPI]
+   0.1%        37      17.5     48.6%  MPI_Bcast  [MPI]
+   0.1%        37      17.5     48.6%  pmpi_bcast_  [MPI]
+   0.1%        37      17.5     48.6%  mpi_bcast_  [MPI]
+   0.1%        37       1.5      7.5%  gen_us_dy_base_  [USER]
+   0.1%        37       1.5      7.5%  __uspp_init_MOD_gen_us_dy  [USER]
+   0.1%        36       3.0     14.3%  stop_clock_  [USER]
+   0.1%        36       4.0     18.2%  mca_btl_sm_poll_handle_frag  [MPI]
+   0.1%        36      18.0     50.0%  ompi_coll_base_bcast_intra_bintree  [MPI]
+   0.1%        34       5.0     22.7%  mca_pml_ob1_recv_frag_match_proc.isra.0  [MPI]
+   0.1%        34       5.0     22.7%  mca_pml_ob1_recv_frag_match.isra.0  [MPI]
+   0.1%        34       1.0      5.6%  dylmr2_  [USER]
+   0.1%        33       1.5      8.3%  futex_wait  [ETC]
+   0.1%        33       3.5     17.5%  zgemm_cn  [BLAS]
+   0.1%        33       5.5     25.0%  mca_pml_ob1_recv_request_progress_rget  [MPI]
+   0.1%        32       5.0     23.8%  mca_btl_sm_get  [MPI]
+   0.1%        32       5.0     23.8%  mca_pml_ob1_recv_request_get_frag  [MPI]
+   0.1%        30       0.0      0.0%  punch_  [USER]
+   0.1%        29       4.5     23.7%  process_vm_readv  [ETC]
+   0.1%        29       4.5     23.7%  mca_smsc_cma_copy_from  [MPI]
+   ... 635 more below 0.1% of runtime (report --threshold 0 to show all)
   ------------------------------------------------------------------------------
   legend:
     Samp%        percent of samples here (~ percent of wall time)
@@ -146,6 +291,24 @@ Table 1:  Profile by Function Group  (sampling @ 1000 Hz, 2 PEs)
    1.1%       318      25.0     13.6%  __futex_wait  futex.h:39
    0.9%       268      23.0     14.6%  exec_blas_async_wait  libopenblasp-r0.3.33.so
    0.7%       199       4.5      4.3%  __fft_scatter_2d_MOD_fft_scatter  pw.x
+   0.6%       184       2.0      2.1%  do_spin  wait.h:57
+   0.6%       170      10.0     10.5%  opal_timer_linux_get_cycles_sys_timer  timer_linux_com
+   0.5%       150       3.0      3.8%  opal_progress  libopen-pal.so.80.0.5
+   0.3%        86       0.0      0.0%  __futex_abstimed_wait_common64  futex-internal.c:57
+   0.2%        65       2.5      7.1%  vloc_psi_k_acc_  pw.x
+   0.2%        65       0.5      1.5%  __fft_scalar_fftw3_MOD_cft_2xy  pw.x
+   0.2%        50       3.0     10.7%  __getrusage  getrusage.c:29
+   0.2%        50       2.0      7.4%  opal_progress_events.isra.0  opal_progress.c:?
+   0.2%        48       1.0      4.0%  ___pthread_mutex_lock  pthread_mutex_lock.c:77
+   0.2%        47       4.5     16.1%  __fft_helper_subroutines_MOD_fftx_c2psi_k  pw.x
+   0.2%        47       1.5      6.0%  ___pthread_mutex_unlock  pthread_mutex_unlock.c:367
+   0.1%        41       3.5     14.6%  ompi_coll_libnbc_progress  libmpi.so.40.40.7
+   0.1%        39       6.5     25.0%  init_us_2_acc_  pw.x
+   0.1%        36       2.0     10.0%  libc_feholdsetround_sse_ctx  fenv_private.h:416
+   0.1%        33       1.5      8.3%  futex_wait  futex.h:97
+   0.1%        30       3.0     16.7%  ___pthread_mutex_lock  pthread_mutex_lock.c:88
+   0.1%        29       4.5     23.7%  process_vm_readv  process_vm_readv.c:30
+   ... 273 more below 0.1% of runtime (report --threshold 0 to show all)
   ------------------------------------------------------------------------------
   legend:
     Samp%        percent of samples here (~ percent of wall time)
@@ -166,68 +329,13 @@ Table 2:  Library calls by group and function  (tracing)
    LAPACK    dlaebz_                       3198  0.0%      0.0048      0.0048
    LAPACK    zstein_                       1066  0.0%      0.0058      0.0040
    LAPACK    zhegs2_                       1366  0.0%      0.0044      0.0032
-   LAPACK    zlarf1l_                      7799  0.0%      0.0024      0.0019
-   LAPACK    zlanhe_                       1366  0.0%      0.0018      0.0018
    LAPACK    zhetd2_                       1366  0.0%      0.0059      0.0018
-   LAPACK    zlarfg_                       7799  0.0%      0.0032      0.0015
-   BLAS      zher2_                       15598  0.0%      0.0011      0.0011
-   LAPACK    dladiv_                       7799  0.0%      0.0010      0.0010
-   LAPACK    dlagts_                      12792  0.0%      0.0008      0.0008
    LAPACK    zheevx_                       1066  0.0%      0.0215      0.0005
-   BLAS      ztrsm_                        1366  0.0%      0.0005      0.0005
    LAPACK    zhegvx_                       1066  0.0%      0.0269      0.0005
-   BLAS      ztrsv_                        7799  0.0%      0.0005      0.0005
-   LAPACK    zsteqr_                        300  0.0%      0.0008      0.0005
-   LAPACK    zpotrf_                       1366  0.0%      0.0005      0.0005
-   BLAS      zhemv_                        7799  0.0%      0.0004      0.0004
    LAPACK    dstebz_                       1066  0.0%      0.0053      0.0004
-   LAPACK    zunm2l_                       1066  0.0%      0.0025      0.0004
-   LAPACK    zladiv_                       7799  0.0%      0.0013      0.0004
-   LAPACK    dlaruv_                       4264  0.0%      0.0003      0.0003
-   BLAS      zgerc_                        6433  0.0%      0.0002      0.0002
-   BLAS      ddot_                         3225  0.0%      0.0002      0.0002
-   LAPACK    dlarnv_                       4264  0.0%      0.0005      0.0002
-   LAPACK    dlagtf_                       4264  0.0%      0.0002      0.0002
-   LAPACK    dlapy3_                       7799  0.0%      0.0002      0.0002
-   LAPACK    dlapy2_                       1576  0.0%      0.0002      0.0002
-   LAPACK    zunmtr_                       1066  0.0%      0.0028      0.0002
-   LAPACK    zunmql_                       1066  0.0%      0.0027      0.0002
    LAPACK    zhegst_                       1366  0.0%      0.0046      0.0002
    LAPACK    zhetrd_                       1366  0.0%      0.0060      0.0001
-   LAPACK    zhegv_                         300  0.0%      0.0031      0.0001
-   LAPACK    zheev_                         300  0.0%      0.0023      0.0001
-   BLAS      zaxpy_                       23397  0.0%      0.0001      0.0001
-   BLAS      idamax_                      14936 50.0%      0.0001      0.0001
-   LAPACK    zlasr_                        1876  0.0%      0.0001      0.0001
-   BLAS      zscal_                        9765  0.0%      0.0001      0.0001
-   LAPACK    zung2l_                        300  0.0%      0.0004      0.0001
-   LAPACK    ilaenv_                       5852 50.0%      0.0001      0.0001
-   LAPACK    zungtr_                        300  0.0%      0.0005      0.0001
-   BLAS      dznrm2_                       7799  0.0%      0.0001      0.0001
-   BLAS      zdscal_                       7799  0.0%      0.0001      0.0001
-   BLAS      dcopy_                        6440 49.8%      0.0000      0.0000
-   LAPACK    dlanst_                        300  0.0%      0.0000      0.0000
-   LAPACK    zungql_                        300  0.0%      0.0004      0.0000
-   BLAS      zdotc_                        7799  0.0%      0.0000      0.0000
-   BLAS      dscal_                        8538 50.0%      0.0000      0.0000
-   BLAS      dnrm2_                        2147 49.8%      0.0000      0.0000
-   LAPACK    zlacgv_                      31196  0.0%      0.0000      0.0000
-   LAPACK    dsytf2_                          4  0.0%      0.0000      0.0000
-   LAPACK    dgetrf_                          1  0.0%      0.0000      0.0000
-   LAPACK    dgetri_                          1  0.0%      0.0000      0.0000
-   LAPACK    disnan_                      17995 50.0%      0.0000      0.0000
-   LAPACK    dlaev2_                        300  0.0%      0.0000      0.0000
-   LAPACK    dsytrf_                          4  0.0%      0.0000      0.0000
-   LAPACK    dlartg_                       4125  0.0%      0.0000      0.0000
-   BLAS      zswap_                         569  0.0%      0.0000      0.0000
-   LAPACK    dtrtri_                          1  0.0%      0.0000      0.0000
-   LAPACK    ilazlc_                       7799  0.0%      0.0000      0.0000
-   LAPACK    dsytri_                          4  0.0%      0.0000      0.0000
-   LAPACK    dladiv2_                     15598  0.0%      0.0000      0.0000
-   BLAS      dsymv_                           6  0.0%      0.0000      0.0000
-   BLAS      dgemv_                           2  0.0%      0.0000      0.0000
-   BLAS      dsyr_                           10  0.0%      0.0000      0.0000
-   BLAS      dswap_                          16  0.0%      0.0000      0.0000
+   ... 56 more below 0.1% of runtime (report --threshold 0 to show all)
   ------------------------------------------------------------------------------
   legend:
     group        library family: BLAS/CBLAS, LAPACK/LAPACKe, P/ScaLAPACK, FFTW
@@ -246,12 +354,9 @@ Table 3:  MPI message statistics  (tracing)
    mpi_barrier_           8941  0.0%   2/2       0.2204            0     0.00
    mpi_allreduce_         7831  0.0%   2/2       0.0239      5537104     0.23
    mpi_bcast_             3844  0.0%   2/2       0.0175      8918164     0.51
-   mpi_send_               608  0.0%   1/2       0.0006      3618240     6.12
-   mpi_recv_               608  0.0%   1/2       0.0005      3703752     7.17
-   mpi_alltoallv_           22  0.0%   2/2       0.0003            0     0.00
-   mpi_gatherv_           2852  0.0%   2/2       0.0001            0     0.00
   ------------------------------------------------------------------------------
-   total communication volume: 0.625 GB  (sum over ranks)
+   total communication volume: 0.618 GB  (sum over ranks)
+   ... 4 more below 0.1% of runtime (report --threshold 0 to show all)
   ------------------------------------------------------------------------------
   legend:
     count[imb]   total calls over ranks [Imb% = (max-avg)/max]
@@ -288,17 +393,9 @@ Table 4:  I/O statistics  (tracing)
    call            count[imb]   r/R    incl(s)        bytes     GB/s
   ----------------------------------------------------------------------
    read                219  8.8%   2/2       0.0537       621756     0.01
-   pwrite              490  0.0%   1/2       0.0012      6565092     5.31
-   open                198 25.2%   2/2       0.0009            0     0.00
-   close               350 16.1%   2/2       0.0007            0     0.00
-   write               600  4.0%   2/2       0.0003       127945     0.43
-   pread                60  0.0%   1/2       0.0000            0     0.00
-   fwrite               17 37.0%   2/2       0.0000       153584     9.13
-   fread                16 40.7%   2/2       0.0000       314538    20.96
-   openat                1  0.0%   2/2       0.0000            0     0.00
-   lseek                 4 30.0%   2/2       0.0000            0     0.00
   ----------------------------------------------------------------------
-   total I/O volume: 0.008 GB  (sum over ranks)
+   total I/O volume: 0.001 GB  (sum over ranks)
+   ... 9 more below 0.1% of runtime (report --threshold 0 to show all)
   ----------------------------------------------------------------------
   legend:
     call         POSIX I/O syscall (read/write/open/...)

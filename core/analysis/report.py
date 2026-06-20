@@ -93,7 +93,7 @@ def _render_snapshot(snap, out):
         out.append("    " + "   |   ".join(cells[i:i + 2]))
 
 
-def render(result_dir, fmt="text", view="all", collector="both", detail=None):
+def render(result_dir, fmt="text", view="all", collector="both", detail=None, threshold=0.1):
     manifest = _load(os.path.join(result_dir, contract.MANIFEST)) or {}
     snap = _load(os.path.join(result_dir, contract.SNAP))
     profs = contract.prof_glob(result_dir)
@@ -110,7 +110,7 @@ def render(result_dir, fmt="text", view="all", collector="both", detail=None):
     if fmt == "html":
         import htmlrep
         suite = insights.suite_insights(snap, profile)
-        print(htmlrep.build(result_dir, manifest, snap, profile, suite, detail=detail))
+        print(htmlrep.build(result_dir, manifest, snap, profile, suite, detail=detail, threshold=threshold))
         return
 
     # focused per-facility detail (a UPAT post-recording analysis)
@@ -131,7 +131,8 @@ def render(result_dir, fmt="text", view="all", collector="both", detail=None):
             if out:
                 print("\n".join(out))
         if view == "hotspots" and profs:
-            subprocess.run([sys.executable, PROFILE_REPORT, "--no-observations"] + profs)
+            subprocess.run([sys.executable, PROFILE_REPORT, "--no-observations",
+                            "--threshold", str(threshold)] + profs)
         return
 
     suite = insights.suite_insights(snap, profile)
@@ -167,7 +168,7 @@ def render(result_dir, fmt="text", view="all", collector="both", detail=None):
         print("\n".join(out))
         if profs:
             sys.stdout.flush()   # our banner precedes the subprocess tables
-            subprocess.run([sys.executable, PROFILE_REPORT,
-                            "--no-observations", "--no-header"] + profs)
+            subprocess.run([sys.executable, PROFILE_REPORT, "--no-observations",
+                            "--no-header", "--threshold", str(threshold)] + profs)
         else:
             print("\n(no profile data)")

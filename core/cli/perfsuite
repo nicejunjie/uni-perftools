@@ -110,13 +110,17 @@ def main():
             p.add_argument("--roofline", action="store_true",
                            help="also sample FP/DRAM events for per-function roofline")
         p.add_argument("-o", "--outdir")
-        p.add_argument("--format", default="text", choices=["text", "json"])
+        p.add_argument("--format", default="text", choices=["text", "json", "html"])
         p.add_argument("--view", default="all", choices=VIEWS)
+        p.add_argument("--threshold", type=float, default=0.1,
+                       help="hide functions below this %% of runtime (default 0.1; 0 = all)")
         p.add_argument("cmd", nargs=argparse.REMAINDER)
     rp = sub.add_parser("report")
     rp.add_argument("result", nargs="?")
     rp.add_argument("--format", default="text", choices=["text", "json", "html"])
     rp.add_argument("--view", default="all", choices=VIEWS)
+    rp.add_argument("--threshold", type=float, default=0.1,
+                    help="hide functions below this %% of runtime (default 0.1; 0 = show all)")
     rp.add_argument("--collector", default="both", choices=["both", "uaps", "upat"],
                     help="render only one collector's report")
     rp.add_argument("--detail", choices=["blas", "lapack", "fftw", "mpi", "io"],
@@ -139,7 +143,7 @@ def main():
         if args.verb == "collect":
             sys.stderr.write("[perfsuite] result: %s  (perfsuite report %s)\n" % (result, result))
         else:
-            report.render(result, args.format, args.view)
+            report.render(result, args.format, args.view, threshold=args.threshold)
         sys.exit(rc)
     elif args.verb == "scale":
         import scaling
@@ -156,7 +160,8 @@ def main():
             saved = os.dup(1)
             try:
                 sys.stdout.flush(); os.dup2(f.fileno(), 1)
-                report.render(result, "html", args.view, collector=args.collector, detail=args.detail)
+                report.render(result, "html", args.view, collector=args.collector,
+                              detail=args.detail, threshold=args.threshold)
                 sys.stdout.flush()
             finally:
                 os.dup2(saved, 1); os.close(saved); f.close()
@@ -173,7 +178,8 @@ def main():
                 try:
                     sys.stdout.flush()
                     os.dup2(f.fileno(), 1)
-                    report.render(result, args.format, args.view, collector=col)
+                    report.render(result, args.format, args.view, collector=col,
+                                  threshold=args.threshold)
                     sys.stdout.flush()
                 finally:
                     os.dup2(saved, 1)
@@ -182,7 +188,7 @@ def main():
                 sys.stderr.write("[perfsuite] wrote %s\n" % path)
         else:
             report.render(result, args.format, args.view,
-                          collector=args.collector, detail=args.detail)
+                          collector=args.collector, detail=args.detail, threshold=args.threshold)
 
 
 if __name__ == "__main__":

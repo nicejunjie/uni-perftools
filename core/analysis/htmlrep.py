@@ -200,23 +200,30 @@ def _size_histogram(result_dir):
 COMPUTE = {"BLAS", "LAPACK", "PBLAS", "ScaLAPACK", "CBLAS", "LAPACKe", "FFTW"}
 
 
-def _profile_tables(profile):
+def _profile_tables(profile, threshold=0.1):
     out = []
     fns = (profile or {}).get("functions", [])
-    comp = sorted((f for f in fns if f["group"] in COMPUTE), key=lambda f: -f["t_excl"])[:25]
+    rt = (profile or {}).get("runtime_s", 0.0)
+
+    def keep(seq):
+        if threshold > 0 and rt > 0:
+            return [f for f in seq if f["t_incl"] / rt * 100.0 >= threshold]
+        return list(seq)
+    comp = keep(sorted((f for f in fns if f["group"] in COMPUTE), key=lambda f: -f["t_excl"]))[:40]
     if comp:
         out.append("<h2>Compute (BLAS / LAPACK / FFTW)</h2>")
         out.append(_table(["group", "function", "count", "incl(s)", "excl(s)"],
                           [[f["group"], f["name"], "%.0f" % f["count"], "%.4f" % f["t_incl"], "%.4f" % f["t_excl"]]
                            for f in comp], leftcols=(0, 1)))
-        out.append("<p class='note'>calls aggregated over input sizes; incl = routine+callees, excl = routine only.</p>")
-    mpi = sorted((f for f in fns if f["group"] == "MPI"), key=lambda f: -f["t_incl"])
+        out.append("<p class='note'>calls aggregated over input sizes; below %.3g%% of runtime hidden; "
+                   "incl = routine+callees, excl = routine only.</p>" % threshold)
+    mpi = keep(sorted((f for f in fns if f["group"] == "MPI"), key=lambda f: -f["t_incl"]))
     if mpi:
         out.append("<h2>MPI communication</h2>")
         out.append(_table(["function", "count", "incl(s)", "bytes", "GB/s"],
                           [[f["name"], "%.0f" % f["count"], "%.4f" % f["t_incl"], f["bytes"],
                             "%.2f" % (f["bytes"] / f["t_incl"] / 1e9 if f["t_incl"] > 0 else 0)] for f in mpi]))
-    io = sorted((f for f in fns if f["group"] == "IO"), key=lambda f: -f["t_incl"])
+    io = keep(sorted((f for f in fns if f["group"] == "IO"), key=lambda f: -f["t_incl"]))
     if io:
         out.append("<h2>I/O</h2>")
         out.append(_table(["call", "count", "incl(s)", "bytes"],
@@ -242,7 +249,7 @@ def _whole_program_point(snap):
     return None
 
 
-def build(result_dir, manifest, snap, profile, suite, detail=None):
+def build(result_dir, manifest, snap, profile, suite, detail=None, threshold=0.1):
     cmd = " ".join(manifest.get("command", [])) if manifest else ""
 
     if detail == "mpi":
@@ -292,7 +299,7 @@ def build(result_dir, manifest, snap, profile, suite, detail=None):
 
     # UPAT profile tables
     body.append("<h2 style='border-color:#88a'>UPAT — deep profile</h2>")
-    body.append(_profile_tables(profile))
+    body.append(_profile_tables(profile, threshold))
     # comm matrix figure if MPI ran
     cm = _comm_matrix(result_dir)
     if cm:

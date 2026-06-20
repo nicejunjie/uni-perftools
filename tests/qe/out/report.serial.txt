@@ -111,6 +111,56 @@ Table 1:  Profile by Function Group  (sampling @ 1000 Hz, 1 PEs)
    3.0%      6923       0.0      0.0%  event_base_loop  [ETC]
    3.0%      6923       0.0      0.0%  progress_engine  [MPI]
    3.0%      6805       0.0      0.0%  MAIN__  [USER]
+   3.0%      6805       0.0      0.0%  main  [USER]
+   3.0%      6805       0.0      0.0%  __libc_start_call_main  [ETC]
+   3.0%      6804       0.0      0.0%  cuVDPAUCtxCreate  [ETC]
+   3.0%      6803       0.0      0.0%  cuEGLApiInit  [ETC]
+   3.0%      6802       0.0      0.0%  call_init  [ETC]
+   3.0%      6802       0.0      0.0%  _start  [USER]
+   3.0%      6796       0.0      0.0%  __GI___poll  [ETC]
+   3.0%      6768       0.0      0.0%  run_pwscf_  [USER]
+   2.6%      6019       0.0      0.0%  electrons_scf_  [USER]
+   2.6%      6019       0.0      0.0%  electrons_  [USER]
+   2.4%      5592       0.0      0.0%  c_bands_  [USER]
+   2.4%      5576       0.0      0.0%  diag_bands_  [USER]
+   2.4%      5569       0.0      0.0%  cegterg_  [USER]
+   2.4%      5559       0.0      0.0%  h_psi_  [USER]
+   2.4%      5558       0.0      0.0%  h_psi__  [USER]
+   2.1%      4902       0.0      0.0%  fftw_spawn_loop._omp_fn.0  [FFTW]
+   2.0%      4649       0.0      0.0%  spawn_apply  [FFTW]
+   2.0%      4615       0.0      0.0%  vloc_psi_k_acc_  [USER]
+   1.9%      4316       0.0      0.0%  __fft_scalar_fftw3_MOD_cfft3ds  [USER]
+   1.8%      4031       0.0      0.0%  fftw_execute_dft  [ETC]
+   1.7%      3952       0.0      0.0%  __futex_wait  [ETC]
+   1.6%      3635       0.0      0.0%  fftw_spawn_loop  [FFTW]
+   1.5%      3501       0.0      0.0%  __fft_wave_MOD_wave_g2r  [USER]
+   1.4%      3169       0.0      0.0%  invfft_y_  [USER]
+   1.3%      3040       0.0      0.0%  gomp_team_end  [ETC]
+   1.0%      2401       0.0      0.0%  n1bv_32  [FFTW]
+   0.9%      2129       0.0      0.0%  n1fv_32  [FFTW]
+   0.8%      1797       0.0      0.0%  GOMP_parallel  [ETC]
+   0.7%      1546       0.0      0.0%  gomp_simple_barrier_wait  [ETC]
+   0.7%      1520       0.0      0.0%  gomp_barrier_wait_start  [ETC]
+   0.6%      1395       0.0      0.0%  fwfft_y_  [USER]
+   0.6%      1394       0.0      0.0%  __fft_wave_MOD_wave_r2g  [USER]
+   0.6%      1304       0.0      0.0%  gomp_barrier_wait_final_start  [ETC]
+   0.4%      1016       0.0      0.0%  __pw_restart_new_MOD_gk_l2gmap_kdip._omp_fn.0  [USER]
+   0.3%       600       0.0      0.0%  init_run_  [USER]
+   0.2%       466       0.0      0.0%  rotate_wfc_k_  [USER]
+   0.2%       466       0.0      0.0%  rotate_wfc_  [USER]
+   0.2%       466       0.0      0.0%  init_wfc_  [USER]
+   0.2%       466       0.0      0.0%  wfcinit_  [USER]
+   0.2%       435       0.0      0.0%  __fft_helper_subroutines_MOD_fftx_c2psi_k  [USER]
+   0.2%       422       0.0      0.0%  sum_band_  [USER]
+   0.2%       419       0.0      0.0%  sum_band_k.5  [USER]
+   0.2%       409       0.0      0.0%  exec_blas  [BLAS]
+   0.2%       378       0.0      0.0%  __becmod_MOD_calbec_bec_type  [USER]
+   0.2%       374       0.0      0.0%  __becmod_MOD_calbec_k  [USER]
+   0.2%       352       0.0      0.0%  exec_blas_async_wait  [BLAS]
+   0.2%       352       0.0      0.0%  zgemv_thread_c  [BLAS]
+   0.2%       352       0.0      0.0%  zgemv_  [BLAS]
+   0.2%       349       0.0      0.0%  gomp_team_start  [ETC]
+   ... 546 more below 0.1% of runtime (report --threshold 0 to show all)
   ------------------------------------------------------------------------------
   legend:
     Samp%        percent of samples here (~ percent of wall time)
@@ -134,7 +184,7 @@ Table 1:  Profile by Function Group  (sampling @ 1000 Hz, 1 PEs)
    0.5%      1223       0.0      0.0%  gomp_barrier_wait_final_start  bar.h:118
    0.2%       352       0.0      0.0%  exec_blas_async_wait  libopenblasp-r0.3.33.so
    0.1%       238       0.0      0.0%  gomp_thread_start  team.c:136
-   0.1%       178       0.0      0.0%  fftw_spawn_loop._omp_fn.0  openmp.c:?
+   ... 329 more below 0.1% of runtime (report --threshold 0 to show all)
   ------------------------------------------------------------------------------
   legend:
     Samp%        percent of samples here (~ percent of wall time)
@@ -153,71 +203,9 @@ Table 2:  Library calls by group and function  (tracing)
    BLAS      zgemv_                        6636  0.0%      0.3140      0.3140
    FFTW      fftw_plan_dft_3d                 2  0.0%      0.1016      0.1016
    BLAS      zgemm_                       13233  0.0%      0.0999      0.0999
-   LAPACK    dlaebz_                       3216  0.0%      0.0051      0.0051
-   LAPACK    zstein_                       1072  0.0%      0.0060      0.0041
-   LAPACK    zhegs2_                       1372  0.0%      0.0049      0.0032
-   LAPACK    zlarf1l_                      7821  0.0%      0.0024      0.0019
-   LAPACK    zlanhe_                       1372  0.0%      0.0019      0.0018
-   LAPACK    zhetd2_                       1372  0.0%      0.0064      0.0018
-   LAPACK    zlarfg_                       7821  0.0%      0.0033      0.0015
-   BLAS      zher2_                       15642  0.0%      0.0015      0.0015
-   LAPACK    dladiv_                       7821  0.0%      0.0010      0.0010
-   LAPACK    dlagts_                      12865  0.0%      0.0008      0.0008
-   BLAS      ztrsv_                        7821  0.0%      0.0007      0.0007
    LAPACK    zheevx_                       1072  0.0%      0.0226      0.0006
-   BLAS      zhemv_                        7821  0.0%      0.0006      0.0006
-   BLAS      ztrsm_                        1372  0.0%      0.0006      0.0006
-   LAPACK    zpotrf_                       1372  0.0%      0.0005      0.0005
    LAPACK    zhegvx_                       1072  0.0%      0.0285      0.0005
-   LAPACK    zsteqr_                        300  0.0%      0.0008      0.0005
-   LAPACK    dstebz_                       1072  0.0%      0.0055      0.0004
-   BLAS      ddot_                         3223  0.0%      0.0004      0.0004
-   LAPACK    zunm2l_                       1072  0.0%      0.0025      0.0004
-   LAPACK    zladiv_                       7821  0.0%      0.0014      0.0004
-   LAPACK    dlaruv_                       4288  0.0%      0.0003      0.0003
-   BLAS      zgerc_                        6449  0.0%      0.0002      0.0002
-   BLAS      idamax_                      30030  0.0%      0.0002      0.0002
-   LAPACK    dlarnv_                       4288  0.0%      0.0005      0.0002
-   LAPACK    dlagtf_                       4288  0.0%      0.0002      0.0002
-   LAPACK    dlapy3_                       7821  0.0%      0.0002      0.0002
-   LAPACK    ilaenv_                      11753  0.0%      0.0002      0.0002
-   LAPACK    dlapy2_                       1564  0.0%      0.0002      0.0002
-   BLAS      dcopy_                       12908  0.0%      0.0002      0.0002
-   LAPACK    zunmql_                       1072  0.0%      0.0027      0.0002
-   LAPACK    zunmtr_                       1072  0.0%      0.0029      0.0001
-   LAPACK    zhegst_                       1372  0.0%      0.0050      0.0001
-   LAPACK    zhetrd_                       1372  0.0%      0.0066      0.0001
-   LAPACK    zhegv_                         300  0.0%      0.0032      0.0001
-   BLAS      zaxpy_                       23463  0.0%      0.0001      0.0001
-   LAPACK    zheev_                         300  0.0%      0.0022      0.0001
-   BLAS      zscal_                        9793  0.0%      0.0001      0.0001
-   LAPACK    zlasr_                        1864  0.0%      0.0001      0.0001
-   LAPACK    zung2l_                        300  0.0%      0.0004      0.0001
-   BLAS      dznrm2_                       7821  0.0%      0.0001      0.0001
-   LAPACK    zungtr_                        300  0.0%      0.0005      0.0001
-   BLAS      dnrm2_                        4318  0.0%      0.0001      0.0001
-   BLAS      dscal_                       17163  0.0%      0.0000      0.0000
-   BLAS      zdscal_                       7821  0.0%      0.0000      0.0000
-   LAPACK    zungql_                        300  0.0%      0.0004      0.0000
-   LAPACK    disnan_                      36012  0.0%      0.0000      0.0000
-   BLAS      zdotc_                        7821  0.0%      0.0000      0.0000
-   LAPACK    dlanst_                        300  0.0%      0.0000      0.0000
-   LAPACK    zlacgv_                      31284  0.0%      0.0000      0.0000
-   LAPACK    dladiv2_                     15642  0.0%      0.0000      0.0000
-   LAPACK    dsytf2_                          4  0.0%      0.0000      0.0000
-   LAPACK    dgetrf_                          1  0.0%      0.0000      0.0000
-   LAPACK    dlaev2_                        300  0.0%      0.0000      0.0000
-   LAPACK    dgetri_                          1  0.0%      0.0000      0.0000
-   LAPACK    dsytrf_                          4  0.0%      0.0000      0.0000
-   LAPACK    dtrtri_                          1  0.0%      0.0000      0.0000
-   LAPACK    ilazlc_                       7821  0.0%      0.0000      0.0000
-   LAPACK    dlartg_                       4083  0.0%      0.0000      0.0000
-   LAPACK    dsytri_                          4  0.0%      0.0000      0.0000
-   BLAS      dsymv_                           6  0.0%      0.0000      0.0000
-   BLAS      zswap_                         562  0.0%      0.0000      0.0000
-   BLAS      dgemv_                           2  0.0%      0.0000      0.0000
-   BLAS      dsyr_                           10  0.0%      0.0000      0.0000
-   BLAS      dswap_                          16  0.0%      0.0000      0.0000
+   ... 63 more below 0.1% of runtime (report --threshold 0 to show all)
   ------------------------------------------------------------------------------
   legend:
     group        library family: BLAS/CBLAS, LAPACK/LAPACKe, P/ScaLAPACK, FFTW
@@ -226,43 +214,6 @@ Table 2:  Library calls by group and function  (tracing)
     excl(s)      exclusive time: this routine only (callees excluded)
     note         calls aggregated over input sizes; per-shape: report --detail blas|lapack|fftw
 
-Table 3:  MPI message statistics  (tracing)
-
-  MPI (communication)
-  ------------------------------------------------------------------------------
-   function            count[imb]   r/R    incl(s)        bytes     GB/s
-  ------------------------------------------------------------------------------
-   mpi_gatherv_           2864  0.0%   1/1       0.0001            0     0.00
-   mpi_alltoallv_           22  0.0%   1/1       0.0001            0     0.00
-   mpi_bcast_             3855  0.0%   1/1       0.0001      5898019    54.70
-   mpi_allreduce_          618  0.0%   1/1       0.0000        17848     0.40
-   mpi_barrier_           1424  0.0%   1/1       0.0000            0     0.00
-   mpi_alltoall_             1  0.0%   1/1       0.0000            4     0.01
-  ------------------------------------------------------------------------------
-   total communication volume: 0.006 GB  (sum over ranks)
-  ------------------------------------------------------------------------------
-  legend:
-    count[imb]   total calls over ranks [Imb% = (max-avg)/max]
-    r/R          ranks that called it / total ranks
-    incl(s)      inclusive wall time spent in the call
-    bytes        message bytes moved (summed over ranks)
-    GB/s         bytes / inclusive-time
-    note         comm matrix + size histogram: report --detail mpi
-
-  MPI point-to-point vs collective (bytes)
-   point-to-point:      0.006 GB  (100.0%)
-   collective:          0.000 GB  ( 0.0%)
-
-  MPI message-size distribution
-   size              count       %
-   <=64B              5843   79.6%
-   <=256B               25    0.3%
-   <=1KiB             1433   19.5%
-   <=4KiB               18    0.2%
-   <=16KiB               2    0.0%
-   <=256KiB             14    0.2%
-   <=1MiB                3    0.0%
-
 Table 4:  I/O statistics  (tracing)
 
   I/O
@@ -270,17 +221,9 @@ Table 4:  I/O statistics  (tracing)
    call            count[imb]   r/R    incl(s)        bytes     GB/s
   ----------------------------------------------------------------------
    read               2099  0.0%   1/1       0.1089       253839     0.00
-   openat             2413  0.0%   1/1       0.0046            0     0.00
-   close              2260  0.0%   1/1       0.0019            0     0.00
-   open                258  0.0%   1/1       0.0019            0     0.00
-   pwrite              490  0.0%   1/1       0.0012      6565092     5.33
-   write                83  0.0%   1/1       0.0003       107603     0.35
-   pread                60  0.0%   1/1       0.0000            0     0.00
-   fwrite               27  0.0%   1/1       0.0000       153400     4.66
-   fread                29  0.0%   1/1       0.0000       236679     8.11
-   lseek                 3  0.0%   1/1       0.0000            0     0.00
   ----------------------------------------------------------------------
-   total I/O volume: 0.007 GB  (sum over ranks)
+   total I/O volume: 0.000 GB  (sum over ranks)
+   ... 9 more below 0.1% of runtime (report --threshold 0 to show all)
   ----------------------------------------------------------------------
   legend:
     call         POSIX I/O syscall (read/write/open/...)
