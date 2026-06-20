@@ -64,7 +64,7 @@ def do_collect(args):
 
     env_vars = {"LD_PRELOAD": lib, "SCILIB_OUTPUT": os.path.join(result, "prof"),
                 "SCILIB_QUIET": "1",
-                "SCILIB_SHAPE": "1"}   # per-kernel rows → roofline kernel points
+                "SCILIB_SHAPE": "1"}   # size-resolved rows in the profile drill-down
     if args.no_sample:
         env_vars["SCILIB_SAMPLE"] = "0"
     if args.heap:

@@ -35,7 +35,7 @@ ok "serial: result has prof.0"      "[ -f $TMP/r1/prof.0.json ]"
 ok "serial: result has manifest"    "[ -f $TMP/r1/manifest.json ]"
 ROUT=$("$DRV" report "$TMP/r1" --view roofline 2>/dev/null)
 ok "roofline: FP64 & FP32 ceilings" "echo \"$ROUT\" | grep -q 'FP64' && echo \"$ROUT\" | grep -q 'FP32'"
-ok "roofline: sgemm judged as SP"   "echo \"$ROUT\" | grep -E 'sgemm.* SP ' >/dev/null"
+ok "roofline: whole-program only"   "echo \"$ROUT\" | grep -q 'Roofline (whole program)'"
 # snapshot present iff perf available; don't hard-fail when counters are blocked
 if [ -f "$TMP/r1/snap.json" ]; then
   ok "serial: SNAPSHOT section"     "echo \"$OUT\" | grep -q 'SNAPSHOT'"

@@ -13,9 +13,6 @@ sys.path.insert(0, os.path.join(os.path.dirname(_HERE), "roofline"))
 import contract   # noqa: E402
 import roofline   # noqa: E402
 
-ELSIZE = {"s": 4, "d": 8, "c": 8, "z": 16}   # bytes per element by BLAS type char
-FACTOR = {"s": 2, "d": 2, "c": 8, "z": 8}    # flops per mul-add
-
 
 def _load_json(path):
     try:
@@ -39,49 +36,17 @@ def _disp(snap, key):
 
 
 # ----------------------------------------------------------------- roofline
-def _kernel_point(row):
-    """Parse a shaped BLAS row name -> (label, ai, gflops) or None."""
-    name = row.get("name", "")
-    m = re.match(r"(?:cblas_)?([sdcz])(gemm|gemv|syrk|trsm)_?\[(.*)\]", name)
-    if not m:
-        return None
-    t, kind, shape = m.group(1), m.group(2), m.group(3)
-    dims = dict(re.findall(r"([a-z]+)=(\d+)", shape))
-    g = lambda k: int(dims.get(k, 0))
-    el, fac = ELSIZE[t], FACTOR[t]
-    if kind == "gemm":
-        mm, nn, kk = g("m"), g("n"), g("k")
-        if not (mm and nn and kk):
-            return None
-        flops = fac * mm * nn * kk
-        byts = (mm * kk + kk * nn + mm * nn) * el
-    elif kind == "gemv":
-        mm, nn = g("m"), g("n")
-        if not (mm and nn):
-            return None
-        flops = fac * mm * nn
-        byts = (mm * nn + mm + nn) * el
-    elif kind == "syrk":
-        nn, kk = g("n"), g("k")
-        flops = fac * nn * nn * kk
-        byts = (nn * kk + nn * nn) * el
-    else:  # trsm
-        mm, nn = g("m"), g("n")
-        flops = fac * mm * mm * nn
-        byts = (mm * mm + mm * nn) * el
-    t_incl = row.get("t_incl", 0.0)
-    if t_incl <= 1e-3 or byts <= 0:        # skip sub-ms kernels (timer noise)
-        return None
-    total_flops = flops * row.get("count", 1)
-    prec = "sp" if t in ("s", "c") else "dp"   # s/c → FP32 units, d/z → FP64
-    return {"label": name, "ai": flops / byts, "gflops": total_flops / t_incl / 1e9,
-            "flops": total_flops, "prec": prec}
-
-
 def roofline_view(snap, profile, out):
+    """Whole-program roofline from the snapshot's hardware counters: one point
+    (measured FLOP/s vs DRAM traffic) placed against the empirical ceilings.
+
+    Per-FUNCTION roofline is intentionally NOT here: shape-derived per-kernel
+    points explode (same kernel × every input size), double-count nested calls,
+    and only cover a few hand-coded formulas. That belongs to a two-pass profile
+    feature (survey hot functions → characterize each with counters), where it
+    works for library, user, and system code alike."""
     pk = roofline.peaks()
     points = []
-    # whole-program point from snapshot counters
     g = _m(snap, "gflops")
     fills = _m(snap, "mem_fills_dram")
     elapsed = _m(snap, "elapsed_time")
@@ -89,31 +54,19 @@ def roofline_view(snap, profile, out):
         dram_bytes = fills * 64.0
         flops = g * 1e9 * elapsed
         if dram_bytes > 0:
-            # whole-program FP counter precision is vendor-dependent (Intel = DP
-            # only; AMD = mixed SP+DP). Judge against the DP ceiling (conservative).
+            # whole-program FP-counter precision is vendor-dependent (Intel = DP
+            # only; AMD = mixed SP+DP) → judged against the DP ceiling.
             points.append({"label": "whole-program (measured)", "ai": flops / dram_bytes,
                            "gflops": g, "prec": "dp"})
-    # per-kernel points from profile shaped rows
-    kerns = []
-    for r in (profile or {}).get("functions", []):
-        p = _kernel_point(r)
-        if p:
-            kerns.append(p)
-    kerns.sort(key=lambda p: -p["flops"])    # rank by work done, not noisy rate
-    points += kerns[:6]
-    out.append("\n══ Roofline ══")
+    out.append("\n══ Roofline (whole program) ══")
     roofline.render(points, pk, out)
-    if not kerns:
-        out.append("    (per-kernel points need SCILIB_SHAPE=1 — the suite sets it)")
+    if not points:
+        out.append("    (whole-program point needs FP + DRAM counters — check perf_event_paranoid)")
         return
-    # headroom note for the dominant (most work) kernel, vs its own precision
-    dom = kerns[0]
-    c = roofline.classify(dom["ai"], dom["gflops"], pk, dom.get("prec", "dp"))
-    if c and c[1] < 25:                       # < 25% of its ceiling
-        head = c[0] / dom["gflops"] if dom["gflops"] > 0 else 0
-        out.append("    → %s runs at %.0f%% of its %s roofline ceiling — up to ~%.0fx headroom "
-                   "(optimized library / better blocking / vectorization)."
-                   % (dom["label"].split("[")[0], c[1], dom.get("prec", "dp").upper(), head))
+    c = roofline.classify(points[0]["ai"], points[0]["gflops"], pk, "dp")
+    if c:
+        out.append("    whole program is %s-bound at %.0f%% of the DP ceiling." % (c[2], c[1]))
+    out.append("    (per-function roofline → future profile two-pass: survey hotspots, then characterize)")
 
 
 # ------------------------------------------------------- microarch / memory
