@@ -12,8 +12,18 @@ import subprocess
 _HERE = os.path.dirname(os.path.abspath(__file__))
 _ROOT = os.path.dirname(os.path.dirname(_HERE))           # repo root
 sys.path.insert(0, os.path.join(_ROOT, "core", "contract"))
-import contract  # noqa: E402
-import insights  # noqa: E402
+import contract   # noqa: E402
+import insights   # noqa: E402
+import viewpoints  # noqa: E402
+
+VIEWS = {
+    "roofline":  lambda snap, prof, out: viewpoints.roofline_view(snap, prof, out),
+    "microarch": lambda snap, prof, out: viewpoints.microarch_view(snap, out),
+    "memory":    lambda snap, prof, out: viewpoints.memory_view(snap, out),
+    "imbalance": lambda snap, prof, out: viewpoints.imbalance_view(prof, out),
+    "threading": lambda snap, prof, out: viewpoints.threading_view(snap, out),
+}
+VIEW_ORDER = ["roofline", "microarch", "memory", "threading", "imbalance"]
 
 PROFILE_REPORT = os.path.join(_ROOT, "collectors", "profile", "tools", "scilib-report.py")
 
@@ -58,7 +68,7 @@ def _render_snapshot(snap, out):
         out.append("    " + "   |   ".join(cells[i:i + 2]))
 
 
-def render(result_dir, fmt="text"):
+def render(result_dir, fmt="text", view="all"):
     manifest = _load(os.path.join(result_dir, contract.MANIFEST)) or {}
     snap = _load(os.path.join(result_dir, contract.SNAP))
     profs = contract.prof_glob(result_dir)
@@ -84,11 +94,19 @@ def render(result_dir, fmt="text"):
     out.append("\n── INSIGHTS  (combined snapshot + profile) " + "─" * 35)
     for s in suite:
         out.append("  ▶ " + s)
+    # analysis viewpoints (recipes over the result)
+    sel = VIEW_ORDER if view in ("all", None) else [view]
+    for v in sel:
+        if v in VIEWS:
+            try:
+                VIEWS[v](snap, profile, out)
+            except Exception as e:
+                out.append("\n(%s viewpoint failed: %s)" % (v, e))
     print("\n".join(out))
 
-    if profs:
+    if profs and view in ("all", "hotspots", None):
         print("\n── PROFILE  (drill-down: sampling + sci-lib + MPI tracing) " + "─" * 19)
         sys.stdout.flush()   # ensure our header precedes the subprocess output
         subprocess.run([sys.executable, PROFILE_REPORT, "--no-observations"] + profs)
-    else:
+    elif not profs:
         print("\n(no profile data)")

@@ -8,3 +8,4 @@ collectors/profile/frida/
 collectors/profile/*.so
 # snapshot collector artifacts
 collectors/snapshot/target/
+/build/
