@@ -237,6 +237,48 @@ def mpi_view(profile, out):
                    "good comm/compute overlap.")
 
 
+# ----------------------------------------------------------- vectorization
+def vectorization_view(snap, profile, out):
+    """FP/SIMD efficiency. Prefers a real HWPC vectorization% if the platform
+    exposes one; otherwise uses achieved GFLOP/s vs the empirical vector peak as
+    a proxy and flags compute-bound code running far below it (scalar/under-vec).
+    True per-loop SIMD width needs a compiler vec-report — pointed to below."""
+    if not snap:
+        return
+    vec_pct = _m(snap, "vectorization_pct")
+    g = _m(snap, "gflops")
+    retiring = _m(snap, "topdown_retiring_pct")
+    membound = _m(snap, "topdown_backend_mem_pct")
+    pk = roofline.peaks()
+    lines = []
+    if vec_pct is not None:                       # real HWPC metric (e.g. Intel)
+        lines.append("    vectorized FP ops %.1f%% (hardware counter)" % vec_pct)
+        if vec_pct < 60 and (retiring or 0) > 30:
+            lines.append("    → low SIMD utilization in compute-heavy code — see vec report below.")
+    elif g and pk and pk.get("peak_gflops"):
+        eff = g / pk["peak_gflops"] * 100.0
+        lines.append("    FP efficiency %.1f%% of vector peak (%.0f / %.0f GFLOP/s)"
+                     % (eff, g, pk["peak_gflops"]))
+        # only meaningful when compute is the limiter, not memory
+        compute_bound = (membound or 0) < 30
+        if eff < 15 and compute_bound:
+            lines.append("    → FP throughput far below vector peak in compute-bound code: "
+                         "likely scalar / under-vectorized (or a reference library).")
+    if not lines:
+        return
+    out.append("\n══ Vectorization ══")
+    out.extend(lines)
+    # candidates: hottest non-library compute kernels (library SIMD is the lib's job)
+    fns = (profile or {}).get("functions", [])
+    cand = sorted((f for f in fns if f.get("group") in ("USER", "ETC")
+                   and f.get("t_excl", 0) > 0.005),
+                  key=lambda f: -f.get("t_excl", 0))[:5]
+    if cand:
+        out.append("    inspect (hot user code): " + ", ".join(f.get("name", "")[:20] for f in cand))
+    out.append("    confirm SIMD per loop with a compiler vec report "
+               "(gcc -fopt-info-vec / icc -qopt-report=5) and build -O3 -march=native.")
+
+
 # ------------------------------------------------------------- threading
 def threading_view(snap, out):
     if not snap:

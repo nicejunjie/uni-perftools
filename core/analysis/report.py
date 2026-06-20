@@ -23,8 +23,9 @@ VIEWS = {
     "imbalance": lambda snap, prof, out: viewpoints.imbalance_view(prof, out),
     "threading": lambda snap, prof, out: viewpoints.threading_view(snap, out),
     "mpi":       lambda snap, prof, out: viewpoints.mpi_view(prof, out),
+    "vectorization": lambda snap, prof, out: viewpoints.vectorization_view(snap, prof, out),
 }
-VIEW_ORDER = ["roofline", "microarch", "memory", "threading", "mpi", "imbalance"]
+VIEW_ORDER = ["roofline", "microarch", "memory", "vectorization", "threading", "mpi", "imbalance"]
 
 PROFILE_REPORT = os.path.join(_ROOT, "collectors", "profile", "tools", "scilib-report.py")
 
