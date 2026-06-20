@@ -43,6 +43,24 @@ SAMP_LEGEND = [
     ("groups", "USER=your code, ETC=other/system; MPI/BLAS/LAPACK/FFTW/IO as named"),
 ]
 
+
+# Imbalance is a cross-rank metric — for a single-rank run it is always 0, so the
+# Imb.Samp / Imb.Samp% / count[imb] columns just print "0.0%" on every row and add
+# nothing. These helpers drop them when nranks <= 1 (set `imb=False`).
+def samp_legend(imb):
+    return SAMP_LEGEND if imb else [x for x in SAMP_LEGEND if not x[0].startswith("Imb")]
+
+
+def samp_head(imb, last="Function"):
+    return ("   Samp%      Samp  Imb.Samp  Imb.Samp%  " if imb else "   Samp%      Samp  ") + last
+
+
+def samp_cols(samp, total, imbs, imbp, imb):
+    """Leading numeric columns of a sampling row, with/without imbalance."""
+    p = 100.0 * samp / total if total else 0.0
+    return ("%6.1f%% %9d %9.1f %8.1f%%" % (p, samp, imbs, imbp)) if imb \
+        else ("%6.1f%% %9d" % (p, samp))
+
 # ---------------------------------------------------------------- sampling ----
 _etype_cache = {}
 
@@ -341,6 +359,16 @@ def imb_s(p):
     return ">=999%" if p >= 999 else "%.1f%%" % p
 
 
+# Tracing-table call-count column: "count[imb]" (count + imbalance%) for multi-rank
+# runs, plain "count" for a single rank where imbalance is always 0.
+def cnt_head(imb, w=9):
+    return ("%*s %5s" % (w, "count", "[imb]")) if imb else ("%*s" % (w, "count"))
+
+
+def cnt_cell(count, imb_count, imb, w=9):
+    return ("%*.0f %5s" % (w, count, imb_s(imb_count))) if imb else ("%*.0f" % (w, count))
+
+
 def _thr_filter(rows, runtime, thr):
     """Keep rows whose inclusive time is >= thr% of the run; return (kept, hidden)."""
     if thr <= 0 or runtime <= 0:
@@ -354,7 +382,7 @@ def _hidden_note(hidden, thr):
             % (hidden, thr)) if hidden else None
 
 
-def fmt_compute(rows, sortkey, top, runtime=0.0, thr=0.0):
+def fmt_compute(rows, sortkey, top, runtime=0.0, thr=0.0, imb=True):
     rows = [r for r in rows if r["group"] in COMPUTE_GROUPS]
     rows.sort(key=lambda r: r[sortkey], reverse=True)
     rows, hidden = _thr_filter(rows, runtime, thr)
@@ -364,25 +392,26 @@ def fmt_compute(rows, sortkey, top, runtime=0.0, thr=0.0):
         return ""
     out = ["", "  Compute (BLAS / LAPACK / PBLAS / ScaLAPACK / CBLAS / LAPACKe / FFTW)",
            "  " + "-" * 78,
-           "   %-9s %-24s %12s %11s %11s" % ("group", "function", "count[imb]", "incl(s)", "excl(s)"),
+           "   %-9s %-24s %s %11s %11s" % ("group", "function", cnt_head(imb), "incl(s)", "excl(s)"),
            "  " + "-" * 78]
     for r in rows:
-        out.append("   %-9s %-24s %9.0f %5s %11.4f %11.4f" % (
-            r["group"], r["name"][:24], r["count"], imb_s(r["imb_count"]),
+        out.append("   %-9s %-24s %s %11.4f %11.4f" % (
+            r["group"], r["name"][:24], cnt_cell(r["count"], r["imb_count"], imb),
             r["t_incl"], r["t_excl"]))
     n = _hidden_note(hidden, thr)
     if n:
         out.append(n)
     out.append(foot([
         ("group", "library family: BLAS/CBLAS, LAPACK/LAPACKe, P/ScaLAPACK, FFTW"),
-        ("count[imb]", "total calls over ranks [Imb% = (max-avg)/max load imbalance]"),
+        ("count" + ("[imb]" if imb else ""),
+         "total calls over ranks" + (" [Imb% = (max-avg)/max load imbalance]" if imb else "")),
         ("incl(s)", "inclusive time: this routine + everything it calls"),
         ("excl(s)", "exclusive time: this routine only (callees excluded)"),
         ("note", "calls aggregated over input sizes; per-shape: report --detail blas|lapack|fftw")]))
     return "\n".join(out)
 
 
-def fmt_mpi(rows, sortkey, top, runtime=0.0, thr=0.0):
+def fmt_mpi(rows, sortkey, top, runtime=0.0, thr=0.0, imb=True):
     rows = [r for r in rows if r["group"] == "MPI"]
     rows.sort(key=lambda r: r[sortkey], reverse=True)
     rows, hidden = _thr_filter(rows, runtime, thr)
@@ -393,12 +422,12 @@ def fmt_mpi(rows, sortkey, top, runtime=0.0, thr=0.0):
     total_bytes = sum(r["bytes"] for r in rows)
     out = ["", "  MPI (communication)",
            "  " + "-" * 78,
-           "   %-18s %11s %5s %10s %12s %8s" % ("function", "count[imb]", "r/R", "incl(s)", "bytes", "GB/s"),
+           "   %-18s %s %5s %10s %12s %8s" % ("function", cnt_head(imb, 8), "r/R", "incl(s)", "bytes", "GB/s"),
            "  " + "-" * 78]
     for r in rows:
         gbs = r["bytes"] / r["t_incl"] / 1e9 if r["t_incl"] > 0 else 0.0
-        out.append("   %-18s %8.0f %5s %3d/%-3d %10.4f %12d %8.2f" % (
-            r["name"][:18], r["count"], imb_s(r["imb_count"]),
+        out.append("   %-18s %s %3d/%-3d %10.4f %12d %8.2f" % (
+            r["name"][:18], cnt_cell(r["count"], r["imb_count"], imb, 8),
             r["active"], r["nranks"], r["t_incl"], r["bytes"], gbs))
     out.append("  " + "-" * 78)
     out.append("   total communication volume: %.3f GB  (sum over ranks)" % (total_bytes / 1e9))
@@ -406,7 +435,8 @@ def fmt_mpi(rows, sortkey, top, runtime=0.0, thr=0.0):
     if n:
         out.append(n)
     out.append(foot([
-        ("count[imb]", "total calls over ranks [Imb% = (max-avg)/max]"),
+        ("count" + ("[imb]" if imb else ""),
+         "total calls over ranks" + (" [Imb% = (max-avg)/max]" if imb else "")),
         ("r/R", "ranks that called it / total ranks"),
         ("incl(s)", "inclusive wall time spent in the call"),
         ("bytes", "message bytes moved (summed over ranks)"),
@@ -482,7 +512,7 @@ def fmt_mpi_detail(ranks, rows):
     return "\n".join(out)
 
 
-def fmt_io(rows, sortkey, top, runtime=0.0, thr=0.0):
+def fmt_io(rows, sortkey, top, runtime=0.0, thr=0.0, imb=True):
     rows = [r for r in rows if r["group"] == "IO"]
     rows.sort(key=lambda r: r[sortkey], reverse=True)
     rows, hidden = _thr_filter(rows, runtime, thr)
@@ -492,12 +522,12 @@ def fmt_io(rows, sortkey, top, runtime=0.0, thr=0.0):
         return ""
     total_bytes = sum(r["bytes"] for r in rows)
     out = ["", "  I/O", "  " + "-" * 70,
-           "   %-14s %11s %5s %10s %12s %8s" % ("call", "count[imb]", "r/R", "incl(s)", "bytes", "GB/s"),
+           "   %-14s %s %5s %10s %12s %8s" % ("call", cnt_head(imb, 8), "r/R", "incl(s)", "bytes", "GB/s"),
            "  " + "-" * 70]
     for r in rows:
         gbs = r["bytes"] / r["t_incl"] / 1e9 if r["t_incl"] > 0 else 0.0
-        out.append("   %-14s %8.0f %5s %3d/%-3d %10.4f %12d %8.2f" % (
-            r["name"][:14], r["count"], imb_s(r["imb_count"]),
+        out.append("   %-14s %s %3d/%-3d %10.4f %12d %8.2f" % (
+            r["name"][:14], cnt_cell(r["count"], r["imb_count"], imb, 8),
             r["active"], r["nranks"], r["t_incl"], r["bytes"], gbs))
     out.append("  " + "-" * 70)
     out.append("   total I/O volume: %.3f GB  (sum over ranks)" % (total_bytes / 1e9))
@@ -506,7 +536,8 @@ def fmt_io(rows, sortkey, top, runtime=0.0, thr=0.0):
         out.append(n)
     out.append(foot([
         ("call", "POSIX I/O syscall (read/write/open/...)"),
-        ("count[imb]", "total calls over ranks [Imb% = (max-avg)/max]"),
+        ("count" + ("[imb]" if imb else ""),
+         "total calls over ranks" + (" [Imb% = (max-avg)/max]" if imb else "")),
         ("r/R", "ranks that called it / total ranks"),
         ("bytes,GB/s", "bytes transferred and bytes / inclusive-time")], 70))
     return "\n".join(out)
@@ -537,15 +568,14 @@ def fmt_flat(title, per_rank, total, nranks, top, labelfn, thr=0.0):
     hidden = len(rows) - len(kept)
     if top:
         kept = kept[:top]
-    out = ["", "  " + title, "  " + "-" * 78,
-           "   Samp%      Samp  Imb.Samp  Imb.Samp%  Function",
-           " " + "-" * 78]
+    imb = nranks > 1
+    out = ["", "  " + title, "  " + "-" * 78, samp_head(imb), " " + "-" * 78]
     for k, (tot, is_, ip) in kept:
-        out.append("%6.1f%% %9d %9.1f %8.1f%%  %s" % (100.0 * tot / total, tot, is_, ip, labelfn(k)[:54]))
+        out.append("%s  %s" % (samp_cols(tot, total, is_, ip, imb), labelfn(k)[:54]))
     n = _hidden_note(hidden, thr)
     if n:
         out.append(n)
-    out.append(foot(SAMP_LEGEND))
+    out.append(foot(samp_legend(imb)))
     return "\n".join(out)
 
 
@@ -557,20 +587,21 @@ def fmt_domgroup(s, top):
         if c:
             for g, n in c.items():
                 grp[g][pe] += n
+    imb = s.nranks > 1
     out = ["", "Table 1:  Profile by Function Group  (sampling @ %d Hz, %d PEs)" % (s.hz, s.nranks),
            "          time charged to the highest-level group on each sample's stack", "",
-           "   Samp%      Samp  Imb.Samp  Imb.Samp%  Group", " " + "-" * 70]
+           samp_head(imb, "Group"), " " + "-" * 70]
     pe_tot = collections.defaultdict(int)
     for g in grp:
         for pe, n in grp[g].items():
             pe_tot[pe] += n
     t = cp_imb(list(pe_tot.values()), s.nranks)
-    out.append("%6.1f%% %9d %9.1f %8.1f%%  Total" % (100.0, t[0], t[1], t[2]))
+    out.append("%s  Total" % samp_cols(t[0], s.total, t[1], t[2], imb))
     out.append(" " + "-" * 70)
     for g in sorted(grp, key=lambda g: -sum(grp[g].values())):
         gt = cp_imb(list(grp[g].values()), s.nranks)
-        out.append("%6.1f%% %9d %9.1f %8.1f%%  %s" % (100.0 * gt[0] / s.total, gt[0], gt[1], gt[2], g))
-    out.append(foot(SAMP_LEGEND, 70))
+        out.append("%s  %s" % (samp_cols(gt[0], s.total, gt[1], gt[2], imb), g))
+    out.append(foot(samp_legend(imb), 70))
     return "\n".join(out)
 
 
@@ -590,15 +621,15 @@ def fmt_groups(per_rank, hz, total, nranks, top, thr=0.0):
             fn_pe[(g, f)][pe] += n
             fn_line[(g, f)][fl] += n
 
+    imb = nranks > 1
+
     def line(samp, imbs, imbp, label, indent):
-        tn, te = ("Total", "")
-        return "%6.1f%% %9d %9.1f %8.1f%%  %s%s" % (
-            100.0 * samp / total, samp, imbs, imbp, indent, label)
+        return "%s  %s%s" % (samp_cols(samp, total, imbs, imbp, imb), indent, label)
 
     out = ["", "Table 1:  Profile by Function Group and Function  (sampling @ %d Hz, %d PEs)"
            % (hz, nranks), "",
-           "   Samp%      Samp  Imb.Samp  Imb.Samp%  Group",
-           "                                         Function=[file:line]",
+           samp_head(imb, "Group"),
+           (" " * (41 if imb else 21)) + "Function=[file:line]",
            " " + "-" * 78]
     # Total row: imbalance over the per-PE grand totals.
     pe_tot = collections.defaultdict(int)
@@ -631,7 +662,7 @@ def fmt_groups(per_rank, hz, total, nranks, top, thr=0.0):
         if n:
             out.append(n)
         out.append(" " + "-" * 78)
-    out.append(foot(SAMP_LEGEND))
+    out.append(foot(samp_legend(imb)))
     return "\n".join(out)
 
 
@@ -835,17 +866,19 @@ def main():
             print(fmt_groups(s.leaf, hz, total, s.nranks, args.top, args.threshold))
 
     # Tables 2-3 — exact library tracing (counts/time/imbalance, MPI volume).
+    # Imbalance columns only make sense across ranks; drop them for a single rank.
     thr = args.threshold
-    ct = fmt_compute(rows, args.sort, args.top, runtime, thr)
+    imb = len(ranks) > 1
+    ct = fmt_compute(rows, args.sort, args.top, runtime, thr, imb)
     if ct:
         print("\nTable 2:  Library calls by group and function  (tracing)")
         print(ct)
-    mt = fmt_mpi(rows, args.sort, args.top, runtime, thr)
+    mt = fmt_mpi(rows, args.sort, args.top, runtime, thr, imb)
     if mt:
         print("\nTable 3:  MPI message statistics  (tracing)")
         print(mt)
         print(fmt_mpi_detail(ranks, rows))
-    iot = fmt_io(rows, args.sort, args.top, runtime, thr)
+    iot = fmt_io(rows, args.sort, args.top, runtime, thr, imb)
     if iot:
         print("\nTable 4:  I/O statistics  (tracing)")
         print(iot)

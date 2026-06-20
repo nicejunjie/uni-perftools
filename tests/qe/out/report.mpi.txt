@@ -1166,7 +1166,7 @@ Table 2:  Library calls by group and function  (tracing)
 
   Compute (BLAS / LAPACK / PBLAS / ScaLAPACK / CBLAS / LAPACKe / FFTW)
   ------------------------------------------------------------------------------
-   group     function                   count[imb]     incl(s)     excl(s)
+   group     function                     count [imb]     incl(s)     excl(s)
   ------------------------------------------------------------------------------
    FFTW      fftw_execute_dft             24942  0.0%      0.0745      0.0745
    BLAS      zgemm_                       13200  0.0%      0.0281      0.0281
@@ -1248,7 +1248,7 @@ Table 3:  MPI message statistics  (tracing)
 
   MPI (communication)
   ------------------------------------------------------------------------------
-   function            count[imb]   r/R    incl(s)        bytes     GB/s
+   function              count [imb]   r/R    incl(s)        bytes     GB/s
   ------------------------------------------------------------------------------
    mpi_alltoall_         12472  0.0%   2/2       0.0565    603549704    10.68
    mpi_bcast_             3844  0.0%   2/2       0.0157      8918164     0.57
@@ -1293,7 +1293,7 @@ Table 4:  I/O statistics  (tracing)
 
   I/O
   ----------------------------------------------------------------------
-   call            count[imb]   r/R    incl(s)        bytes     GB/s
+   call              count [imb]   r/R    incl(s)        bytes     GB/s
   ----------------------------------------------------------------------
    read                230 11.5%   2/2       0.0526       621924     0.01
    close               350 16.1%   2/2       0.0014            0     0.00
