@@ -1,33 +1,50 @@
  command: qenv/bin/mpirun -np 2 ./pw -in si.scf.in
 
 ── INSIGHTS  (combined uaps + upat) ──────────────────────────────────────────
-  ▶ Memory-bound (33% of slots) — improve data locality / working-set size.
-  ▶ MPI is 35% of time — communication-heavy; enlarge messages / overlap comm with compute.
+  ▶ Memory-bound (42% of slots) — improve data locality / working-set size.
+  ▶ MPI is 35% of time with 45% imbalance — rebalance work or check rank placement; see the communication matrix.
 
 
 ──────────────────────────────────────────────────────────────────────────────
   UPAT  —  Universal Performance Analysis Tool   (deep profile: tracing + sampling)
 ──────────────────────────────────────────────────────────────────────────────
 
+══ MPI wait-state (call-type heuristic) ══
+    synchronization/wait 1.2811s (100%) | transfer/initiation 0.0006s ( 0%)
+    call                      excl(s)   class   imb%
+    mpi_alltoall_             0.99265    wait     3%
+    mpi_barrier_              0.24367    wait    19%
+    mpi_allreduce_            0.02548    wait     9%
+    mpi_bcast_                0.01833    wait    45%
+    mpi_send_                 0.00061 transfer     0%
+    mpi_recv_                 0.00052    wait     0%
+    mpi_alltoallv_            0.00029    wait    32%
+    mpi_gatherv_              0.00013    wait     7%
+    → wait-dominated MPI with imbalanced collectives/receives (45% imb): likely late-sender / load imbalance — rebalance work across ranks before tuning communication.
+    overlap: all communication is blocking — no comm/compute overlap possible. Consider nonblocking calls (Isend/Irecv or Iallreduce-style collectives) + compute + Wait.
+
 ══ Load imbalance (across 2 ranks, ranked by recoverable time) ══
     function                   imb% avg excl(s)   recover(s)
-    fftw_execute_dft            14%     0.9214       0.1266
-    zgemv_                      12%     0.1580       0.0195
+    fftw_execute_dft             7%     0.9997       0.0710
+    mpi_barrier_                19%     0.2437       0.0452
+    zgemv_                      17%     0.1947       0.0331
+    mpi_bcast_                  45%     0.0183       0.0083
+    mpi_allreduce_               9%     0.0255       0.0024
  application: /home/junjie/vibe-coding/scilib-prof/tests/qe/qenv/bin/pw.x
- ranks: 2   max runtime (s): 3.460   imbalance: active   imb = (max-avg)/max
+ ranks: 2   max runtime (s): 3.536   imbalance: active   imb = (max-avg)/max
 
 Table 1:  Profile by Function Group  (sampling @ 1000 Hz, 2 PEs)
           time charged to the highest-level group on each sample's stack
 
    Samp%      Samp  Imb.Samp  Imb.Samp%  Group
  ----------------------------------------------------------------------
- 100.0%     26419       7.5      0.1%  Total
+ 100.0%     27309      83.5      0.6%  Total
  ----------------------------------------------------------------------
-  48.1%     12719      77.5      1.2%  ETC
-  35.4%      9357      54.5      1.2%  MPI
-   8.0%      2110     220.0     17.3%  FFTW
-   6.7%      1779     115.5     11.5%  USER
-   1.7%       454      20.0      8.1%  BLAS
+  47.9%     13090      78.0      1.2%  ETC
+  35.4%      9656      23.0      0.5%  MPI
+   9.0%      2463      90.5      6.8%  FFTW
+   6.0%      1647      53.5      6.1%  USER
+   1.7%       453       8.5      3.6%  BLAS
   legend:
     Samp%        percent of samples here (~ percent of wall time)
     Samp         sample count (wall time ~ Samp / sampling-Hz)
@@ -39,18 +56,18 @@ Table 1:  Profile by Function Group  (sampling @ 1000 Hz, 2 PEs)
   ------------------------------------------------------------------------------
    Samp%      Samp  Imb.Samp  Imb.Samp%  Function
  ------------------------------------------------------------------------------
-  75.7%     19998      42.0      0.4%  tramp  [ETC]
-  75.7%     19998      42.0      0.4%  start_thread  [ETC]
-  75.7%     19998      42.0      0.4%  clone3  [ETC]
-  29.0%      7668     159.0      4.0%  do_spin  [ETC]
-  25.8%      6806       9.0      0.3%  cuEGLApiInit  [ETC]
-  25.8%      6806       9.0      0.3%  cuVDPAUCtxCreate  [ETC]
-  25.7%      6793       8.5      0.2%  __GI___poll  [ETC]
-  25.6%      6757       7.5      0.2%  epoll_wait  [ETC]
-  25.6%      6757       6.5      0.2%  event_base_loop  [ETC]
-  25.6%      6757       6.5      0.2%  progress_engine  [MPI]
-  25.6%      6751       7.5      0.2%  epoll_dispatch  [ETC]
-  24.3%      6408      34.0      1.1%  MAIN__  [USER]
+  74.9%     20468      91.0      0.9%  tramp  [ETC]
+  74.9%     20468      91.0      0.9%  start_thread  [ETC]
+  74.9%     20468      91.0      0.9%  clone3  [ETC]
+  30.4%      8308     126.0      2.9%  do_spin  [ETC]
+  25.6%      6991       1.5      0.0%  cuEGLApiInit  [ETC]
+  25.6%      6991       1.5      0.0%  cuVDPAUCtxCreate  [ETC]
+  25.6%      6979       1.5      0.0%  __GI___poll  [ETC]
+  25.4%      6933       3.5      0.1%  epoll_wait  [ETC]
+  25.4%      6932       3.0      0.1%  event_base_loop  [ETC]
+  25.4%      6932       3.0      0.1%  progress_engine  [MPI]
+  25.4%      6929       3.5      0.1%  epoll_dispatch  [ETC]
+  25.0%      6837       8.5      0.2%  MAIN__  [USER]
   legend:
     Samp%        percent of samples here (~ percent of wall time)
     Samp         sample count (wall time ~ Samp / sampling-Hz)
@@ -62,18 +79,18 @@ Table 1:  Profile by Function Group  (sampling @ 1000 Hz, 2 PEs)
   ------------------------------------------------------------------------------
    Samp%      Samp  Imb.Samp  Imb.Samp%  Function
  ------------------------------------------------------------------------------
-  28.4%      7509     143.5      3.7%  do_spin  wait.h:56
-  25.7%      6793       8.5      0.2%  __GI___poll  poll.c:29
-  25.6%      6757       7.5      0.2%  epoll_wait  epoll_wait.c:30
-   2.0%       534      21.0      7.3%  mca_btl_sm_component_progress  btl_sm_component.c:?
-   1.9%       495       1.5      0.6%  mca_part_persist_progress  part_persist.c:?
-   1.8%       480      25.0      9.4%  n1bv_32  n1bv_32.c:?
-   1.7%       455      80.5     26.1%  __futex_wait  futex.h:39
-   1.4%       375       0.5      0.3%  lll_mutex_unlock_optimized  pthread_mutex_unlock.c:43
-   1.4%       364      13.0      6.7%  lll_mutex_lock_optimized  pthread_mutex_lock.c:48
-   1.1%       289       1.5      1.0%  exec_blas_async_wait  libopenblasp-r0.3.33.so
-   1.0%       274       5.0      3.5%  n1fv_32  n1fv_32.c:?
-   0.7%       193      30.5     24.0%  __fft_scatter_2d_MOD_fft_scatter  pw.x
+  29.8%      8128     129.0      3.1%  do_spin  wait.h:56
+  25.6%      6979       1.5      0.0%  __GI___poll  poll.c:29
+  25.4%      6933       3.5      0.1%  epoll_wait  epoll_wait.c:30
+   2.1%       579       7.5      2.5%  mca_btl_sm_component_progress  btl_sm_component.c:?
+   2.0%       533       0.5      0.2%  mca_part_persist_progress  part_persist.c:?
+   1.5%       416      24.0     10.3%  lll_mutex_lock_optimized  pthread_mutex_lock.c:48
+   1.5%       412      11.0      5.1%  n1bv_32  n1bv_32.c:?
+   1.3%       368      25.0     12.0%  exec_blas_async_wait  libopenblasp-r0.3.33.so
+   1.3%       351       8.5      4.6%  n1fv_32  n1fv_32.c:?
+   1.3%       346       6.0      3.4%  lll_mutex_unlock_optimized  pthread_mutex_unlock.c:43
+   1.2%       336      16.0      8.7%  __futex_wait  futex.h:39
+   0.7%       180       3.0      3.2%  do_spin  wait.h:57
   legend:
     Samp%        percent of samples here (~ percent of wall time)
     Samp         sample count (wall time ~ Samp / sampling-Hz)
@@ -87,71 +104,71 @@ Table 2:  Library calls by group and function  (tracing)
   ------------------------------------------------------------------------------
    group     function                   count[imb]     incl(s)     excl(s)
   ------------------------------------------------------------------------------
-   FFTW      fftw_execute_dft             24942  0.0%      0.9214      0.9214
-   BLAS      zgemv_                        3386 48.7%      0.1580      0.1580
-   BLAS      zgemm_                       13200  0.0%      0.0323      0.0323
-   LAPACK    dlaebz_                       3198  0.0%      0.0049      0.0049
-   LAPACK    zstein_                       1066  0.0%      0.0059      0.0040
-   LAPACK    zhegs2_                       1366  0.0%      0.0045      0.0033
+   FFTW      fftw_execute_dft             24942  0.0%      0.9997      0.9997
+   BLAS      zgemv_                        3386 48.7%      0.1947      0.1947
+   BLAS      zgemm_                       13200  0.0%      0.0336      0.0336
+   LAPACK    dlaebz_                       3198  0.0%      0.0048      0.0048
+   LAPACK    zstein_                       1066  0.0%      0.0058      0.0040
+   LAPACK    zhegs2_                       1366  0.0%      0.0045      0.0032
    LAPACK    zlarf1l_                      7799  0.0%      0.0024      0.0018
-   LAPACK    zhetd2_                       1366  0.0%      0.0060      0.0018
+   LAPACK    zhetd2_                       1366  0.0%      0.0059      0.0018
    LAPACK    zlanhe_                       1366  0.0%      0.0018      0.0018
    LAPACK    zlarfg_                       7799  0.0%      0.0032      0.0015
    BLAS      zher2_                       15598  0.0%      0.0011      0.0011
    LAPACK    dladiv_                       7799  0.0%      0.0010      0.0010
    LAPACK    dlagts_                      12792  0.0%      0.0008      0.0008
-   LAPACK    zheevx_                       1066  0.0%      0.0216      0.0005
-   BLAS      ztrsm_                        1366  0.0%      0.0005      0.0005
-   LAPACK    zhegvx_                       1066  0.0%      0.0272      0.0005
-   LAPACK    zsteqr_                        300  0.0%      0.0008      0.0005
+   LAPACK    zheevx_                       1066  0.0%      0.0214      0.0005
    BLAS      ztrsv_                        7799  0.0%      0.0005      0.0005
+   BLAS      ztrsm_                        1366  0.0%      0.0005      0.0005
+   LAPACK    zsteqr_                        300  0.0%      0.0008      0.0005
+   LAPACK    zhegvx_                       1066  0.0%      0.0269      0.0005
    LAPACK    zpotrf_                       1366  0.0%      0.0005      0.0005
-   LAPACK    dstebz_                       1066  0.0%      0.0054      0.0005
    BLAS      zhemv_                        7799  0.0%      0.0004      0.0004
-   LAPACK    zunm2l_                       1066  0.0%      0.0025      0.0004
+   LAPACK    dstebz_                       1066  0.0%      0.0053      0.0004
    LAPACK    zladiv_                       7799  0.0%      0.0013      0.0004
+   LAPACK    zunm2l_                       1066  0.0%      0.0025      0.0003
    LAPACK    dlaruv_                       4264  0.0%      0.0003      0.0003
    BLAS      ddot_                         3225  0.0%      0.0002      0.0002
-   LAPACK    dlarnv_                       4264  0.0%      0.0005      0.0002
    BLAS      zgerc_                        6433  0.0%      0.0002      0.0002
+   LAPACK    dlarnv_                       4264  0.0%      0.0005      0.0002
    LAPACK    dlagtf_                       4264  0.0%      0.0002      0.0002
    LAPACK    dlapy3_                       7799  0.0%      0.0002      0.0002
    LAPACK    dlapy2_                       1576  0.0%      0.0002      0.0002
    LAPACK    zunmtr_                       1066  0.0%      0.0028      0.0002
-   LAPACK    zunmql_                       1066  0.0%      0.0026      0.0002
+   LAPACK    zhetrd_                       1366  0.0%      0.0061      0.0002
+   LAPACK    zhegv_                         300  0.0%      0.0031      0.0002
    LAPACK    zhegst_                       1366  0.0%      0.0047      0.0002
-   LAPACK    zhetrd_                       1366  0.0%      0.0061      0.0001
-   LAPACK    zhegv_                         300  0.0%      0.0030      0.0001
+   LAPACK    zunmql_                       1066  0.0%      0.0026      0.0001
    BLAS      zaxpy_                       23397  0.0%      0.0001      0.0001
-   BLAS      zscal_                        9765  0.0%      0.0001      0.0001
    LAPACK    zheev_                         300  0.0%      0.0022      0.0001
    BLAS      idamax_                      14936 50.0%      0.0001      0.0001
+   BLAS      zscal_                        9765  0.0%      0.0001      0.0001
    LAPACK    zlasr_                        1876  0.0%      0.0001      0.0001
    LAPACK    zung2l_                        300  0.0%      0.0003      0.0001
    LAPACK    ilaenv_                       5852 50.0%      0.0001      0.0001
-   BLAS      dcopy_                        6440 49.8%      0.0001      0.0001
+   BLAS      zdscal_                       7799  0.0%      0.0001      0.0001
    BLAS      dznrm2_                       7799  0.0%      0.0001      0.0001
    LAPACK    zungtr_                        300  0.0%      0.0004      0.0001
-   BLAS      zdscal_                       7799  0.0%      0.0000      0.0000
+   BLAS      dcopy_                        6440 49.8%      0.0001      0.0001
    LAPACK    zungql_                        300  0.0%      0.0004      0.0000
+   LAPACK    dlanst_                        300  0.0%      0.0000      0.0000
    BLAS      zdotc_                        7799  0.0%      0.0000      0.0000
    LAPACK    zlacgv_                      31196  0.0%      0.0000      0.0000
-   LAPACK    dlanst_                        300  0.0%      0.0000      0.0000
    BLAS      dscal_                        8538 50.0%      0.0000      0.0000
    BLAS      dnrm2_                        2147 49.8%      0.0000      0.0000
    LAPACK    dgetrf_                          1  0.0%      0.0000      0.0000
-   LAPACK    dlartg_                       4125  0.0%      0.0000      0.0000
    LAPACK    dgetri_                          1  0.0%      0.0000      0.0000
    LAPACK    dsytf2_                          4  0.0%      0.0000      0.0000
-   LAPACK    dsytrf_                          4  0.0%      0.0000      0.0000
-   LAPACK    disnan_                      17995 50.0%      0.0000      0.0000
    LAPACK    dlaev2_                        300  0.0%      0.0000      0.0000
-   LAPACK    ilazlc_                       7799  0.0%      0.0000      0.0000
+   LAPACK    disnan_                      17995 50.0%      0.0000      0.0000
+   LAPACK    dsytrf_                          4  0.0%      0.0000      0.0000
    LAPACK    dtrtri_                          1  0.0%      0.0000      0.0000
+   LAPACK    dlartg_                       4125  0.0%      0.0000      0.0000
+   LAPACK    ilazlc_                       7799  0.0%      0.0000      0.0000
    LAPACK    dsytri_                          4  0.0%      0.0000      0.0000
-   BLAS      dsymv_                           6  0.0%      0.0000      0.0000
-   LAPACK    dladiv2_                     15598  0.0%      0.0000      0.0000
    BLAS      zswap_                         569  0.0%      0.0000      0.0000
+   LAPACK    dladiv2_                     15598  0.0%      0.0000      0.0000
+   BLAS      dsymv_                           6  0.0%      0.0000      0.0000
    BLAS      dgemv_                           2  0.0%      0.0000      0.0000
    BLAS      dsyr_                           10  0.0%      0.0000      0.0000
    BLAS      dswap_                          16  0.0%      0.0000      0.0000
@@ -162,20 +179,64 @@ Table 2:  Library calls by group and function  (tracing)
     excl(s)      exclusive time: this routine only (callees excluded)
     note         calls aggregated over input sizes; per-shape: report --detail blas|lapack|fftw
 
+Table 3:  MPI message statistics  (tracing)
+
+  MPI (communication)
+  ------------------------------------------------------------------------------
+   function            count[imb]   r/R    incl(s)        bytes     GB/s
+  ------------------------------------------------------------------------------
+   mpi_alltoall_         12472  0.0%   2/2       0.9927    603549704     0.61
+   mpi_barrier_           8941  0.0%   2/2       0.2437            0     0.00
+   mpi_allreduce_         7831  0.0%   2/2       0.0255      5537104     0.22
+   mpi_bcast_             3844  0.0%   2/2       0.0183      8918164     0.49
+   mpi_send_               608  0.0%   1/2       0.0006      3618240     5.97
+   mpi_recv_               608  0.0%   1/2       0.0005      3703752     7.11
+   mpi_alltoallv_           22  0.0%   2/2       0.0003            0     0.00
+   mpi_gatherv_           2852  0.0%   2/2       0.0001            0     0.00
+  ------------------------------------------------------------------------------
+   total communication volume: 0.625 GB  (sum over ranks)
+  legend:
+    count[imb]   total calls over ranks [Imb% = (max-avg)/max]
+    r/R          ranks that called it / total ranks
+    incl(s)      inclusive wall time spent in the call
+    bytes        message bytes moved (summed over ranks)
+    GB/s         bytes / inclusive-time
+    note         comm matrix + size histogram: report --detail mpi
+
+  MPI point-to-point vs collective (bytes)
+   point-to-point:      0.625 GB  (100.0%)
+   collective:          0.000 GB  ( 0.0%)
+
+  MPI message-size distribution
+   size              count       %
+   <=64B             14976   27.1%
+   <=256B             3494    6.3%
+   <=1KiB            10384   18.8%
+   <=4KiB              636    1.2%
+   <=16KiB             732    1.3%
+   <=64KiB           24888   45.1%
+   <=256KiB             98    0.2%
+   <=1MiB                6    0.0%
+
+  Communication matrix  (sent MB, row=from rank, col=to rank)
+               0       1
+      0      0.0     0.0
+      1      3.6     0.0
+
 Table 4:  I/O statistics  (tracing)
 
   I/O
   ----------------------------------------------------------------------
    call            count[imb]   r/R    incl(s)        bytes     GB/s
   ----------------------------------------------------------------------
-   read                219  8.8%   2/2       0.0538       621756     0.01
-   pwrite              490  0.0%   1/2       0.0012      6565092     5.33
-   close               350 16.1%   2/2       0.0011            0     0.00
-   open                198 25.2%   2/2       0.0009            0     0.00
-   write               600  4.0%   2/2       0.0002       127945     0.54
+   read                220  8.7%   2/2       0.0535       621764     0.01
+   pwrite              490  0.0%   1/2       0.0012      6565092     5.38
+   open                198 25.2%   2/2       0.0010            0     0.00
+   close               350 16.1%   2/2       0.0009            0     0.00
+   write               600  3.9%   2/2       0.0003       127953     0.48
    pread                60  0.0%   1/2       0.0000            0     0.00
-   fwrite               17 37.0%   2/2       0.0000       153584     8.45
-   fread                16 40.7%   2/2       0.0000       314538    19.40
+   fwrite               17 37.0%   2/2       0.0000       153584     9.21
+   fread                16 40.7%   2/2       0.0000       314538    19.59
    openat                1  0.0%   2/2       0.0000            0     0.00
    lseek                 4 30.0%   2/2       0.0000            0     0.00
   ----------------------------------------------------------------------
@@ -190,8 +251,8 @@ Table 4:  I/O statistics  (tracing)
 Per-PE summary
  ------------------------------------------------------------
    PE       runtime(s)  lib excl(s)     lib%
-   0             3.460        1.325    38.3%
-   1             3.460        1.043    30.1%
+   0             3.535        2.640    74.7%
+   1             3.536        2.521    71.3%
  ------------------------------------------------------------
-   slowest PE 0 (3.460s); mean 3.460s; spread 0.0%
+   slowest PE 1 (3.536s); mean 3.535s; spread 0.0%
 

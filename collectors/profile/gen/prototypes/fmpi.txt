@@ -1,0 +1,43 @@
+# Fortran MPI bindings (libmpi_mpifh / libmpifort): lowercase name + trailing
+# underscore, ALL arguments by reference, plus a trailing integer `ierr`. Fortran
+# codes (most HPC apps — Quantum ESPRESSO, VASP, ...) call these, not the C ABI.
+#
+# Dialect "fortran": every arg is a pointer, forwarded verbatim. The byte-volume
+# analyzer (src/analyzers/mpi.c) uses the SAME (count,datatype) slot indices as
+# the C calls; only the datatype is a Fortran integer handle (converted with
+# MPI_Type_f2c before PMPI_Type_size). gfortran/most use a single trailing "_".
+
+# point-to-point
+void mpi_send_(void* buf, int* count, int* dt, int* dest, int* tag, int* comm, int* ierr)
+void mpi_recv_(void* buf, int* count, int* dt, int* src, int* tag, int* comm, int* status, int* ierr)
+void mpi_isend_(void* buf, int* count, int* dt, int* dest, int* tag, int* comm, int* rq, int* ierr)
+void mpi_irecv_(void* buf, int* count, int* dt, int* src, int* tag, int* comm, int* rq, int* ierr)
+void mpi_sendrecv_(void* sb, int* sc, int* st, int* dest, int* stag, void* rb, int* rc, int* rt, int* src, int* rtag, int* comm, int* status, int* ierr)
+
+# collectives with a scalar count (count,datatype indices match the C calls)
+void mpi_bcast_(void* buf, int* count, int* dt, int* root, int* comm, int* ierr)
+void mpi_ibcast_(void* buf, int* count, int* dt, int* root, int* comm, int* rq, int* ierr)
+void mpi_allreduce_(void* sb, void* rb, int* count, int* dt, int* op, int* comm, int* ierr)
+void mpi_iallreduce_(void* sb, void* rb, int* count, int* dt, int* op, int* comm, int* rq, int* ierr)
+void mpi_reduce_(void* sb, void* rb, int* count, int* dt, int* op, int* root, int* comm, int* ierr)
+void mpi_ireduce_(void* sb, void* rb, int* count, int* dt, int* op, int* root, int* comm, int* rq, int* ierr)
+void mpi_allgather_(void* sb, int* sc, int* st, void* rb, int* rc, int* rt, int* comm, int* ierr)
+void mpi_iallgather_(void* sb, int* sc, int* st, void* rb, int* rc, int* rt, int* comm, int* rq, int* ierr)
+void mpi_alltoall_(void* sb, int* sc, int* st, void* rb, int* rc, int* rt, int* comm, int* ierr)
+void mpi_ialltoall_(void* sb, int* sc, int* st, void* rb, int* rc, int* rt, int* comm, int* rq, int* ierr)
+void mpi_gather_(void* sb, int* sc, int* st, void* rb, int* rc, int* rt, int* root, int* comm, int* ierr)
+void mpi_scatter_(void* sb, int* sc, int* st, void* rb, int* rc, int* rt, int* root, int* comm, int* ierr)
+
+# vector collectives (send-side scalar count usable for volume; v-variants skipped)
+void mpi_gatherv_(void* sb, int* sc, int* st, void* rb, void* rcounts, void* displs, int* rt, int* root, int* comm, int* ierr)
+void mpi_allgatherv_(void* sb, int* sc, int* st, void* rb, void* rcounts, void* displs, int* rt, int* comm, int* ierr)
+void mpi_scatterv_(void* sb, void* scounts, void* displs, int* st, void* rb, int* rc, int* rt, int* root, int* comm, int* ierr)
+void mpi_alltoallv_(void* sb, void* scounts, void* sdispls, int* st, void* rb, void* rcounts, void* rdispls, int* rt, int* comm, int* ierr)
+void mpi_reduce_scatter_(void* sb, void* rb, void* rcounts, int* dt, int* op, int* comm, int* ierr)
+
+# synchronization / completion (count + time only)
+void mpi_barrier_(int* comm, int* ierr)
+void mpi_wait_(int* rq, int* status, int* ierr)
+void mpi_waitall_(int* count, int* rqs, int* sts, int* ierr)
+void mpi_test_(int* rq, int* flag, int* status, int* ierr)
+void mpi_testall_(int* count, int* rqs, int* flag, int* sts, int* ierr)

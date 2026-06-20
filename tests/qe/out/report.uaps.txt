@@ -1,16 +1,16 @@
  command: qenv/bin/mpirun -np 2 ./pw -in si.scf.in
 
 ── INSIGHTS  (combined uaps + upat) ──────────────────────────────────────────
-  ▶ Memory-bound (33% of slots) — improve data locality / working-set size.
-  ▶ MPI is 35% of time — communication-heavy; enlarge messages / overlap comm with compute.
+  ▶ Memory-bound (42% of slots) — improve data locality / working-set size.
+  ▶ MPI is 35% of time with 45% imbalance — rebalance work or check rank placement; see the communication matrix.
 
 
 ──────────────────────────────────────────────────────────────────────────────
   UAPS  —  Universal Application Performance Snapshot   (bird's-eye: HW counters)
 ──────────────────────────────────────────────────────────────────────────────
-    Elapsed time 3.557 s   |   Physical core utilization 0.0%
-    IPC (instructions/cycle) 1.02   |   CPI (cycles/instruction) 0.98
-    Memory bound 32.6%   |   DRAM-bound (of demand fills) 20.6%
+    Elapsed time 3.637 s   |   Physical core utilization 0.0%
+    IPC (instructions/cycle) 0.88   |   CPI (cycles/instruction) 1.14
+    Memory bound 41.6%   |   DRAM-bound (of demand fills) 14.2%
     NUMA remote access 0.0%   |   Memory footprint (peak RSS) 12.7 MiB
     Disk read 0 B   |   Disk write 332.0 KiB
 
@@ -24,22 +24,22 @@
     (per-function roofline → future profile two-pass: survey hotspots, then characterize)
 
 ══ Microarchitecture (top-down pipeline slots) ══
-    retiring (useful)   19.6%
-    frontend-bound      51.6%
-    backend-bound       24.4%
-      └ memory          22.7%
+    retiring (useful)   20.5%
+    frontend-bound      49.0%
+    backend-bound       25.7%
+      └ memory          23.9%
       └ core             1.7%
-    bad speculation      4.0%
-    IPC                1.02
-    CPI                0.98
+    bad speculation      4.3%
+    IPC                0.88
+    CPI                1.14
 
 ══ Memory access ══
-    cache-miss rate        24.3%
-    LLC MPKI               16.29 MPKI
-    DRAM fills / 1K-instr  1.07 DPKI
-    DRAM-bound             20.6%
+    cache-miss rate        24.5%
+    LLC MPKI               15.40 MPKI
+    DRAM fills / 1K-instr  1.58 DPKI
+    DRAM-bound             14.2%
     NUMA remote access     0.0%
-    memory-bound (slots)   32.6%
+    memory-bound (slots)   41.6%
     peak RSS               12.7 MiB
 
 ══ Vectorization ══

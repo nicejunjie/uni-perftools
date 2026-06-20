@@ -31,6 +31,9 @@ GROUPS = [
     # (OpenMPI). This sidesteps the constant/handle portability bugs (the ones
     # that break mpiP on OpenMPI) and removes the mpicc build dependency.
     ("mpi.txt",       "MPI",       "LP_MPI",       "opaque"),
+    # Fortran MPI bindings (mpi_*_): same display group → merged into mpi_wrap.c,
+    # but the "fortran" dialect (all args by reference + trailing ierr).
+    ("fmpi.txt",      "MPI",       "LP_MPI",       "fortran"),
     ("io.txt",        "IO",        "LP_IO",        "opaque"),
 ]
 

@@ -78,6 +78,41 @@ static int an_coll(libprof_key_t *k, libprof_delta_t *md, const libprof_desc_t *
 static int an_scatterv(libprof_key_t *k, libprof_delta_t *md, const libprof_desc_t *d, void **a, void *r)
 { (void)k;(void)d;(void)r; md->bytes = volume(a, 5, 6); record(md->bytes, 0, -1); return 0; }
 
+/* ---- Fortran bindings (mpi_*_): args are by reference, datatype is a Fortran
+ * integer handle. Convert it with MPI_Type_f2c, then reuse PMPI_Type_size. The
+ * (count,datatype,peer) slot indices match the C calls. ---- */
+typedef void *(*type_f2c_fn)(int);
+
+static int type_size_f(int fhandle)
+{
+    static type_f2c_fn f2c;
+    static int resolved;
+    if (!resolved) { f2c = (type_f2c_fn)dlsym(RTLD_DEFAULT, "MPI_Type_f2c"); resolved = 1; }
+    /* Skip non-positive Fortran handles: MPI_DATATYPE_NULL (0) / MPI_UNDEFINED
+     * appear as the unused send-type in MPI_IN_PLACE collectives, and calling
+     * MPI_Type_size on them trips the FATAL error handler and aborts the app. */
+    if (!f2c || fhandle <= 0) return 0;
+    return type_size(f2c(fhandle));
+}
+
+static uint64_t volume_f(void **a, int ci, int ti)
+{
+    int count = *(int *)a[ci];
+    int sz = type_size_f(*(int *)a[ti]);
+    return (uint64_t)count * (uint64_t)sz;
+}
+
+static int fan_send(libprof_key_t *k, libprof_delta_t *md, const libprof_desc_t *d, void **a, void *r)
+{ (void)k;(void)d;(void)r; md->bytes = volume_f(a, 1, 2); record(md->bytes, +1, *(int *)a[3]); return 0; }
+static int fan_recv(libprof_key_t *k, libprof_delta_t *md, const libprof_desc_t *d, void **a, void *r)
+{ (void)k;(void)d;(void)r; md->bytes = volume_f(a, 1, 2); record(md->bytes, -1, *(int *)a[3]); return 0; }
+static int fan_coll(libprof_key_t *k, libprof_delta_t *md, const libprof_desc_t *d, void **a, void *r)
+{ (void)k;(void)d;(void)r; md->bytes = volume_f(a, 1, 2); record(md->bytes, 0, -1); return 0; }
+static int fan_reduce(libprof_key_t *k, libprof_delta_t *md, const libprof_desc_t *d, void **a, void *r)
+{ (void)k;(void)d;(void)r; md->bytes = volume_f(a, 2, 3); record(md->bytes, 0, -1); return 0; }
+static int fan_scatterv(libprof_key_t *k, libprof_delta_t *md, const libprof_desc_t *d, void **a, void *r)
+{ (void)k;(void)d;(void)r; md->bytes = volume_f(a, 5, 6); record(md->bytes, 0, -1); return 0; }
+
 static void emit(void *fp)
 {
     FILE *f = fp;
@@ -112,6 +147,19 @@ void libprof_register_mpi_analyzers(void)
     bind("MPI_Scatterv", an_scatterv);
     /* Sendrecv counts as a send to dest (arg 3) for the matrix */
     bind("MPI_Sendrecv", an_send);
+
+    /* Fortran bindings (mpi_*_) — used by Fortran HPC codes (QE, VASP, ...) */
+    bind("mpi_send_", fan_send);   bind("mpi_isend_", fan_send);
+    bind("mpi_recv_", fan_recv);   bind("mpi_irecv_", fan_recv);
+    bind("mpi_sendrecv_", fan_send);
+    bind("mpi_bcast_", fan_coll);  bind("mpi_ibcast_", fan_coll);
+    bind("mpi_allreduce_", fan_reduce);  bind("mpi_iallreduce_", fan_reduce);
+    bind("mpi_reduce_", fan_reduce);     bind("mpi_ireduce_", fan_reduce);
+    bind("mpi_allgather_", fan_coll);    bind("mpi_iallgather_", fan_coll);
+    bind("mpi_alltoall_", fan_coll);     bind("mpi_ialltoall_", fan_coll);
+    bind("mpi_gather_", fan_coll);       bind("mpi_scatter_", fan_coll);
+    bind("mpi_gatherv_", fan_coll);      bind("mpi_allgatherv_", fan_coll);
+    bind("mpi_scatterv_", fan_scatterv);
 
     extern void libprof_register_emitter(libprof_emitter_fn);
     libprof_register_emitter(emit);

@@ -62,6 +62,7 @@ $DRV report out/run_mpi    --detail mpi        # MPI comm matrix + size histogra
 | `report.uaps.txt` / `report.upat.txt`  | the two collectors as separate files (MPI run) |
 | `roofline_func.txt`                     | per-function roofline (single-threaded) |
 | `detail.blas.txt`                       | `--detail blas` per-shape breakdown |
+| `detail.mpi.txt`                        | `--detail mpi` comm matrix + size histogram |
 | `qe.*.out`                              | QE's own stdout for each run |
 
 ## What it validated
@@ -77,15 +78,9 @@ $DRV report out/run_mpi    --detail mpi        # MPI comm matrix + size histogra
   knowledge — FFTW codelets (`n1bv_32`, `n1fv_32` ≈ 20 GFLOP/s), QE's own
   `vloc_psi_k_acc_` (≈ 22 GFLOP/s) and `__fft_scalar_fftw3_MOD_cfft3d`, plus
   system/runtime frames — library, user, and system alike.
-- **MPI (2 ranks)**: sampling attributes **35%** to MPI and the insight fires
-  ("communication-heavy"). The MPI imbalance/FFT-imbalance across ranks shows in
-  the per-group sampling table.
-
-## Known limitation found here
-
-`upat`'s MPI **tracing** wraps the C MPI ABI (`MPI_Allreduce`, …). QE (Fortran)
-calls the **Fortran MPI bindings** (`mpi_allreduce_`, `mpi_barrier_`, … in
-`libmpi_mpifh`), so MPI calls are **not traced by name** for Fortran codes —
-hence `report --view mpi` (the wait-state breakdown) is empty for QE. MPI is
-still captured by PC **sampling** (35% above) and by the insight engine.
-Fix path: add the Fortran `mpi_*_` binding names to `gen/prototypes/mpi.txt`.
+- **MPI (2 ranks), traced by name**: upat now wraps the **Fortran MPI bindings**
+  (`mpi_*_`), so QE's MPI is traced exactly. `mpi_alltoall_` dominates at **603 MB**
+  — QE's parallel 3-D FFT transposes — followed by bcast/allreduce/send/recv. The
+  wait-state view, point-to-point-vs-collective split, message-size histogram, and
+  the rank×rank communication matrix all populate (`report --detail mpi`). The
+  late-sender/imbalance insight fires.

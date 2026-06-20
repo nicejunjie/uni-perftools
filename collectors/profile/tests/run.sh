@@ -101,6 +101,33 @@ ok "MPI_Allreduce has GB/s"     "echo \"$OUT\" | grep -q MPI_Allreduce"
 ok "dgemm imbalance 37.5% (20 vs 10)" "echo \"$OUT\" | grep -E ' dgemm_ ' | grep -qE '37\.5%'"
 ok "no GB/s in compute table"   "echo \"$OUT\" | sed -n '/Compute/,/MPI (comm/p' | grep -qv 'GB/s'"
 
+# --- Fortran MPI bindings (mpi_*_): Fortran codes call these, not the C ABI ---
+if command -v mpif90 >/dev/null 2>&1; then
+cat > "$TMP/t4f.f90" <<'EOF'
+program t
+  implicit none
+  include 'mpif.h'
+  integer :: ierr, i
+  real(8) :: s(64), d(64)
+  call MPI_Init(ierr)
+  s = 1.0d0
+  do i = 1, 30
+    call MPI_Allreduce(s, d, 64, MPI_DOUBLE_PRECISION, MPI_SUM, MPI_COMM_WORLD, ierr)
+  end do
+  call MPI_Bcast(s, 64, MPI_DOUBLE_PRECISION, 0, MPI_COMM_WORLD, ierr)
+  call MPI_Finalize(ierr)
+end program t
+EOF
+  mpif90 -O2 "$TMP/t4f.f90" -o "$TMP/t4f" 2>/dev/null
+  rm -f "$TMP"/p.*.json
+  OMPI_MCA_rmaps_base_oversubscribe=1 mpirun --oversubscribe -n 2 \
+    -x UPAT_QUIET=1 -x UPAT_OUTPUT="$TMP/p" -x LD_PRELOAD="$LIB" "$TMP/t4f" >/dev/null 2>&1
+  FOUT=$(python3 "$RPT" "$TMP"/p.*.json 2>&1)
+  ok "fortran MPI: app survived"     "[ $(ls $TMP/p.*.json 2>/dev/null | wc -l) -eq 2 ]"
+  ok "fortran MPI: mpi_allreduce_ traced" "echo \"$FOUT\" | grep -q 'mpi_allreduce_'"
+  ok "fortran MPI: nonzero byte volume"   "echo \"$FOUT\" | grep -E 'mpi_allreduce_' | grep -qvE ' 0 +[0-9.]+ *$'"
+fi
+
 # --- sampling: a hot function must dominate the flat profile ---
 cat > "$TMP/t5.c" <<'EOF'
 double hot(long n){ double s=0; for(long i=0;i<n;i++) s+=i*0.5/(i+1.0); return s; }
