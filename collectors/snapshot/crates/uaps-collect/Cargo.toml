@@ -7,6 +7,8 @@ license.workspace = true
 [dependencies]
 anyhow.workspace = true
 uaps-core.workspace = true
+serde_json = "1"   # parse vendored perf pmu-events JSON (event codes + formulas)
+regex = "1"        # match CPUID/MIDR against perf's mapfile.csv
 
 # Linux-only backends. Other platforms fall back to stub collectors (see
 # src/fallback.rs); real macOS (kperf) / Windows (ETW) backends are future work.

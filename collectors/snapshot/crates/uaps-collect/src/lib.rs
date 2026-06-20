@@ -11,6 +11,8 @@ pub use mpi::MpiCollector;
 
 // Linux-only backends; other platforms use the stubs in `fallback`.
 #[cfg(target_os = "linux")]
+pub mod pmudb;
+#[cfg(target_os = "linux")]
 mod cpu;
 #[cfg(target_os = "linux")]
 mod perf;
