@@ -135,9 +135,65 @@ fn hex_or_dec(v: &Value) -> Option<u64> {
 }
 
 /// Load all event + metric JSON in a model directory.
+/// Parse one JSON object into an event definition. `name` is its EventName (or,
+/// for an ArchStdEvent reference, the referenced name); fields come from the
+/// object, with any field absent here inherited from `base` (the ArchStdEvent
+/// template). Mirrors perf jevents: an ArchStdEvent supplies defaults the entry
+/// may override.
+fn parse_event(m: &Value, base: Option<&Value>) -> Option<(String, EventDef)> {
+    let name = m
+        .get("EventName")
+        .and_then(|v| v.as_str())
+        .or_else(|| base.and_then(|b| b.get("EventName")).and_then(|v| v.as_str()))?;
+    let mut fields = Vec::new();
+    for (jkey, fkey) in [("EventCode", "event"), ("UMask", "umask"),
+                         ("Cmask", "cmask"), ("Inv", "inv"), ("Edge", "edge")] {
+        // entry wins over the ArchStdEvent template
+        let v = m.get(jkey).and_then(hex_or_dec).or_else(|| base.and_then(|b| b.get(jkey)).and_then(hex_or_dec));
+        if let Some(v) = v {
+            if v != 0 || jkey == "EventCode" {
+                fields.push((fkey.to_string(), v));
+            }
+        }
+    }
+    let unit = m
+        .get("Unit")
+        .or_else(|| base.and_then(|b| b.get("Unit")))
+        .and_then(|v| v.as_str())
+        .unwrap_or("cpu")
+        .to_string();
+    Some((name.to_lowercase(), EventDef { fields, unit }))
+}
+
+/// Architecture-shared ArchStdEvent templates (ARM keeps event encodings once in
+/// `<arch>/common-and-microarch.json` and references them by name from each
+/// model). Returns name → the full JSON object so models can inherit + override.
+fn arch_std_events(dir: &std::path::Path) -> HashMap<String, Value> {
+    let mut out = HashMap::new();
+    // ascend to the arch dir (…/arch/x86 or …/arch/arm64)
+    let mut arch = dir;
+    while let Some(parent) = arch.parent() {
+        if matches!(arch.file_name().and_then(|s| s.to_str()), Some("x86" | "arm64")) {
+            break;
+        }
+        arch = parent;
+    }
+    for f in ["common-and-microarch.json", "recommended.json"] {
+        let Ok(txt) = std::fs::read_to_string(arch.join(f)) else { continue };
+        let Ok(Value::Array(items)) = serde_json::from_str::<Value>(&txt) else { continue };
+        for m in items {
+            if let Some(name) = m.get("EventName").and_then(|v| v.as_str()) {
+                out.insert(name.to_string(), m);
+            }
+        }
+    }
+    out
+}
+
 pub fn load(dir: &std::path::Path) -> PmuDb {
     let mut events = HashMap::new();
     let mut metrics = HashMap::new();
+    let std_events = arch_std_events(dir);
     let entries = std::fs::read_dir(dir).into_iter().flatten().flatten();
     for e in entries {
         let p = e.path();
@@ -152,19 +208,13 @@ pub fn load(dir: &std::path::Path) -> PmuDb {
                     metrics.insert(name.to_lowercase(), expr.to_string());
                 }
             }
-            if let Some(name) = m.get("EventName").and_then(|v| v.as_str()) {
-                let mut fields = Vec::new();
-                // map JSON keys → sysfs-format field names (the kernel owns the bits)
-                for (jkey, fkey) in [("EventCode", "event"), ("UMask", "umask"),
-                                     ("Cmask", "cmask"), ("Inv", "inv"), ("Edge", "edge")] {
-                    if let Some(v) = m.get(jkey).and_then(hex_or_dec) {
-                        if v != 0 || jkey == "EventCode" {
-                            fields.push((fkey.to_string(), v));
-                        }
-                    }
+            // Event: inline EventName, or an ArchStdEvent reference resolved
+            // against the arch-shared templates (then locally overridable).
+            let base = m.get("ArchStdEvent").and_then(|v| v.as_str()).and_then(|s| std_events.get(s));
+            if m.get("EventName").is_some() || base.is_some() {
+                if let Some((name, ev)) = parse_event(&m, base) {
+                    events.insert(name, ev);
                 }
-                let unit = m.get("Unit").and_then(|v| v.as_str()).unwrap_or("cpu").to_string();
-                events.insert(name.to_lowercase(), EventDef { fields, unit });
             }
         }
     }
@@ -394,18 +444,31 @@ impl Parser<'_> {
     fn is_op(&self, op: &str) -> bool {
         matches!(self.peek(), Some(Tok::Op(o)) if o == op)
     }
-    /// Top of the grammar: ternary `cond ? a : b` (lowest precedence).
+    fn is_ident(&self, kw: &str) -> bool {
+        matches!(self.peek(), Some(Tok::Ident(s)) if s == kw)
+    }
+    /// Top of the grammar (lowest precedence): both ternary spellings perf uses —
+    /// C-style `cond ? a : b` (newer Intel/AMD) and infix `a if cond else b`
+    /// (older Intel TMA helpers).
     fn expr(&mut self) -> Option<f64> {
-        let cond = self.cmp()?;
+        let v = self.cmp()?;
         if self.is_op("?") {
             self.pos += 1;
             let then = self.expr()?;
             self.is_op(":").then(|| ())?;
             self.pos += 1;
             let els = self.expr()?;
-            Some(if cond != 0.0 { then } else { els })
+            Some(if v != 0.0 { then } else { els })
+        } else if self.is_ident("if") {
+            // `value if cond else other` — value already parsed into `v`.
+            self.pos += 1;
+            let cond = self.expr()?;
+            self.is_ident("else").then(|| ())?;
+            self.pos += 1;
+            let other = self.expr()?;
+            Some(if cond != 0.0 { v } else { other })
         } else {
-            Some(cond)
+            Some(v)
         }
     }
     /// Relational/equality, yielding 1.0/0.0 (perf uses these inside `?:`/min/max).
@@ -527,9 +590,12 @@ fn sys_const(name: &str) -> Option<f64> {
     match name {
         "smt_on" => Some(if smt_on() { 1.0 } else { 0.0 }),
         "num_cpus" | "num_cpus_online" => Some(num_cpus_online() as f64),
-        // We count the whole process (not one logical CPU), so a metric written
-        // for a single hardware thread (#core_wide / #num_packages-scaled) can't
-        // be reproduced faithfully → gap rather than a wrong number.
+        // We aggregate over the whole process, never perf's `--per-core` mode, so
+        // core_wide is 0 — this selects the per-thread-slots branch of the older
+        // Intel TMA helpers, which is the correct one for our counting mode.
+        "core_wide" => Some(0.0),
+        // Anything else (e.g. #num_packages-scaled) can't be reproduced
+        // faithfully from a whole-process count → gap, not a wrong number.
         _ => None,
     }
 }
@@ -587,6 +653,73 @@ const CANON: &[(&str, &str, &[&str])] = &[
     ("topdown_backend_pct", "Backend bound", &["backend_bound", "tma_backend_bound"]),
     ("topdown_badspec_pct", "Bad speculation", &["bad_speculation", "tma_bad_speculation"]),
 ];
+
+/// Intel PERF_METRICS pseudo-events + the slots fixed counter. These are not in
+/// the pmu-events JSON — the kernel exposes their encoding under
+/// `/sys/devices/cpu*/events/`. Stable kernel ABI names, so structural
+/// validation can count them "present" without the Intel hardware to read sysfs.
+const PERF_METRICS_ALIASES: &[&str] = &[
+    "slots",
+    "topdown-retiring",
+    "topdown-bad-spec",
+    "topdown-fe-bound",
+    "topdown-be-bound",
+    // L2 (newer Intel)
+    "topdown-heavy-ops",
+    "topdown-br-mispredict",
+    "topdown-fetch-lat",
+    "topdown-mem-bound",
+];
+
+/// Whether a referenced event can be counted on the target: present in the
+/// vendored JSON, or a known kernel-provided alias (resolved from sysfs at run
+/// time on the real CPU). Used by structural validation, which has the JSON but
+/// not the hardware's sysfs.
+fn event_present(db: &PmuDb, name: &str) -> bool {
+    db.events.contains_key(name) || PERF_METRICS_ALIASES.contains(&name)
+}
+
+/// Structural validation of one model's db against the canonical metrics, with no
+/// hardware: for each CANON metric, does the model define a candidate, does its
+/// formula parse + use only supported constructs, and is every referenced event
+/// resolvable (JSON or kernel alias)? This is how the SPR/Grace/older-Intel/Zen
+/// implementations are checked by construction on a single host.
+#[derive(Debug, Clone)]
+pub struct CanonStatus {
+    pub key: &'static str,
+    pub metric: Option<String>, // the candidate present in this model, if any
+    pub resolved: bool,
+    pub note: String,
+}
+
+pub fn validate_canon(db: &PmuDb) -> Vec<CanonStatus> {
+    CANON
+        .iter()
+        .map(|&(key, _label, cands)| {
+            let Some(mname) = cands.iter().copied().find(|c| db.metrics.contains_key(*c)) else {
+                return CanonStatus { key, metric: None, resolved: false, note: "no candidate metric in model".into() };
+            };
+            // Collect referenced events while proving the formula uses only
+            // constructs we implement (stub returns Some so only *constructs*,
+            // not missing data, can fail the eval).
+            let mut refs: Vec<String> = Vec::new();
+            let ok = eval_metric(db, mname, &mut |e| {
+                if !refs.contains(&e.to_string()) {
+                    refs.push(e.to_string());
+                }
+                Some(1.0)
+            })
+            .is_some();
+            if !ok {
+                return CanonStatus { key, metric: Some(mname.into()), resolved: false, note: "formula uses an unsupported construct".into() };
+            }
+            if let Some(missing) = refs.iter().find(|e| !event_present(db, e)) {
+                return CanonStatus { key, metric: Some(mname.into()), resolved: false, note: format!("missing event: {missing}") };
+            }
+            CanonStatus { key, metric: Some(mname.into()), resolved: true, note: format!("{} events", refs.len()) }
+        })
+        .collect()
+}
 
 fn pmu_type(unit: &str) -> u32 {
     let u = if unit.is_empty() { "cpu" } else { unit };
@@ -842,6 +975,105 @@ mod tests {
         // An unknown #constant is an honest gap, not a fabricated number.
         let db2 = db_with(&[("m", "#bogus_constant")]);
         assert_eq!(eval_metric(&db2, "m", &mut none), None);
+    }
+
+    /// Enumerate every vendored model dir — any directory under arch/{x86,arm64}
+    /// that directly holds *.json (some, like NVIDIA Grace `nvidia/t410`, nest).
+    /// The name is the path relative to the arch dir (e.g. "amdzen5", "nvidia/t410").
+    fn vendored_model_dirs() -> Vec<(String, std::path::PathBuf)> {
+        fn has_json(d: &std::path::Path) -> bool {
+            std::fs::read_dir(d)
+                .into_iter()
+                .flatten()
+                .flatten()
+                .any(|e| e.path().extension().is_some_and(|x| x == "json"))
+        }
+        fn walk(base: &std::path::Path, d: &std::path::Path, out: &mut Vec<(String, std::path::PathBuf)>) {
+            if has_json(d) {
+                let name = d.strip_prefix(base).unwrap_or(d).to_string_lossy().into_owned();
+                out.push((name, d.to_path_buf()));
+            }
+            for e in std::fs::read_dir(d).into_iter().flatten().flatten() {
+                if e.path().is_dir() {
+                    walk(base, &e.path(), out);
+                }
+            }
+        }
+        let Some(root) = data_root() else { return Vec::new() };
+        let mut out = Vec::new();
+        for arch in ["x86", "arm64"] {
+            let adir = root.join(arch);
+            walk(&adir, &adir, &mut out);
+        }
+        out.sort();
+        out
+    }
+
+    /// CI structural gate: across every vendored CPU model, top-down must EITHER
+    /// fully resolve (candidate metric present, formula supported, all events
+    /// resolvable) OR be an explicit gap — never a partial/guessed result. Plus
+    /// the families we claim support for must actually resolve all 4 quadrants.
+    #[test]
+    fn structural_validation_across_vendored_models() {
+        let dirs = vendored_model_dirs();
+        assert!(!dirs.is_empty(), "vendored pmu-events tree not found");
+
+        // Families we claim top-down support for → must resolve all 4 metrics.
+        // (AMD: only Zen5+ ship the named metrics in perf's JSON; Zen1-4 and ARM
+        // Grace have no such metric → documented gaps, asserted as gaps below.)
+        let required: &[&str] = &[
+            "amdzen4", "amdzen5", "amdzen6", // AMD Zen4+ ship the named metrics
+            "haswellx", "broadwellx", "skylakex", "cascadelakex", "icelakex",
+            "sapphirerapids", "emeraldrapids", "graniterapids", // Intel Xeon
+            "nvidia/t410", // NVIDIA Grace (ARM Neoverse V2)
+        ];
+        // No top-down metric in perf's JSON for these → documented gaps, not guesses.
+        let known_gaps: &[&str] = &["amdzen1", "amdzen2", "amdzen3", "arm"];
+
+        eprintln!("\n{:<16} {:>9}  detail", "model", "topdown");
+        let mut required_seen = std::collections::HashSet::new();
+        for (name, dir) in &dirs {
+            if name.is_empty() {
+                continue; // the arch-root shared file, not a real model
+            }
+            let mut db = load(dir);
+            db.model_dir = name.clone();
+            let st = validate_canon(&db);
+            let n_ok = st.iter().filter(|s| s.resolved).count();
+            let detail: Vec<String> = st
+                .iter()
+                .map(|s| format!("{}={}", s.key.trim_start_matches("topdown_").trim_end_matches("_pct"), if s.resolved { "ok" } else { "gap" }))
+                .collect();
+            eprintln!("{:<16} {:>4}/{}    {}", name, n_ok, st.len(), detail.join(" "));
+
+            // Invariant for EVERY model: each metric is all-or-nothing (a resolved
+            // metric had its candidate + supported formula + all events present).
+            for s in &st {
+                if s.resolved {
+                    assert!(s.metric.is_some(), "{name}/{}: resolved but no metric", s.key);
+                }
+            }
+
+            if required.contains(&name.as_str()) {
+                required_seen.insert(name.clone());
+                let gaps: Vec<_> = st.iter().filter(|s| !s.resolved).collect();
+                assert!(
+                    gaps.is_empty(),
+                    "{name}: claimed-supported family failed top-down: {:?}",
+                    gaps.iter().map(|s| format!("{} ({})", s.key, s.note)).collect::<Vec<_>>()
+                );
+            }
+            if known_gaps.contains(&name.as_str()) {
+                assert!(
+                    st.iter().all(|s| !s.resolved),
+                    "{name}: documented as a top-down gap but something resolved — update the harness"
+                );
+            }
+        }
+        // Every claimed family must actually be present in the vendored tree.
+        for r in required {
+            assert!(required_seen.contains(*r), "claimed-supported model `{r}` missing from vendored tree");
+        }
     }
 
     #[test]

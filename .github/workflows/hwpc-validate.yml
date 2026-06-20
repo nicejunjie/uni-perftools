@@ -1,0 +1,30 @@
+# Hardware-independent validation of the HWPC engine.
+#
+# The engine derives every counter from perf's vendored pmu-events data, so its
+# correctness for CPUs we don't have (Intel SPR/EMR/GNR, NVIDIA Grace, AMD Zen)
+# can be checked structurally: for each vendored model, the canonical top-down
+# metrics must resolve fully (candidate metric present, formula uses only
+# supported constructs, every referenced event resolvable) — or be an explicit
+# gap. A regression that silently drops an event or formula construct fails here.
+name: hwpc-validate
+
+on:
+  push:
+    paths:
+      - "collectors/snapshot/**"
+      - ".github/workflows/hwpc-validate.yml"
+  pull_request:
+    paths:
+      - "collectors/snapshot/**"
+      - ".github/workflows/hwpc-validate.yml"
+
+jobs:
+  structural:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - name: Structural validation across all vendored CPU models
+        run: make validate-hwpc
+      - name: Full snapshot unit tests (evaluator, encoder, detection)
+        run: cd collectors/snapshot && cargo test

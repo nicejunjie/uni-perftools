@@ -10,7 +10,7 @@ PREFIX ?= /usr/local
 PROFILE := collectors/profile
 SNAPSHOT := collectors/snapshot
 
-.PHONY: all profile snapshot test clean install
+.PHONY: all profile snapshot test validate-hwpc clean install
 
 all: profile snapshot
 
@@ -20,7 +20,14 @@ profile:
 snapshot:
 	cd $(SNAPSHOT) && cargo build
 
-test: all
+# Hardware-independent HWPC gate: for every vendored CPU model, the canonical
+# top-down metrics must resolve fully (events present + formula supported) or be
+# an explicit gap — never partial/guessed. Runs without the target hardware.
+validate-hwpc:
+	@echo "== HWPC structural validation (all vendored models) =="
+	cd $(SNAPSHOT) && cargo test -p uaps-collect structural_validation -- --nocapture
+
+test: all validate-hwpc
 	@echo "== profile tests =="; bash $(PROFILE)/tests/run.sh preload
 	@echo "== snapshot tests =="; cd $(SNAPSHOT) && cargo test
 	@echo "== suite tests =="; bash tests/run.sh
