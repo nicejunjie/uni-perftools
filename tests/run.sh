@@ -111,7 +111,8 @@ if [ "$HAVE_MPI" = 1 ]; then
 
   # uaps snapshot tier: APS-style MPI (auto-detected launcher, mpi.h-free shim)
   if [ -n "$UAPS" ]; then
-    SOUT=$(OMPI_MCA_rmaps_base_oversubscribe=1 "$UAPS" run -- mpirun --oversubscribe -n 4 "$TMP/m" 2>/dev/null)
+    # uaps writes its report to stderr (the target owns stdout); capture stderr.
+    SOUT=$(OMPI_MCA_rmaps_base_oversubscribe=1 "$UAPS" run -- mpirun --oversubscribe -n 4 "$TMP/m" 2>&1 >/dev/null)
     ok "uaps: APS MPI section"        "echo \"$SOUT\" | grep -q 'MPI ranks'"
     ok "uaps: MPI time + imbalance"   "echo \"$SOUT\" | grep -q 'MPI time' && echo \"$SOUT\" | grep -q 'MPI imbalance'"
     ok "uaps: top MPI function"       "echo \"$SOUT\" | grep -qE 'MPI_(Allreduce|Sendrecv|Bcast).*of MPI'"

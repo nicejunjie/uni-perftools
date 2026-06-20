@@ -60,15 +60,15 @@
 
 ══ MPI wait-state (call-type heuristic) ══
     synchronization/wait 0.0004s (100%) | transfer/initiation 0.0000s ( 0%)
-    call                      excl(s)   class   imb%
-    ────────────────────────────────────────────────
-    mpi_alltoallv_            0.00011    wait     0%
-    mpi_bcast_                0.00010    wait     0%
-    mpi_gatherv_              0.00010    wait     0%
-    mpi_allreduce_            0.00004    wait     0%
-    mpi_barrier_              0.00004    wait     0%
-    mpi_alltoall_             0.00000    wait     0%
-    ────────────────────────────────────────────────
+    call                      excl(s)   class
+    ─────────────────────────────────────────
+    mpi_alltoallv_            0.00011    wait
+    mpi_bcast_                0.00010    wait
+    mpi_gatherv_              0.00010    wait
+    mpi_allreduce_            0.00004    wait
+    mpi_barrier_              0.00004    wait
+    mpi_alltoall_             0.00000    wait
+    ─────────────────────────────────────────
     overlap: all communication is blocking — no comm/compute overlap possible. Consider nonblocking calls (Isend/Irecv or Iallreduce-style collectives) + compute + Wait.
  application: /home/junjie/vibe-coding/scilib-prof/tests/qe/qenv/bin/pw.x
  ranks: 1   max runtime (s): 1.971   imbalance: active   imb = (max-avg)/max

@@ -207,8 +207,12 @@ fn run(
             eprintln!("uaps: report written to {}", path.display());
         }
         None => {
+            // The target owns stdout — write our report to stderr (like `perf
+            // stat`) so it never mingles with the profiled program's output.
+            // `uaps run -- app > app.out 2> snap.txt` cleanly separates the two;
+            // for machine-readable JSON, use `-o file.json`.
             eprintln!();
-            print!("{report}");
+            eprint!("{report}");
         }
     }
 

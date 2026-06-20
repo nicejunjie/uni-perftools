@@ -255,11 +255,15 @@ def mpi_view(profile, out):
     out.append("\n══ MPI wait-state (call-type heuristic) ══")
     out.append("    synchronization/wait %6.4fs (%2.0f%%) | transfer/initiation %6.4fs (%2.0f%%)"
                % (wait_t, wait_t / total * 100, xfer_t, xfer_t / total * 100))
-    hdr = "    %-22s %10s %7s %6s" % ("call", "excl(s)", "class", "imb%")
+    # imb% is a cross-rank metric — omit it for a single-rank run (always 0%).
+    imb_col = nr >= 2
+    hdr = ("    %-22s %10s %7s %6s" % ("call", "excl(s)", "class", "imb%")) if imb_col \
+        else ("    %-22s %10s %7s" % ("call", "excl(s)", "class"))
     out.append(hdr)
     out.append(_rule(hdr))
     for t, cls, name, imb in rows[:10]:
-        out.append("    %-22s %10.5f %7s %5.0f%%" % (name[:22], t, cls, imb))
+        out.append(("    %-22s %10.5f %7s %5.0f%%" % (name[:22], t, cls, imb)) if imb_col
+                   else ("    %-22s %10.5f %7s" % (name[:22], t, cls)))
     out.append(_rule(hdr))
     # late-sender / load-imbalance signal: wait dominates AND a wait call is imbalanced
     wait_imb = max((imb for t, cls, name, imb in rows if cls == "wait"), default=0.0)

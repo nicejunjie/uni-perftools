@@ -60,9 +60,12 @@ OMP_NUM_THREADS=1 OPENBLAS_NUM_THREADS=1 \
   $UPAT roofline -o out/run_rf1 -- ./pw -in si.scf.in > out/qe.rf1.out
 $UPAT report out/run_rf1 --view roofline-func          > out/roofline_func.txt
 
-# the snapshot tier on its own (APS-style bird's-eye, no injection)
+# the snapshot tier on its own (APS-style bird's-eye, no injection).
+# uaps writes its report to STDERR (the target owns stdout, like `perf stat`),
+# so redirect 2> to capture just the snapshot — the program's stdout stays clean.
 OMP_NUM_THREADS=8 OPENBLAS_NUM_THREADS=8 \
-  $UAPS run -- qenv/bin/mpirun -np 2 --bind-to core --map-by socket:PE=8 ./pw -in si.scf.in
+  $UAPS run -- qenv/bin/mpirun -np 2 --bind-to core --map-by socket:PE=8 ./pw -in si.scf.in \
+    > qe.out 2> snapshot.txt
 ```
 
 Reporting options (calls aggregate over input sizes by default):
