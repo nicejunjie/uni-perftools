@@ -1,0 +1,6 @@
+pmu-events JSON vendored from the Linux kernel perf source.
+Provenance: torvalds/linux@1a3746ccbb0a97bed3c06ccde6b880013b1dddc1
+Path: tools/perf/pmu-events/arch/{x86,arm64}
+License: GPL-2.0 (as in the kernel tree).
+These files are DATA (event codes + metric formulas); the uaps engine reads
+them + the kernel /sys/devices/<pmu>/format/* layout — nothing is hand-coded.
