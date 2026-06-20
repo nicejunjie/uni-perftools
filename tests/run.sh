@@ -58,6 +58,9 @@ if [ "$HAVE_MPI" = 1 ]; then
   ok "mpi: wait-state view"         "echo \"$MOUT\" | grep -q 'MPI wait-state'"
   ok "mpi: sync vs transfer split"  "echo \"$MOUT\" | grep -q 'synchronization/wait'"
   ok "mpi: comm/compute overlap"    "echo \"$MOUT\" | grep -q 'overlap:'"
+  AOUT=$(OMPI_MCA_rmaps_base_oversubscribe=1 "$DRV" report "$TMP/r2" --view anomaly 2>/dev/null)
+  ok "anomaly: variance view"       "echo \"$AOUT\" | grep -q 'Anomaly / variance'"
+  ok "anomaly: per-call variance"   "echo \"$AOUT\" | grep -q 'most variable call:'"
 fi
 
 rm -rf "$TMP"

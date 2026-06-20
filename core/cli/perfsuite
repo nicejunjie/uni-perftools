@@ -91,7 +91,7 @@ def main():
     ap = argparse.ArgumentParser(prog="perfsuite")
     sub = ap.add_subparsers(dest="verb", required=True)
     VIEWS = ["all", "hotspots", "roofline", "microarch", "memory", "imbalance",
-             "threading", "mpi", "vectorization"]
+             "threading", "mpi", "vectorization", "anomaly"]
     for name in ("collect", "run"):
         p = sub.add_parser(name)
         p.add_argument("--dbi", action="store_true", help="profile via Frida backend")

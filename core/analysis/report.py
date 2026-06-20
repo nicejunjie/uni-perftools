@@ -25,7 +25,8 @@ VIEWS = {
     "mpi":       lambda snap, prof, out: viewpoints.mpi_view(prof, out),
     "vectorization": lambda snap, prof, out: viewpoints.vectorization_view(snap, prof, out),
 }
-VIEW_ORDER = ["roofline", "microarch", "memory", "vectorization", "threading", "mpi", "imbalance"]
+VIEW_ORDER = ["roofline", "microarch", "memory", "vectorization", "threading",
+              "mpi", "imbalance", "anomaly"]
 
 PROFILE_REPORT = os.path.join(_ROOT, "collectors", "profile", "tools", "scilib-report.py")
 
@@ -99,11 +100,13 @@ def render(result_dir, fmt="text", view="all"):
     # analysis viewpoints (recipes over the result)
     sel = VIEW_ORDER if view in ("all", None) else [view]
     for v in sel:
-        if v in VIEWS:
-            try:
+        try:
+            if v == "anomaly":                       # needs raw per-rank files
+                viewpoints.anomaly_view(result_dir, out)
+            elif v in VIEWS:
                 VIEWS[v](snap, profile, out)
-            except Exception as e:
-                out.append("\n(%s viewpoint failed: %s)" % (v, e))
+        except Exception as e:
+            out.append("\n(%s viewpoint failed: %s)" % (v, e))
     print("\n".join(out))
 
     if profs and view in ("all", "hotspots", None):

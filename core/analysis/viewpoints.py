@@ -5,6 +5,8 @@ changes): snapshot counters (snap.json) + profile attribution (prof.*.json).
 import os
 import re
 import sys
+import json
+import math
 _HERE = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, os.path.join(os.path.dirname(_HERE), "contract"))
 sys.path.insert(0, os.path.join(os.path.dirname(_HERE), "roofline"))
@@ -13,6 +15,13 @@ import roofline   # noqa: E402
 
 ELSIZE = {"s": 4, "d": 8, "c": 8, "z": 16}   # bytes per element by BLAS type char
 FACTOR = {"s": 2, "d": 2, "c": 8, "z": 8}    # flops per mul-add
+
+
+def _load_json(path):
+    try:
+        return json.load(open(path))
+    except Exception:
+        return None
 
 
 def _m(snap, key):
@@ -235,6 +244,81 @@ def mpi_view(profile, out):
     elif has_nb:
         out.append("    overlap: nonblocking comm in use with low Wait* time — "
                    "good comm/compute overlap.")
+
+
+# ------------------------------------------------------- anomaly / variance
+def _stats(xs):
+    n = len(xs)
+    mean = sum(xs) / n
+    var = sum((x - mean) ** 2 for x in xs) / n
+    return mean, math.sqrt(var)
+
+
+def _median(xs):
+    s = sorted(xs)
+    n = len(s)
+    return s[n // 2] if n % 2 else (s[n // 2 - 1] + s[n // 2]) / 2.0
+
+
+def anomaly_view(result_dir, out):
+    """Cross-rank outlier + variance detection from the raw per-rank profiles.
+    Surfaces the rank(s) deviating from the pack and the call that varies most
+    across ranks — the signal that says *which* rank/region to chase."""
+    profs = contract.prof_glob(result_dir)
+    ranks = []
+    for p in profs:
+        d = _load_json(p)
+        if d is None:
+            continue
+        busy = sum(f.get("t_excl", 0.0) for f in d.get("functions", []))
+        per_fn = {f.get("function", ""): f.get("t_excl", 0.0) for f in d.get("functions", [])}
+        ranks.append({"rank": d.get("rank", 0), "busy": busy, "fns": per_fn})
+    if len(ranks) < 3:                     # <3 ranks → use the imbalance view instead
+        return
+    busies = [r["busy"] for r in ranks]
+    mean, _ = _stats(busies)
+    mx, mn = max(busies), min(busies)
+    if mean <= 0:
+        return
+    out.append("\n══ Anomaly / variance (across %d ranks) ══" % len(ranks))
+    spread = (mx - mn) / mx * 100.0 if mx else 0.0
+    out.append("    per-rank busy time: min %.4fs  max %.4fs  median %.4fs  spread %.0f%%"
+               % (mn, mx, _median(busies), spread))
+    # robust outlier test: median + MAD (resistant to the outlier inflating σ).
+    med = _median(busies)
+    mad = _median([abs(b - med) for b in busies])
+    worst = max(ranks, key=lambda r: abs(r["busy"] - med))
+    dev = abs(worst["busy"] - med)
+    if mad > 0:
+        mz = 0.6745 * dev / mad           # modified z-score
+        flag = mz > 3.5
+        detail = "%.1f modified-z" % mz
+    else:                                  # ties at the median → use relative gap
+        flag = med > 0 and dev / med > 0.25
+        detail = "%.0f%% off median" % (dev / med * 100.0 if med else 0)
+    if flag and dev / med > 0.1:
+        side = "slower" if worst["busy"] > med else "faster"
+        out.append("    → rank %d is an outlier: %.0f%% %s than the median (%s)"
+                   % (worst["rank"], dev / med * 100.0, side, detail))
+    else:
+        out.append("    → no outlier rank (all within the pack).")
+    # call with the highest cross-rank variability (present on >=half the ranks)
+    allfns = set().union(*(r["fns"].keys() for r in ranks))
+    best = None
+    for fn in allfns:
+        vals = [r["fns"].get(fn, 0.0) for r in ranks]
+        present = [v for v in vals if v > 0]
+        if len(present) < len(ranks) / 2:
+            continue
+        fmean, fsd = _stats(vals)
+        if fmean <= 1e-4:                  # ignore sub-0.1ms noise
+            continue
+        cv = fsd / fmean
+        if best is None or cv > best[0]:
+            best = (cv, fn, min(vals), max(vals))
+    if best and best[0] > 0.15:
+        out.append("    most variable call: %s (CV %.0f%%, %.4f..%.4fs across ranks)"
+                   % (best[1][:24], best[0] * 100.0, best[2], best[3]))
 
 
 # ----------------------------------------------------------- vectorization
