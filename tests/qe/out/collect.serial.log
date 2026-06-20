@@ -1,0 +1,3 @@
+[perfsuite] collecting: ./pw -in si.scf.in
+uaps: report written to out/run_serial/snap.json
+[perfsuite] result: out/run_serial  (perfsuite report out/run_serial)

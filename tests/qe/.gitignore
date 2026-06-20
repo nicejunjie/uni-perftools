@@ -1,0 +1,8 @@
+# Large downloaded / extracted workloads (regenerable — see README.md)
+qenv/
+local/
+pkg/
+*.deb
+# QE scratch + raw per-run result dirs (regenerable); rendered reports are kept
+scratch/
+out/run_*/

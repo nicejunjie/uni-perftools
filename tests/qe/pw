@@ -1,0 +1,4 @@
+#!/bin/sh
+# Self-contained pw.x launcher (conda-forge QE under tests/qe/qenv).
+HERE=$(dirname "$(readlink -f "$0")")
+exec "$HERE/qenv/bin/pw.x" "$@"

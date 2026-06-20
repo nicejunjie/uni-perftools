@@ -1,0 +1,1249 @@
+==============================================================================
+                        Performance Suite  (snapshot + profile)
+==============================================================================
+ command: qenv/bin/mpirun -np 2 ./pw -in si.scf.in
+
+── SNAPSHOT  (bird's-eye: hardware counters / roofline) ──────────────────────
+    Elapsed time 3.557 s   |   Physical core utilization 0.0%
+    IPC (instructions/cycle) 1.02   |   CPI (cycles/instruction) 0.98
+    Memory bound 32.6%   |   DRAM-bound (of demand fills) 20.6%
+    NUMA remote access 0.0%   |   Memory footprint (peak RSS) 12.7 MiB
+    Disk read 0 B   |   Disk write 332.0 KiB
+
+── INSIGHTS  (combined snapshot + profile) ───────────────────────────────────
+  ▶ Memory-bound (33% of slots) — improve data locality / working-set size.
+  ▶ MPI is 35% of time — communication-heavy; enlarge messages / overlap comm with compute.
+  ▶ zgemv_[m=574,n=8] is 34% load-imbalanced across ranks — uneven work distribution.
+
+══ Roofline (whole program) ══
+  Roofline (empirical peaks for AMD Ryzen 9 9950X 16-Core Processor):
+    peak compute  FP64 1112 | FP32 2261 GFLOP/s   peak BW 53 GB/s
+    ridge AI  FP64 20.85 | FP32 42.41 FLOP/byte  (point judged vs its own precision)
+    point                  prec       AI    GFLOP/s    ceiling    %peak  bound
+    whole-program (measure   DP     0.00        0.0        0.0       0%  memory
+    whole program is memory-bound at 0% of the DP ceiling.
+    (per-function roofline → future profile two-pass: survey hotspots, then characterize)
+
+══ Microarchitecture (top-down pipeline slots) ══
+    retiring (useful)   19.6%
+    frontend-bound      51.6%
+    backend-bound       24.4%
+      └ memory          22.7%
+      └ core             1.7%
+    bad speculation      4.0%
+    IPC                1.02
+    CPI                0.98
+
+══ Memory access ══
+    cache-miss rate        24.3%
+    LLC MPKI               16.29 MPKI
+    DRAM fills / 1K-instr  1.07 DPKI
+    DRAM-bound             20.6%
+    NUMA remote access     0.0%
+    memory-bound (slots)   32.6%
+    peak RSS               12.7 MiB
+
+══ Vectorization ══
+    FP efficiency 0.0% of vector peak (0 / 1112 GFLOP/s)
+    → FP throughput far below vector peak in compute-bound code: likely scalar / under-vectorized (or a reference library).
+    confirm SIMD per loop with a compiler vec report (gcc -fopt-info-vec / icc -qopt-report=5) and build -O3 -march=native.
+
+══ Threading ══
+    threads 3 | avg cores used 0.00 | parallel efficiency 0%
+
+══ Load imbalance (across 2 ranks, ranked by recoverable time) ══
+    function                   imb% avg excl(s)   recover(s)
+    fftw_execute_dft            14%     0.9214       0.1266
+    zgemv_[m=574,n=8]           34%     0.0112       0.0038
+    zgemv_[m=573,n=8]           44%     0.0083       0.0037
+    zgemv_[m=578,n=8]           20%     0.0171       0.0035
+    zgemv_[m=576,n=8]           41%     0.0068       0.0028
+    zgemv_[m=581,n=8]           29%     0.0063       0.0018
+    zgemv_[m=584,n=8]           11%     0.0061       0.0007
+
+── PROFILE  (drill-down: sampling + sci-lib + MPI tracing) ───────────────────
+
+================================================================================
+                      Scientific Library Profiler
+================================================================================
+ application: /home/junjie/vibe-coding/scilib-prof/tests/qe/qenv/bin/pw.x
+ ranks: 2   max runtime (s): 3.460   imbalance: active   imb = (max-avg)/max
+
+Table 1:  Profile by Function Group  (sampling @ 1000 Hz, 2 PEs)
+          time charged to the highest-level group on each sample's stack
+
+   Samp%      Samp  Imb.Samp  Imb.Samp%  Group
+ ----------------------------------------------------------------------
+ 100.0%     26419       7.5      0.1%  Total
+ ----------------------------------------------------------------------
+  48.1%     12719      77.5      1.2%  ETC
+  35.4%      9357      54.5      1.2%  MPI
+   8.0%      2110     220.0     17.3%  FFTW
+   6.7%      1779     115.5     11.5%  USER
+   1.7%       454      20.0      8.1%  BLAS
+
+  Top functions (inclusive)
+  ------------------------------------------------------------------------------
+   Samp%      Samp  Imb.Samp  Imb.Samp%  Function
+ ------------------------------------------------------------------------------
+  75.7%     19998      42.0      0.4%  tramp  [ETC]
+  75.7%     19998      42.0      0.4%  start_thread  [ETC]
+  75.7%     19998      42.0      0.4%  clone3  [ETC]
+  29.0%      7668     159.0      4.0%  do_spin  [ETC]
+  25.8%      6806       9.0      0.3%  cuEGLApiInit  [ETC]
+  25.8%      6806       9.0      0.3%  cuVDPAUCtxCreate  [ETC]
+  25.7%      6793       8.5      0.2%  __GI___poll  [ETC]
+  25.6%      6757       7.5      0.2%  epoll_wait  [ETC]
+  25.6%      6757       6.5      0.2%  event_base_loop  [ETC]
+  25.6%      6757       6.5      0.2%  progress_engine  [MPI]
+  25.6%      6751       7.5      0.2%  epoll_dispatch  [ETC]
+  24.3%      6408      34.0      1.1%  MAIN__  [USER]
+
+  Top functions (self)
+  ------------------------------------------------------------------------------
+   Samp%      Samp  Imb.Samp  Imb.Samp%  Function
+ ------------------------------------------------------------------------------
+  28.4%      7509     143.5      3.7%  do_spin  wait.h:56
+  25.7%      6793       8.5      0.2%  __GI___poll  poll.c:29
+  25.6%      6757       7.5      0.2%  epoll_wait  epoll_wait.c:30
+   2.0%       534      21.0      7.3%  mca_btl_sm_component_progress  btl_sm_component.c:?
+   1.9%       495       1.5      0.6%  mca_part_persist_progress  part_persist.c:?
+   1.8%       480      25.0      9.4%  n1bv_32  n1bv_32.c:?
+   1.7%       455      80.5     26.1%  __futex_wait  futex.h:39
+   1.4%       375       0.5      0.3%  lll_mutex_unlock_optimized  pthread_mutex_unlock.c:43
+   1.4%       364      13.0      6.7%  lll_mutex_lock_optimized  pthread_mutex_lock.c:48
+   1.1%       289       1.5      1.0%  exec_blas_async_wait  libopenblasp-r0.3.33.so
+   1.0%       274       5.0      3.5%  n1fv_32  n1fv_32.c:?
+   0.7%       193      30.5     24.0%  __fft_scatter_2d_MOD_fft_scatter  pw.x
+
+Table 2:  Library calls by group and function  (tracing)
+
+  Compute (BLAS / LAPACK / PBLAS / ScaLAPACK / CBLAS / LAPACKe / FFTW)
+  ------------------------------------------------------------------------------
+   group     function                   count[imb]     incl(s)     excl(s)
+  ------------------------------------------------------------------------------
+   FFTW      fftw_execute_dft             24942  0.0%      0.9214      0.9214
+   BLAS      zgemv_[m=567,n=8]               26  0.0%      0.0327      0.0327
+   BLAS      zgemv_[m=587,n=8]               14  0.0%      0.0195      0.0195
+   BLAS      zgemv_[m=578,n=8]               26  1.9%      0.0171      0.0171
+   BLAS      zgemv_[m=591,n=8]               12  0.0%      0.0150      0.0150
+   BLAS      zgemv_[m=563,n=8]               10  0.0%      0.0121      0.0121
+   BLAS      zgemv_[m=574,n=8]                7 22.2%      0.0112      0.0112
+   BLAS      zgemv_[m=566,n=8]                5  0.0%      0.0103      0.0103
+   BLAS      zgemv_[m=585,n=8]               10  0.0%      0.0101      0.0101
+   BLAS      zgemv_[m=561,n=8]                7  0.0%      0.0092      0.0092
+   BLAS      zgemv_[m=588,n=8]                7  0.0%      0.0089      0.0089
+   BLAS      zgemv_[m=586,n=8]               12  0.0%      0.0084      0.0084
+   BLAS      zgemv_[m=573,n=8]                7 41.7%      0.0083      0.0083
+   BLAS      zgemv_[m=590,n=8]                5  0.0%      0.0071      0.0071
+   BLAS      zgemv_[m=576,n=8]                7 30.0%      0.0068      0.0068
+   BLAS      zgemv_[m=581,n=8]                8  5.6%      0.0063      0.0063
+   BLAS      zgemv_[m=584,n=8]                9 35.7%      0.0061      0.0061
+   BLAS      zgemv_[m=594,n=8]                7  0.0%      0.0058      0.0058
+   BLAS      zgemv_[m=580,n=8]                6  0.0%      0.0057      0.0057
+   BLAS      zgemv_[m=570,n=8]                7  0.0%      0.0057      0.0057
+   LAPACK    dlaebz_                       3198  0.0%      0.0049      0.0049
+   BLAS      zgemv_[m=562,n=8]                4  0.0%      0.0047      0.0047
+   BLAS      zgemv_[m=595,n=8]                9  0.0%      0.0042      0.0042
+   BLAS      zgemv_[m=572,n=8]                5 28.6%      0.0040      0.0040
+   LAPACK    zstein_                       1066  0.0%      0.0059      0.0040
+   BLAS      zgemv_[m=555,n=8]                1  0.0%      0.0040      0.0040
+   BLAS      zgemv_[m=575,n=8]                6 25.0%      0.0035      0.0035
+   BLAS      zgemv_[m=583,n=8]                8  0.0%      0.0034      0.0034
+   LAPACK    zhegs2_                       1366  0.0%      0.0045      0.0033
+   BLAS      zgemv_[m=569,n=8]                6  0.0%      0.0032      0.0032
+   BLAS      zgemv_[m=560,n=8]                3  0.0%      0.0029      0.0029
+   BLAS      zgemv_[m=579,n=8]                4  0.0%      0.0027      0.0027
+   BLAS      zgemv_[m=589,n=8]                4  0.0%      0.0022      0.0022
+   BLAS      zgemv_[m=593,n=8]                3  0.0%      0.0018      0.0018
+   BLAS      zgemv_[m=571,n=8]                4  0.0%      0.0018      0.0018
+   LAPACK    zlarf1l_                      7799  0.0%      0.0024      0.0018
+   BLAS      zgemv_[m=554,n=8]                3  0.0%      0.0018      0.0018
+   LAPACK    zhetd2_                       1366  0.0%      0.0060      0.0018
+   LAPACK    zlanhe_                       1366  0.0%      0.0018      0.0018
+   BLAS      zgemv_[m=577,n=8]                3 25.0%      0.0016      0.0016
+   LAPACK    zlarfg_                       7799  0.0%      0.0032      0.0015
+   BLAS      zgemv_[m=592,n=8]                3  0.0%      0.0014      0.0014
+   BLAS      zgemv_[m=557,n=8]                3  0.0%      0.0011      0.0011
+   BLAS      zher2_                       15598  0.0%      0.0011      0.0011
+   LAPACK    dladiv_                       7799  0.0%      0.0010      0.0010
+   BLAS      zgemm_[m=567,n=4,k=8]          267  0.0%      0.0010      0.0010
+   BLAS      zgemm_[m=578,n=4,k=8]          250  6.5%      0.0009      0.0009
+   BLAS      zgemm_[m=8,n=4,k=567]          245  0.0%      0.0009      0.0009
+   BLAS      zgemm_[m=8,n=4,k=578]          228  7.1%      0.0009      0.0009
+   LAPACK    dlagts_                      12792  0.0%      0.0008      0.0008
+   BLAS      zgemm_[m=587,n=4,k=8]          228  0.0%      0.0008      0.0008
+   BLAS      zgemm_[m=8,n=4,k=587]          210  0.0%      0.0008      0.0008
+   BLAS      zgemm_[m=4,n=4,k=570]           42  0.0%      0.0007      0.0007
+   BLAS      zgemm_[m=563,n=4,k=8]          192  0.0%      0.0007      0.0007
+   BLAS      zgemm_[m=8,n=4,k=563]          176  0.0%      0.0006      0.0006
+   BLAS      zgemm_[m=595,n=4,k=8]          158  0.0%      0.0006      0.0006
+   BLAS      zgemm_[m=8,n=4,k=595]          140  0.0%      0.0005      0.0005
+   BLAS      zgemm_[m=586,n=4,k=8]          150  0.0%      0.0005      0.0005
+   LAPACK    zheevx_                       1066  0.0%      0.0216      0.0005
+   BLAS      zgemm_[m=8,n=4,k=586]          140  0.0%      0.0005      0.0005
+   BLAS      zgemm_[m=4,n=8,k=567]          154  0.0%      0.0005      0.0005
+   LAPACK    zhegvx_                       1066  0.0%      0.0272      0.0005
+   BLAS      zgemm_[m=4,n=8,k=578]          143  7.1%      0.0005      0.0005
+   LAPACK    zsteqr_                        300  0.0%      0.0008      0.0005
+   BLAS      zgemm_[m=573,n=4,k=8]          134 10.1%      0.0005      0.0005
+   BLAS      zgemm_[m=8,n=4,k=573]          122 12.5%      0.0005      0.0005
+   BLAS      ztrsv_                        7799  0.0%      0.0005      0.0005
+   LAPACK    zpotrf_                       1366  0.0%      0.0005      0.0005
+   LAPACK    dstebz_                       1066  0.0%      0.0054      0.0005
+   BLAS      zgemm_[m=591,n=4,k=8]          121  0.0%      0.0005      0.0005
+   BLAS      zgemm_[m=4,n=8,k=587]          132  0.0%      0.0004      0.0004
+   BLAS      zgemm_[m=594,n=4,k=8]          119  0.0%      0.0004      0.0004
+   BLAS      zgemm_[m=570,n=4,k=8]          115  0.0%      0.0004      0.0004
+   BLAS      zhemv_                        7799  0.0%      0.0004      0.0004
+   BLAS      zgemm_[m=8,n=4,k=580]          106  0.0%      0.0004      0.0004
+   BLAS      zgemm_[m=580,n=4,k=8]          116  0.0%      0.0004      0.0004
+   BLAS      zgemm_[m=585,n=4,k=8]          114  0.0%      0.0004      0.0004
+   BLAS      zgemm_[m=8,n=4,k=594]          105  0.0%      0.0004      0.0004
+   BLAS      zgemm_[m=8,n=4,k=591]          105  0.0%      0.0004      0.0004
+   BLAS      zgemm_[m=8,n=4,k=585]          105  0.0%      0.0004      0.0004
+   BLAS      zgemm_[m=581,n=4,k=8]          100 15.7%      0.0004      0.0004
+   BLAS      zgemm_[m=8,n=4,k=570]          105  0.0%      0.0004      0.0004
+   BLAS      zgemm_[m=4,n=8,k=563]          112  0.0%      0.0004      0.0004
+   LAPACK    zunm2l_                       1066  0.0%      0.0025      0.0004
+   LAPACK    zladiv_                       7799  0.0%      0.0013      0.0004
+   BLAS      zgemm_[m=8,n=4,k=581]           88 17.0%      0.0003      0.0003
+   BLAS      ztrsm_[m=8,n=4]                769  0.0%      0.0003      0.0003
+   BLAS      zgemm_[m=4,n=4,k=4]           2164  0.0%      0.0003      0.0003
+   BLAS      zgemm_[m=4,n=8,k=595]           88  0.0%      0.0003      0.0003
+   BLAS      zgemm_[m=4,n=8,k=586]           88  0.0%      0.0003      0.0003
+   BLAS      zgemm_[m=584,n=4,k=8]           80 32.4%      0.0003      0.0003
+   BLAS      zgemm_[m=588,n=4,k=8]           80  0.0%      0.0003      0.0003
+   BLAS      zgemm_[m=571,n=4,k=8]           76  0.0%      0.0003      0.0003
+   BLAS      zgemm_[m=567,n=4,k=4]          154  0.0%      0.0003      0.0003
+   BLAS      zgemm_[m=592,n=4,k=8]           78  0.0%      0.0003      0.0003
+   BLAS      zgemm_[m=574,n=4,k=8]           78  3.1%      0.0003      0.0003
+   BLAS      zgemm_[m=575,n=4,k=8]           77  0.0%      0.0003      0.0003
+   BLAS      zgemm_[m=8,n=4,k=584]           70 33.3%      0.0003      0.0003
+   BLAS      zgemm_[m=8,n=4,k=589]           71  0.0%      0.0003      0.0003
+   BLAS      zgemm_[m=579,n=4,k=8]           76 32.7%      0.0003      0.0003
+   BLAS      zgemm_[m=576,n=4,k=8]           78 32.6%      0.0003      0.0003
+   BLAS      zgemm_[m=561,n=4,k=8]           78  0.0%      0.0003      0.0003
+   LAPACK    dlaruv_                       4264  0.0%      0.0003      0.0003
+   BLAS      zgemm_[m=578,n=4,k=4]          143  7.1%      0.0003      0.0003
+   BLAS      zgemm_[m=8,n=4,k=579]           69 33.0%      0.0003      0.0003
+   BLAS      zgemm_[m=8,n=4,k=574]           70  0.7%      0.0003      0.0003
+   BLAS      zgemm_[m=589,n=4,k=8]           76  0.0%      0.0003      0.0003
+   BLAS      zgemm_[m=8,n=4,k=575]           70  0.7%      0.0003      0.0003
+   BLAS      zgemm_[m=8,n=4,k=588]           70  0.0%      0.0003      0.0003
+   BLAS      zgemm_[m=564,n=4,k=8]           77  0.0%      0.0003      0.0003
+   BLAS      zgemm_[m=8,n=4,k=576]           70 33.3%      0.0003      0.0003
+   BLAS      zgemm_[m=583,n=4,k=8]           75  0.0%      0.0003      0.0003
+   BLAS      zgemm_[m=562,n=4,k=8]           76  0.0%      0.0003      0.0003
+   BLAS      zgemm_[m=8,n=4,k=571]           71  0.0%      0.0003      0.0003
+   BLAS      zgemm_[m=8,n=4,k=592]           70  0.0%      0.0003      0.0003
+   BLAS      zgemm_[m=4,n=8,k=573]           77 12.5%      0.0003      0.0003
+   BLAS      zgemm_[m=8,n=4,k=583]           70  0.0%      0.0003      0.0003
+   BLAS      zgemm_[m=587,n=4,k=4]          132  0.0%      0.0003      0.0003
+   BLAS      zgemm_[m=8,n=4,k=561]           70  0.0%      0.0003      0.0003
+   BLAS      zgemm_[m=8,n=4,k=564]           70  0.0%      0.0003      0.0003
+   BLAS      zgemm_[m=8,n=4,k=562]           70  0.0%      0.0002      0.0002
+   BLAS      zgemm_[m=4,n=8,k=570]           66  0.0%      0.0002      0.0002
+   BLAS      zgemm_[m=4,n=8,k=574]           43  2.3%      0.0002      0.0002
+   BLAS      zgemm_[m=4,n=8,k=580]           68  0.0%      0.0002      0.0002
+   BLAS      zgemm_[m=4,n=8,k=591]           66  0.0%      0.0002      0.0002
+   BLAS      zgemm_[m=4,n=8,k=594]           66  0.0%      0.0002      0.0002
+   BLAS      zgemm_[m=4,n=8,k=585]           66  0.0%      0.0002      0.0002
+   BLAS      ddot_                         3225  0.0%      0.0002      0.0002
+   BLAS      zgemm_[m=572,n=4,k=8]           58 25.9%      0.0002      0.0002
+   BLAS      zgemm_[m=4,n=4,k=567]           98  0.0%      0.0002      0.0002
+   LAPACK    dlarnv_                       4264  0.0%      0.0005      0.0002
+   BLAS      zgemm_[m=577,n=4,k=8]           58 25.3%      0.0002      0.0002
+   BLAS      zgerc_                        6433  0.0%      0.0002      0.0002
+   BLAS      zgemm_[m=8,n=4,k=577]           52 25.0%      0.0002      0.0002
+   BLAS      zgemm_[m=8,n=4,k=572]           52 25.0%      0.0002      0.0002
+   BLAS      zgemm_[m=563,n=4,k=4]          112  0.0%      0.0002      0.0002
+   LAPACK    dlagtf_                       4264  0.0%      0.0002      0.0002
+   BLAS      zgemm_[m=4,n=4,k=578]           91  7.1%      0.0002      0.0002
+   BLAS      zgemm_[m=4,n=8,k=581]           56 17.6%      0.0002      0.0002
+   LAPACK    dlapy3_                       7799  0.0%      0.0002      0.0002
+   BLAS      zgemm_[m=4,n=4,k=587]           84  0.0%      0.0002      0.0002
+   BLAS      zgemm_[m=595,n=4,k=4]           88  0.0%      0.0002      0.0002
+   LAPACK    dlapy2_                       1576  0.0%      0.0002      0.0002
+   BLAS      zgemv_[m=564,n=8]                1  0.0%      0.0002      0.0002
+   LAPACK    zunmtr_                       1066  0.0%      0.0028      0.0002
+   BLAS      zgemm_[m=586,n=4,k=4]           88  0.0%      0.0002      0.0002
+   BLAS      zgemm_[m=4,n=8,k=589]           46  0.0%      0.0002      0.0002
+   BLAS      zgemm_[m=4,n=8,k=571]           46  0.0%      0.0002      0.0002
+   LAPACK    zunmql_                       1066  0.0%      0.0026      0.0002
+   LAPACK    zhegst_                       1366  0.0%      0.0047      0.0002
+   BLAS      zgemm_[m=4,n=8,k=592]           44  0.0%      0.0002      0.0002
+   BLAS      zgemm_[m=582,n=4,k=8]           39  0.0%      0.0002      0.0002
+   BLAS      zgemm_[m=4,n=8,k=575]           45  2.2%      0.0001      0.0001
+   BLAS      zgemm_[m=593,n=4,k=8]           38  0.0%      0.0001      0.0001
+   BLAS      zgemm_[m=4,n=8,k=588]           44  0.0%      0.0001      0.0001
+   BLAS      zgemm_[m=4,n=8,k=584]           44 33.3%      0.0001      0.0001
+   LAPACK    zhetrd_                       1366  0.0%      0.0061      0.0001
+   BLAS      zgemm_[m=4,n=4,k=563]           70  0.0%      0.0001      0.0001
+   BLAS      zgemm_[m=4,n=8,k=561]           44  0.0%      0.0001      0.0001
+   BLAS      zgemm_[m=4,n=8,k=576]           44 33.3%      0.0001      0.0001
+   BLAS      zgemm_[m=4,n=8,k=562]           44  0.0%      0.0001      0.0001
+   BLAS      zgemm_[m=4,n=8,k=583]           44  0.0%      0.0001      0.0001
+   BLAS      zgemm_[m=8,n=4,k=590]           35  0.0%      0.0001      0.0001
+   BLAS      zgemm_[m=573,n=4,k=4]           77 12.5%      0.0001      0.0001
+   BLAS      zgemm_[m=4,n=8,k=564]           44  0.0%      0.0001      0.0001
+   BLAS      zgemm_[m=4,n=8,k=579]           42 32.3%      0.0001      0.0001
+   BLAS      zgemm_[m=569,n=4,k=8]           38  0.0%      0.0001      0.0001
+   BLAS      zgemm_[m=547,n=4,k=8]           37  0.0%      0.0001      0.0001
+   BLAS      zgemm_[m=8,n=4,k=582]           36  0.0%      0.0001      0.0001
+   BLAS      zgemm_[m=580,n=4,k=4]           68  0.0%      0.0001      0.0001
+   BLAS      zgemm_[m=555,n=4,k=8]           38  0.0%      0.0001      0.0001
+   BLAS      zgemm_[m=590,n=4,k=8]           38  0.0%      0.0001      0.0001
+   LAPACK    zhegv_                         300  0.0%      0.0030      0.0001
+   BLAS      zgemm_[m=602,n=4,k=8]           37  0.0%      0.0001      0.0001
+   BLAS      zgemm_[m=8,n=4,k=602]           35  0.0%      0.0001      0.0001
+   BLAS      zaxpy_                       23397  0.0%      0.0001      0.0001
+   BLAS      zgemm_[m=557,n=4,k=8]           38  0.0%      0.0001      0.0001
+   BLAS      zgemm_[m=554,n=4,k=8]           38  0.0%      0.0001      0.0001
+   BLAS      zgemm_[m=8,n=4,k=593]           35  0.0%      0.0001      0.0001
+   BLAS      zgemm_[m=566,n=4,k=8]           37  0.0%      0.0001      0.0001
+   BLAS      zgemm_[m=560,n=4,k=8]           38  0.0%      0.0001      0.0001
+   BLAS      zgemm_[m=559,n=4,k=8]           37  0.0%      0.0001      0.0001
+   BLAS      zgemm_[m=594,n=4,k=4]           66  0.0%      0.0001      0.0001
+   BLAS      zgemm_[m=591,n=4,k=4]           66  0.0%      0.0001      0.0001
+   BLAS      zgemm_[m=8,n=4,k=569]           35  0.0%      0.0001      0.0001
+   BLAS      zgemm_[m=570,n=4,k=4]           66  0.0%      0.0001      0.0001
+   BLAS      zgemm_[m=8,n=4,k=547]           35  0.0%      0.0001      0.0001
+   BLAS      zgemm_[m=585,n=4,k=4]           66  0.0%      0.0001      0.0001
+   BLAS      zgemm_[m=8,n=4,k=559]           35  0.0%      0.0001      0.0001
+   BLAS      zgemm_[m=8,n=4,k=566]           35  0.0%      0.0001      0.0001
+   BLAS      zgemm_[m=8,n=4,k=557]           35  0.0%      0.0001      0.0001
+   BLAS      zgemm_[m=8,n=4,k=560]           35  0.0%      0.0001      0.0001
+   BLAS      zgemm_[m=4,n=4,k=595]           56  0.0%      0.0001      0.0001
+   BLAS      zgemm_[m=8,n=4,k=555]           35  0.0%      0.0001      0.0001
+   BLAS      zgemm_[m=8,n=4,k=554]           35  0.0%      0.0001      0.0001
+   BLAS      zgemm_[m=4,n=4,k=586]           56  0.0%      0.0001      0.0001
+   BLAS      zscal_                        9765  0.0%      0.0001      0.0001
+   BLAS      zgemm_[m=8,n=8,k=567]           21  0.0%      0.0001      0.0001
+   BLAS      zgemm_[m=4,n=8,k=572]           33 25.0%      0.0001      0.0001
+   BLAS      zgemm_[m=4,n=8,k=577]           33 25.0%      0.0001      0.0001
+   BLAS      zgemm_[m=8,n=8,k=578]           20  7.1%      0.0001      0.0001
+   LAPACK    zheev_                         300  0.0%      0.0022      0.0001
+   BLAS      zgemm_[m=581,n=4,k=4]           56 17.6%      0.0001      0.0001
+   BLAS      zgemm_[m=4,n=4,k=573]           49 12.5%      0.0001      0.0001
+   BLAS      zgemm_[m=8,n=8,k=587]           18  0.0%      0.0001      0.0001
+   BLAS      idamax_                      14936 50.0%      0.0001      0.0001
+   BLAS      zgemm_[m=4,n=4,k=594]           42  0.0%      0.0001      0.0001
+   BLAS      ztrsm_[m=4,n=4]                300  0.0%      0.0001      0.0001
+   BLAS      zgemv_[m=1,n=4]               1066  0.0%      0.0001      0.0001
+   BLAS      zgemm_[m=571,n=4,k=4]           46  0.0%      0.0001      0.0001
+   BLAS      zgemm_[m=4,n=4,k=591]           42  0.0%      0.0001      0.0001
+   LAPACK    zlasr_                        1876  0.0%      0.0001      0.0001
+   BLAS      zgemm_[m=4,n=4,k=585]           42  0.0%      0.0001      0.0001
+   BLAS      zgemm_[m=4,n=4,k=580]           42  0.0%      0.0001      0.0001
+   LAPACK    zung2l_                        300  0.0%      0.0003      0.0001
+   BLAS      zgemm_[m=8,n=8,k=595]           12  0.0%      0.0001      0.0001
+   BLAS      zgemm_[m=589,n=4,k=4]           46  0.0%      0.0001      0.0001
+   BLAS      zgemm_[m=576,n=4,k=4]           44 33.3%      0.0001      0.0001
+   BLAS      zgemm_[m=575,n=4,k=4]           45  2.2%      0.0001      0.0001
+   BLAS      zgemm_[m=588,n=4,k=4]           44  0.0%      0.0001      0.0001
+   BLAS      zgemm_[m=592,n=4,k=4]           44  0.0%      0.0001      0.0001
+   BLAS      zgemm_[m=4,n=8,k=602]           22  0.0%      0.0001      0.0001
+   BLAS      zgemm_[m=584,n=4,k=4]           44 33.3%      0.0001      0.0001
+   BLAS      zgemm_[m=583,n=4,k=4]           44  0.0%      0.0001      0.0001
+   LAPACK    ilaenv_                       5852 50.0%      0.0001      0.0001
+   BLAS      zgemm_[m=4,n=8,k=582]           24  0.0%      0.0001      0.0001
+   BLAS      zgemm_[m=4,n=8,k=547]           22  0.0%      0.0001      0.0001
+   BLAS      zgemm_[m=561,n=4,k=4]           44  0.0%      0.0001      0.0001
+   BLAS      zgemm_[m=562,n=4,k=4]           44  0.0%      0.0001      0.0001
+   BLAS      zgemm_[m=564,n=4,k=4]           44  0.0%      0.0001      0.0001
+   BLAS      zgemm_[m=574,n=4,k=4]           43  2.3%      0.0001      0.0001
+   BLAS      zgemm_[m=8,n=8,k=563]           15  0.0%      0.0001      0.0001
+   BLAS      zgemm_[m=579,n=4,k=4]           42 32.3%      0.0001      0.0001
+   BLAS      zgemm_[m=1,n=5,k=578]           22  0.0%      0.0001      0.0001
+   BLAS      zgemm_[m=4,n=8,k=559]           22  0.0%      0.0001      0.0001
+   BLAS      zgemm_[m=1,n=5,k=567]           22  0.0%      0.0001      0.0001
+   BLAS      zgemm_[m=4,n=4,k=581]           35 16.7%      0.0001      0.0001
+   BLAS      zgemm_[m=4,n=8,k=593]           22  0.0%      0.0001      0.0001
+   BLAS      zgemm_[m=4,n=8,k=590]           22  0.0%      0.0001      0.0001
+   BLAS      zgemm_[m=4,n=8,k=569]           22  0.0%      0.0001      0.0001
+   BLAS      zgemm_[m=4,n=8,k=555]           22  0.0%      0.0001      0.0001
+   BLAS      zgemm_[m=4,n=8,k=557]           22  0.0%      0.0001      0.0001
+   BLAS      zgemm_[m=4,n=8,k=566]           22  0.0%      0.0001      0.0001
+   BLAS      zgemm_[m=4,n=8,k=560]           22  0.0%      0.0001      0.0001
+   BLAS      zgemm_[m=4,n=8,k=554]           22  0.0%      0.0001      0.0001
+   BLAS      zgemm_[m=4,n=4,k=571]           28  0.0%      0.0001      0.0001
+   BLAS      zgemm_[m=8,n=8,k=586]           12  0.0%      0.0001      0.0001
+   BLAS      zgemm_[m=4,n=4,k=584]           28 33.3%      0.0001      0.0001
+   BLAS      zgemm_[m=567,n=1,k=8]           26  0.0%      0.0001      0.0001
+   BLAS      zgemm_[m=3,n=7,k=594]           12  0.0%      0.0001      0.0001
+   BLAS      zgemm_[m=577,n=4,k=4]           33 25.0%      0.0001      0.0001
+   BLAS      zgemm_[m=578,n=1,k=8]           26  1.9%      0.0001      0.0001
+   BLAS      zgemm_[m=572,n=4,k=4]           33 25.0%      0.0001      0.0001
+   BLAS      zgemm_[m=4,n=4,k=588]           28  0.0%      0.0001      0.0001
+   BLAS      zgemm_[m=4,n=4,k=589]           28  0.0%      0.0001      0.0001
+   BLAS      zgemm_[m=4,n=4,k=592]           28  0.0%      0.0001      0.0001
+   BLAS      zgemm_[m=4,n=4,k=579]           28 33.3%      0.0001      0.0001
+   BLAS      zgemm_[m=4,n=4,k=574]           28  0.0%      0.0001      0.0001
+   BLAS      zgemm_[m=4,n=4,k=575]           28  0.0%      0.0001      0.0001
+   BLAS      zgemm_[m=4,n=4,k=576]           28 33.3%      0.0001      0.0001
+   BLAS      zgemm_[m=4,n=4,k=583]           28  0.0%      0.0001      0.0001
+   BLAS      zgemm_[m=4,n=4,k=561]           28  0.0%      0.0001      0.0001
+   BLAS      zgemm_[m=4,n=4,k=564]           28  0.0%      0.0001      0.0001
+   BLAS      zgemm_[m=4,n=4,k=562]           28  0.0%      0.0001      0.0001
+   BLAS      dcopy_                        6440 49.8%      0.0001      0.0001
+   BLAS      zgemm_[m=1,n=5,k=587]           16  0.0%      0.0001      0.0001
+   BLAS      zgemm_[m=8,n=8,k=573]           10 12.5%      0.0001      0.0001
+   BLAS      zgemm_[m=3,n=7,k=567]           12  0.0%      0.0001      0.0001
+   BLAS      dznrm2_                       7799  0.0%      0.0001      0.0001
+   BLAS      ztrsm_[m=6,n=4]                124  0.0%      0.0001      0.0001
+   BLAS      zgemm_[m=8,n=8,k=591]            9  0.0%      0.0001      0.0001
+   BLAS      zgemm_[m=8,n=8,k=594]            9  0.0%      0.0001      0.0001
+   LAPACK    zungtr_                        300  0.0%      0.0004      0.0001
+   BLAS      zdscal_                       7799  0.0%      0.0000      0.0000
+   BLAS      zgemm_[m=8,n=8,k=580]            9  0.0%      0.0000      0.0000
+   BLAS      zgemm_[m=8,n=8,k=585]            9  0.0%      0.0000      0.0000
+   BLAS      zgemm_[m=3,n=7,k=587]           10  0.0%      0.0000      0.0000
+   BLAS      zgemv_[m=4,n=4]                995  0.0%      0.0000      0.0000
+   BLAS      zgemm_[m=8,n=8,k=570]            9  0.0%      0.0000      0.0000
+   BLAS      zgemm_[m=1,n=7,k=567]           16  0.0%      0.0000      0.0000
+   BLAS      ztrsm_[m=7,n=4]                102  0.0%      0.0000      0.0000
+   BLAS      zgemm_[m=2,n=6,k=595]           20  0.0%      0.0000      0.0000
+   BLAS      zgemm_[m=582,n=4,k=4]           24  0.0%      0.0000      0.0000
+   BLAS      zgemm_[m=4,n=4,k=577]           21 25.0%      0.0000      0.0000
+   BLAS      zgemm_[m=4,n=4,k=572]           21 25.0%      0.0000      0.0000
+   BLAS      zgemm_[m=2,n=6,k=563]           20  0.0%      0.0000      0.0000
+   BLAS      zgemm_[m=1,n=5,k=595]           12  0.0%      0.0000      0.0000
+   BLAS      zgemm_[m=3,n=7,k=573]            9 10.0%      0.0000      0.0000
+   BLAS      zgemm_[m=8,n=8,k=584]            6 33.3%      0.0000      0.0000
+   BLAS      zgemm_[m=567,n=4,k=7]           12  0.0%      0.0000      0.0000
+   BLAS      zgemm_[m=1,n=5,k=591]           12  0.0%      0.0000      0.0000
+   BLAS      zgemm_[m=602,n=4,k=4]           22  0.0%      0.0000      0.0000
+   BLAS      zgemm_[m=8,n=8,k=581]            8 16.7%      0.0000      0.0000
+   BLAS      zgemm_[m=593,n=4,k=4]           22  0.0%      0.0000      0.0000
+   BLAS      zgemm_[m=590,n=4,k=4]           22  0.0%      0.0000      0.0000
+   BLAS      zgemv_[m=2,n=4]               1066  0.0%      0.0000      0.0000
+   BLAS      zgemm_[m=4,n=1,k=4]            340  0.0%      0.0000      0.0000
+   BLAS      zgemm_[m=1,n=7,k=578]           13  7.1%      0.0000      0.0000
+   BLAS      zgemm_[m=569,n=4,k=4]           22  0.0%      0.0000      0.0000
+   BLAS      zgemm_[m=566,n=4,k=4]           22  0.0%      0.0000      0.0000
+   BLAS      zgemm_[m=2,n=6,k=578]           18 10.0%      0.0000      0.0000
+   BLAS      zgemm_[m=2,n=6,k=587]           18  0.0%      0.0000      0.0000
+   BLAS      zgemm_[m=557,n=4,k=4]           22  0.0%      0.0000      0.0000
+   BLAS      zgemm_[m=559,n=4,k=4]           22  0.0%      0.0000      0.0000
+   BLAS      zgemm_[m=554,n=4,k=4]           22  0.0%      0.0000      0.0000
+   BLAS      zgemm_[m=555,n=4,k=4]           22  0.0%      0.0000      0.0000
+   LAPACK    zungql_                        300  0.0%      0.0004      0.0000
+   BLAS      zgemm_[m=8,n=2,k=587]           11  0.0%      0.0000      0.0000
+   BLAS      zgemm_[m=560,n=4,k=4]           22  0.0%      0.0000      0.0000
+   BLAS      zgemm_[m=547,n=4,k=4]           22  0.0%      0.0000      0.0000
+   BLAS      zgemm_[m=2,n=6,k=567]           18  0.0%      0.0000      0.0000
+   BLAS      zgemm_[m=3,n=7,k=586]            8  0.0%      0.0000      0.0000
+   BLAS      zgemv_[m=3,n=4]               1066  0.0%      0.0000      0.0000
+   BLAS      zdotc_                        7799  0.0%      0.0000      0.0000
+   BLAS      zgemm_[m=3,n=7,k=578]            8 20.0%      0.0000      0.0000
+   BLAS      zgemm_[m=3,n=7,k=563]            8  0.0%      0.0000      0.0000
+   BLAS      zgemm_[m=2,n=6,k=591]           16  0.0%      0.0000      0.0000
+   BLAS      zgemm_[m=8,n=2,k=595]           12  0.0%      0.0000      0.0000
+   BLAS      zgemv_[m=5,n=4]                871  0.0%      0.0000      0.0000
+   BLAS      zgemm_[m=567,n=8,k=8]            7  0.0%      0.0000      0.0000
+   BLAS      zgemm_[m=1,n=5,k=573]           10  0.0%      0.0000      0.0000
+   BLAS      zgemm_[m=1,n=5,k=563]           10  0.0%      0.0000      0.0000
+   LAPACK    zlacgv_                      31196  0.0%      0.0000      0.0000
+   BLAS      zgemm_[m=8,n=8,k=592]            6  0.0%      0.0000      0.0000
+   BLAS      zgemm_[m=8,n=2,k=563]           12  0.0%      0.0000      0.0000
+   BLAS      zgemm_[m=587,n=1,k=8]           14  0.0%      0.0000      0.0000
+   BLAS      zgemm_[m=8,n=8,k=579]            6 33.3%      0.0000      0.0000
+   BLAS      zgemm_[m=8,n=8,k=574]            6  0.0%      0.0000      0.0000
+   BLAS      zgemm_[m=8,n=8,k=588]            6  0.0%      0.0000      0.0000
+   BLAS      zgemm_[m=8,n=8,k=589]            6  0.0%      0.0000      0.0000
+   BLAS      zgemm_[m=2,n=6,k=594]           14  0.0%      0.0000      0.0000
+   BLAS      zgemm_[m=8,n=8,k=576]            6 33.3%      0.0000      0.0000
+   BLAS      zgemm_[m=8,n=8,k=575]            6  0.0%      0.0000      0.0000
+   LAPACK    dlanst_                        300  0.0%      0.0000      0.0000
+   BLAS      zgemm_[m=8,n=8,k=583]            6  0.0%      0.0000      0.0000
+   BLAS      zgemm_[m=8,n=8,k=562]            6  0.0%      0.0000      0.0000
+   BLAS      zgemm_[m=594,n=4,k=7]            9  0.0%      0.0000      0.0000
+   BLAS      zgemm_[m=1,n=8,k=578]           10  0.0%      0.0000      0.0000
+   BLAS      zgemm_[m=8,n=8,k=564]            6  0.0%      0.0000      0.0000
+   BLAS      zgemm_[m=578,n=8,k=8]            6  7.1%      0.0000      0.0000
+   BLAS      zgemm_[m=8,n=8,k=561]            6  0.0%      0.0000      0.0000
+   BLAS      zgemm_[m=2,n=6,k=573]           14  0.0%      0.0000      0.0000
+   BLAS      zgemm_[m=8,n=8,k=571]            6  0.0%      0.0000      0.0000
+   BLAS      zgemm_[m=2,n=6,k=580]           14  0.0%      0.0000      0.0000
+   BLAS      zgemv_[m=1,n=1]                300  0.0%      0.0000      0.0000
+   BLAS      zgemm_[m=3,n=7,k=595]            6  0.0%      0.0000      0.0000
+   BLAS      zgemm_[m=4,n=4,k=602]           14  0.0%      0.0000      0.0000
+   BLAS      zgemm_[m=591,n=2,k=8]           10  0.0%      0.0000      0.0000
+   BLAS      zgemm_[m=587,n=8,k=8]            6  0.0%      0.0000      0.0000
+   BLAS      zgemm_[m=4,n=4,k=593]           14  0.0%      0.0000      0.0000
+   BLAS      zgemm_[m=4,n=4,k=590]           14  0.0%      0.0000      0.0000
+   BLAS      zgemm_[m=4,n=4,k=582]           14  0.0%      0.0000      0.0000
+   BLAS      zgemm_[m=595,n=2,k=8]           12  0.0%      0.0000      0.0000
+   BLAS      zgemm_[m=591,n=1,k=8]           12  0.0%      0.0000      0.0000
+   BLAS      zgemm_[m=4,n=4,k=566]           14  0.0%      0.0000      0.0000
+   BLAS      zgemm_[m=4,n=4,k=569]           14  0.0%      0.0000      0.0000
+   BLAS      zgemm_[m=586,n=1,k=8]           12  0.0%      0.0000      0.0000
+   BLAS      dscal_                        8538 50.0%      0.0000      0.0000
+   BLAS      zgemm_[m=3,n=7,k=591]            6  0.0%      0.0000      0.0000
+   BLAS      zgemm_[m=4,n=4,k=559]           14  0.0%      0.0000      0.0000
+   BLAS      zgemm_[m=563,n=2,k=8]           12  0.0%      0.0000      0.0000
+   BLAS      zgemm_[m=4,n=4,k=547]           14  0.0%      0.0000      0.0000
+   BLAS      zgemm_[m=1,n=5,k=570]            8  0.0%      0.0000      0.0000
+   BLAS      zgemm_[m=3,n=7,k=592]            6  0.0%      0.0000      0.0000
+   BLAS      zgemm_[m=4,n=4,k=560]           14  0.0%      0.0000      0.0000
+   BLAS      zgemm_[m=8,n=2,k=591]           10  0.0%      0.0000      0.0000
+   BLAS      zgemm_[m=4,n=4,k=557]           14  0.0%      0.0000      0.0000
+   BLAS      zgemm_[m=3,n=7,k=585]            6  0.0%      0.0000      0.0000
+   BLAS      zgemm_[m=4,n=4,k=555]           14  0.0%      0.0000      0.0000
+   BLAS      zgemm_[m=4,n=4,k=554]           14  0.0%      0.0000      0.0000
+   BLAS      zgemm_[m=1,n=5,k=594]            8  0.0%      0.0000      0.0000
+   BLAS      zgemv_[m=6,n=4]                769  0.0%      0.0000      0.0000
+   BLAS      zgemm_[m=3,n=7,k=579]            6 40.0%      0.0000      0.0000
+   BLAS      zgemm_[m=563,n=4,k=6]            9  0.0%      0.0000      0.0000
+   BLAS      zgemm_[m=3,n=7,k=576]            6 25.0%      0.0000      0.0000
+   BLAS      zgemm_[m=3,n=7,k=564]            6  0.0%      0.0000      0.0000
+   BLAS      zgemm_[m=587,n=4,k=7]            8  0.0%      0.0000      0.0000
+   BLAS      zgemm_[m=587,n=2,k=4]           18  0.0%      0.0000      0.0000
+   BLAS      zgemm_[m=3,n=7,k=570]            6  0.0%      0.0000      0.0000
+   BLAS      zgemm_[m=1,n=5,k=586]            8  0.0%      0.0000      0.0000
+   BLAS      zgemm_[m=8,n=2,k=567]           10  0.0%      0.0000      0.0000
+   BLAS      ztrsm_[m=5,n=4]                 71  0.0%      0.0000      0.0000
+   BLAS      zgemm_[m=1,n=5,k=583]            8  0.0%      0.0000      0.0000
+   BLAS      zgemm_[m=563,n=4,k=7]            8  0.0%      0.0000      0.0000
+   BLAS      zgemm_[m=1,n=5,k=588]            8  0.0%      0.0000      0.0000
+   BLAS      zgemm_[m=2,n=6,k=561]           10  0.0%      0.0000      0.0000
+   BLAS      zgemm_[m=1,n=5,k=561]            8  0.0%      0.0000      0.0000
+   BLAS      zgemm_[m=2,n=6,k=592]           12  0.0%      0.0000      0.0000
+   BLAS      zgemm_[m=8,n=2,k=594]            9  0.0%      0.0000      0.0000
+   BLAS      zgemm_[m=587,n=2,k=8]           11  0.0%      0.0000      0.0000
+   BLAS      zgemm_[m=4,n=2,k=4]            242  0.0%      0.0000      0.0000
+   BLAS      zgemm_[m=8,n=2,k=578]           10  5.0%      0.0000      0.0000
+   BLAS      zgemm_[m=567,n=1,k=6]           16  0.0%      0.0000      0.0000
+   BLAS      zgemm_[m=595,n=2,k=4]           20  0.0%      0.0000      0.0000
+   BLAS      zgemm_[m=8,n=3,k=594]            6  0.0%      0.0000      0.0000
+   BLAS      zgemm_[m=573,n=4,k=7]            7 12.5%      0.0000      0.0000
+   BLAS      zgemm_[m=3,n=7,k=584]            5 37.5%      0.0000      0.0000
+   BLAS      zgemm_[m=8,n=8,k=577]            4 25.0%      0.0000      0.0000
+   BLAS      zgemm_[m=567,n=2,k=8]           10  0.0%      0.0000      0.0000
+   BLAS      zgemm_[m=8,n=8,k=572]            4 25.0%      0.0000      0.0000
+   BLAS      zgemm_[m=563,n=2,k=4]           20  0.0%      0.0000      0.0000
+   BLAS      zgemm_[m=1,n=7,k=580]            8  0.0%      0.0000      0.0000
+   BLAS      zgemm_[m=3,n=7,k=574]            5 16.7%      0.0000      0.0000
+   BLAS      zgemm_[m=8,n=3,k=567]            6  0.0%      0.0000      0.0000
+   BLAS      zgemm_[m=585,n=1,k=8]           10  0.0%      0.0000      0.0000
+   BLAS      zgemm_[m=8,n=2,k=573]            8 11.1%      0.0000      0.0000
+   BLAS      zgemm_[m=1,n=7,k=585]            8  0.0%      0.0000      0.0000
+   BLAS      zgemm_[m=578,n=1,k=4]           22  0.0%      0.0000      0.0000
+   BLAS      zgemm_[m=594,n=3,k=4]           12  0.0%      0.0000      0.0000
+   BLAS      zgemm_[m=567,n=1,k=4]           22  0.0%      0.0000      0.0000
+   BLAS      zgemm_[m=578,n=4,k=5]            8  0.0%      0.0000      0.0000
+   BLAS      zgemm_[m=594,n=3,k=8]            6  0.0%      0.0000      0.0000
+   BLAS      zgemm_[m=578,n=2,k=8]           10  5.0%      0.0000      0.0000
+   BLAS      zgemm_[m=563,n=8,k=8]            5  0.0%      0.0000      0.0000
+   BLAS      zgemm_[m=563,n=1,k=8]           10  0.0%      0.0000      0.0000
+   BLAS      zgemm_[m=2,n=6,k=588]           10  0.0%      0.0000      0.0000
+   BLAS      zgemm_[m=567,n=3,k=4]           12  0.0%      0.0000      0.0000
+   BLAS      zgemm_[m=2,n=6,k=581]           10  0.0%      0.0000      0.0000
+   BLAS      zgemm_[m=594,n=2,k=8]            9  0.0%      0.0000      0.0000
+   BLAS      zgemm_[m=591,n=4,k=7]            6  0.0%      0.0000      0.0000
+   BLAS      zgemm_[m=4,n=8,k=4]            120  0.0%      0.0000      0.0000
+   BLAS      zgemm_[m=595,n=1,k=8]            9  0.0%      0.0000      0.0000
+   BLAS      zgemm_[m=595,n=8,k=8]            4  0.0%      0.0000      0.0000
+   BLAS      zgemm_[m=567,n=2,k=4]           18  0.0%      0.0000      0.0000
+   BLAS      dnrm2_                        2147 49.8%      0.0000      0.0000
+   BLAS      zgemm_[m=578,n=2,k=4]           18 10.0%      0.0000      0.0000
+   BLAS      zgemm_[m=2,n=6,k=564]           10  0.0%      0.0000      0.0000
+   BLAS      zgemm_[m=584,n=1,k=8]            9 35.7%      0.0000      0.0000
+   BLAS      zgemm_[m=578,n=1,k=6]           13  7.1%      0.0000      0.0000
+   BLAS      zgemm_[m=1,n=5,k=585]            6  0.0%      0.0000      0.0000
+   BLAS      zgemm_[m=567,n=3,k=8]            6  0.0%      0.0000      0.0000
+   BLAS      zgemm_[m=2,n=6,k=575]            8 20.0%      0.0000      0.0000
+   BLAS      zgemm_[m=1,n=5,k=581]            6  0.0%      0.0000      0.0000
+   BLAS      zgemm_[m=2,n=8,k=595]            4  0.0%      0.0000      0.0000
+   BLAS      zgemm_[m=1,n=5,k=569]            6  0.0%      0.0000      0.0000
+   BLAS      zgemm_[m=8,n=2,k=592]            7  0.0%      0.0000      0.0000
+   BLAS      zgemm_[m=8,n=3,k=587]            5  0.0%      0.0000      0.0000
+   BLAS      zgemm_[m=578,n=4,k=7]            6  8.3%      0.0000      0.0000
+   BLAS      zgemm_[m=581,n=1,k=8]            8  5.6%      0.0000      0.0000
+   BLAS      zgemm_[m=573,n=3,k=8]            4 10.0%      0.0000      0.0000
+   BLAS      zgemm_[m=8,n=2,k=580]            7  0.0%      0.0000      0.0000
+   BLAS      zgemm_[m=591,n=2,k=4]           16  0.0%      0.0000      0.0000
+   BLAS      zgemm_[m=1,n=8,k=567]            6  0.0%      0.0000      0.0000
+   BLAS      zgemm_[m=2,n=6,k=579]            9 25.0%      0.0000      0.0000
+   BLAS      zgemm_[m=1,n=8,k=573]            6  0.0%      0.0000      0.0000
+   BLAS      zgemm_[m=567,n=4,k=5]            7  0.0%      0.0000      0.0000
+   BLAS      zgemm_[m=1,n=8,k=584]            6 40.0%      0.0000      0.0000
+   BLAS      zgemm_[m=586,n=8,k=8]            4  0.0%      0.0000      0.0000
+   BLAS      zgemm_[m=3,n=7,k=580]            4  0.0%      0.0000      0.0000
+   BLAS      zgemm_[m=3,n=7,k=581]            4  0.0%      0.0000      0.0000
+   BLAS      zgemm_[m=583,n=1,k=8]            8  0.0%      0.0000      0.0000
+   BLAS      zgemm_[m=587,n=3,k=4]           10  0.0%      0.0000      0.0000
+   BLAS      zgemm_[m=3,n=7,k=577]            4  0.0%      0.0000      0.0000
+   BLAS      zgemm_[m=595,n=4,k=6]            6  0.0%      0.0000      0.0000
+   BLAS      zgemm_[m=8,n=2,k=586]            4  0.0%      0.0000      0.0000
+   BLAS      zgemm_[m=587,n=4,k=6]            6  0.0%      0.0000      0.0000
+   BLAS      zgemm_[m=578,n=1,k=7]           10  0.0%      0.0000      0.0000
+   BLAS      zgemm_[m=573,n=2,k=8]            8 11.1%      0.0000      0.0000
+   BLAS      zgemm_[m=585,n=4,k=7]            5  0.0%      0.0000      0.0000
+   BLAS      zgemm_[m=3,n=7,k=572]            4 33.3%      0.0000      0.0000
+   BLAS      zgemm_[m=587,n=3,k=8]            5  0.0%      0.0000      0.0000
+   BLAS      zgemm_[m=8,n=3,k=573]            4 10.0%      0.0000      0.0000
+   BLAS      zgemm_[m=3,n=7,k=562]            4  0.0%      0.0000      0.0000
+   BLAS      zgemm_[m=588,n=2,k=4]           10  0.0%      0.0000      0.0000
+   BLAS      zgemm_[m=8,n=2,k=579]            6 27.8%      0.0000      0.0000
+   BLAS      zgemm_[m=587,n=4,k=5]            6  0.0%      0.0000      0.0000
+   BLAS      zgemm_[m=1,n=7,k=584]            6 40.0%      0.0000      0.0000
+   BLAS      zgemm_[m=573,n=1,k=7]            6  0.0%      0.0000      0.0000
+   BLAS      zgemm_[m=2,n=6,k=584]            8 20.0%      0.0000      0.0000
+   BLAS      zgemm_[m=2,n=6,k=585]            8  0.0%      0.0000      0.0000
+   BLAS      zgemm_[m=2,n=6,k=586]            8  0.0%      0.0000      0.0000
+   BLAS      zgemm_[m=1,n=7,k=587]            6  0.0%      0.0000      0.0000
+   BLAS      zgemm_[m=592,n=2,k=8]            7  0.0%      0.0000      0.0000
+   BLAS      zgemm_[m=592,n=4,k=7]            5  0.0%      0.0000      0.0000
+   BLAS      zgemm_[m=595,n=4,k=5]            6  0.0%      0.0000      0.0000
+   BLAS      zgemm_[m=586,n=4,k=7]            5  0.0%      0.0000      0.0000
+   BLAS      zgemm_[m=2,n=6,k=570]            8  0.0%      0.0000      0.0000
+   BLAS      zgemm_[m=1,n=7,k=586]            6  0.0%      0.0000      0.0000
+   BLAS      zgemm_[m=1,n=7,k=591]            6  0.0%      0.0000      0.0000
+   BLAS      zgemm_[m=1,n=5,k=584]            5 16.7%      0.0000      0.0000
+   BLAS      zgemm_[m=8,n=3,k=586]            4  0.0%      0.0000      0.0000
+   BLAS      zgemm_[m=580,n=2,k=8]            7  0.0%      0.0000      0.0000
+   BLAS      zgemm_[m=594,n=1,k=8]            7  0.0%      0.0000      0.0000
+   BLAS      zgemm_[m=8,n=2,k=588]            6  0.0%      0.0000      0.0000
+   BLAS      zgemm_[m=1,n=7,k=583]            6  0.0%      0.0000      0.0000
+   BLAS      zgemm_[m=1,n=7,k=576]            6  0.0%      0.0000      0.0000
+   BLAS      zgemm_[m=594,n=2,k=4]           14  0.0%      0.0000      0.0000
+   BLAS      zgemm_[m=573,n=8,k=8]            4 12.5%      0.0000      0.0000
+   BLAS      zgemm_[m=8,n=8,k=602]            3  0.0%      0.0000      0.0000
+   BLAS      zgemm_[m=587,n=1,k=4]           16  0.0%      0.0000      0.0000
+   BLAS      zgemm_[m=1,n=5,k=576]            5 16.7%      0.0000      0.0000
+   BLAS      zgemm_[m=573,n=3,k=4]            9 10.0%      0.0000      0.0000
+   BLAS      zgemm_[m=580,n=2,k=4]           14  0.0%      0.0000      0.0000
+   BLAS      zgemm_[m=1,n=5,k=574]            5 37.5%      0.0000      0.0000
+   BLAS      zgemm_[m=8,n=2,k=581]            6  0.0%      0.0000      0.0000
+   BLAS      zgemm_[m=8,n=8,k=582]            3  0.0%      0.0000      0.0000
+   BLAS      zgemm_[m=8,n=8,k=593]            3  0.0%      0.0000      0.0000
+   BLAS      zgemm_[m=8,n=8,k=590]            3  0.0%      0.0000      0.0000
+   BLAS      zgemm_[m=8,n=2,k=561]            6  0.0%      0.0000      0.0000
+   BLAS      zgemm_[m=573,n=2,k=4]           14  0.0%      0.0000      0.0000
+   BLAS      zgemm_[m=8,n=2,k=564]            6  0.0%      0.0000      0.0000
+   BLAS      zgemm_[m=588,n=1,k=8]            7  0.0%      0.0000      0.0000
+   BLAS      zgemm_[m=574,n=1,k=8]            7 22.2%      0.0000      0.0000
+   BLAS      zgemm_[m=573,n=1,k=8]            7 41.7%      0.0000      0.0000
+   BLAS      zgemm_[m=566,n=1,k=8]            5  0.0%      0.0000      0.0000
+   BLAS      zgemm_[m=576,n=1,k=8]            7 30.0%      0.0000      0.0000
+   BLAS      zgemm_[m=570,n=1,k=8]            7  0.0%      0.0000      0.0000
+   BLAS      zgemm_[m=8,n=8,k=555]            3  0.0%      0.0000      0.0000
+   BLAS      zgemm_[m=8,n=8,k=560]            3  0.0%      0.0000      0.0000
+   BLAS      zgemm_[m=561,n=1,k=8]            7  0.0%      0.0000      0.0000
+   BLAS      zgemm_[m=8,n=8,k=569]            3  0.0%      0.0000      0.0000
+   BLAS      zgemm_[m=579,n=2,k=8]            6 27.8%      0.0000      0.0000
+   BLAS      zgemm_[m=8,n=8,k=566]            3  0.0%      0.0000      0.0000
+   BLAS      zgemm_[m=8,n=3,k=578]            4 20.0%      0.0000      0.0000
+   BLAS      zgemm_[m=1,n=6,k=567]            8  0.0%      0.0000      0.0000
+   BLAS      zgemm_[m=1,n=8,k=576]            5 16.7%      0.0000      0.0000
+   BLAS      zgemm_[m=1,n=8,k=574]            5 16.7%      0.0000      0.0000
+   BLAS      zgemm_[m=8,n=2,k=574]            4 10.0%      0.0000      0.0000
+   BLAS      zgemm_[m=8,n=8,k=557]            3  0.0%      0.0000      0.0000
+   BLAS      zgemm_[m=591,n=4,k=6]            5  0.0%      0.0000      0.0000
+   BLAS      zgemm_[m=8,n=3,k=563]            4  0.0%      0.0000      0.0000
+   BLAS      zgemm_[m=8,n=8,k=559]            3  0.0%      0.0000      0.0000
+   BLAS      zgemm_[m=8,n=8,k=554]            3  0.0%      0.0000      0.0000
+   BLAS      zgemm_[m=8,n=8,k=547]            3  0.0%      0.0000      0.0000
+   BLAS      zgemm_[m=2,n=6,k=577]            7 30.0%      0.0000      0.0000
+   BLAS      zgemm_[m=586,n=3,k=4]            8  0.0%      0.0000      0.0000
+   BLAS      zgemm_[m=578,n=4,k=6]            5 16.7%      0.0000      0.0000
+   BLAS      zgemm_[m=2,n=6,k=574]            7 12.5%      0.0000      0.0000
+   BLAS      zgemm_[m=591,n=8,k=8]            3  0.0%      0.0000      0.0000
+   BLAS      zgemm_[m=4,n=3,k=4]            106  0.0%      0.0000      0.0000
+   LAPACK    dgetrf_                          1  0.0%      0.0000      0.0000
+   BLAS      zgemm_[m=578,n=3,k=4]            8 20.0%      0.0000      0.0000
+   BLAS      zgemm_[m=594,n=8,k=8]            3  0.0%      0.0000      0.0000
+   BLAS      zgemm_[m=592,n=2,k=4]           12  0.0%      0.0000      0.0000
+   BLAS      zgemm_[m=582,n=2,k=6]            2  0.0%      0.0000      0.0000
+   BLAS      zgemm_[m=580,n=8,k=8]            3  0.0%      0.0000      0.0000
+   BLAS      zgemm_[m=583,n=4,k=7]            4  0.0%      0.0000      0.0000
+   BLAS      zgemm_[m=1,n=7,k=573]            5 16.7%      0.0000      0.0000
+   BLAS      zgemm_[m=1,n=7,k=575]            5 37.5%      0.0000      0.0000
+   BLAS      zgemm_[m=561,n=4,k=7]            4  0.0%      0.0000      0.0000
+   BLAS      zgemm_[m=581,n=2,k=8]            6  0.0%      0.0000      0.0000
+   BLAS      zgemm_[m=575,n=2,k=8]            4 10.0%      0.0000      0.0000
+   BLAS      zgemm_[m=570,n=8,k=8]            3  0.0%      0.0000      0.0000
+   BLAS      zgemm_[m=563,n=3,k=4]            8  0.0%      0.0000      0.0000
+   BLAS      zgemm_[m=1,n=7,k=581]            5 16.7%      0.0000      0.0000
+   BLAS      zgemm_[m=588,n=2,k=8]            6  0.0%      0.0000      0.0000
+   BLAS      zgemm_[m=570,n=4,k=7]            4  0.0%      0.0000      0.0000
+   BLAS      zgemm_[m=2,n=8,k=594]            4  0.0%      0.0000      0.0000
+   BLAS      zgemm_[m=561,n=2,k=8]            6  0.0%      0.0000      0.0000
+   BLAS      zgemm_[m=564,n=2,k=8]            6  0.0%      0.0000      0.0000
+   BLAS      zgemm_[m=563,n=3,k=8]            4  0.0%      0.0000      0.0000
+   BLAS      zgemm_[m=575,n=1,k=8]            6 25.0%      0.0000      0.0000
+   BLAS      zgemm_[m=1,n=5,k=593]            4  0.0%      0.0000      0.0000
+   BLAS      zgemm_[m=585,n=8,k=8]            3  0.0%      0.0000      0.0000
+   BLAS      zgemm_[m=569,n=1,k=8]            6  0.0%      0.0000      0.0000
+   BLAS      zgemm_[m=1,n=5,k=589]            4  0.0%      0.0000      0.0000
+   BLAS      zgemm_[m=576,n=4,k=7]            4  0.0%      0.0000      0.0000
+   BLAS      zgemm_[m=586,n=3,k=8]            4  0.0%      0.0000      0.0000
+   BLAS      zgemm_[m=578,n=3,k=8]            4 20.0%      0.0000      0.0000
+   BLAS      zgemm_[m=8,n=2,k=570]            5  0.0%      0.0000      0.0000
+   BLAS      zgemm_[m=595,n=4,k=7]            4  0.0%      0.0000      0.0000
+   BLAS      zgemm_[m=1,n=5,k=590]            4  0.0%      0.0000      0.0000
+   BLAS      zgemm_[m=580,n=1,k=8]            6  0.0%      0.0000      0.0000
+   BLAS      zgemm_[m=2,n=8,k=579]            4 33.3%      0.0000      0.0000
+   BLAS      zgemm_[m=8,n=2,k=575]            4 10.0%      0.0000      0.0000
+   BLAS      zgemm_[m=1,n=5,k=562]            4  0.0%      0.0000      0.0000
+   BLAS      zgemm_[m=2,n=8,k=591]            4  0.0%      0.0000      0.0000
+   BLAS      zgemm_[m=1,n=5,k=571]            4  0.0%      0.0000      0.0000
+   BLAS      zgemm_[m=579,n=3,k=8]            3 40.0%      0.0000      0.0000
+   BLAS      zgemm_[m=580,n=4,k=7]            4  0.0%      0.0000      0.0000
+   BLAS      zgemm_[m=1,n=5,k=566]            4  0.0%      0.0000      0.0000
+   BLAS      zgemm_[m=588,n=4,k=6]            4  0.0%      0.0000      0.0000
+   BLAS      zgemm_[m=1,n=8,k=594]            4  0.0%      0.0000      0.0000
+   BLAS      zgemm_[m=2,n=8,k=587]            4  0.0%      0.0000      0.0000
+   BLAS      zgemm_[m=564,n=4,k=7]            4  0.0%      0.0000      0.0000
+   BLAS      zgemm_[m=2,n=8,k=563]            4  0.0%      0.0000      0.0000
+   BLAS      zgemm_[m=563,n=1,k=5]            6  0.0%      0.0000      0.0000
+   BLAS      zgemm_[m=1,n=5,k=557]            4  0.0%      0.0000      0.0000
+   BLAS      zgemm_[m=1,n=5,k=554]            4  0.0%      0.0000      0.0000
+   BLAS      zgemm_[m=2,n=8,k=573]            4  0.0%      0.0000      0.0000
+   BLAS      zgemm_[m=1,n=6,k=586]            6  0.0%      0.0000      0.0000
+   BLAS      zgemm_[m=8,n=3,k=591]            3  0.0%      0.0000      0.0000
+   BLAS      zgemm_[m=2,n=6,k=576]            6  0.0%      0.0000      0.0000
+   BLAS      zgemm_[m=586,n=4,k=6]            4  0.0%      0.0000      0.0000
+   BLAS      zgemm_[m=1,n=8,k=585]            4  0.0%      0.0000      0.0000
+   BLAS      zgemm_[m=8,n=3,k=595]            3  0.0%      0.0000      0.0000
+   BLAS      zgemm_[m=592,n=4,k=6]            4  0.0%      0.0000      0.0000
+   BLAS      zgemm_[m=1,n=8,k=572]            4 33.3%      0.0000      0.0000
+   BLAS      zgemm_[m=591,n=1,k=4]           12  0.0%      0.0000      0.0000
+   LAPACK    dlartg_                       4125  0.0%      0.0000      0.0000
+   BLAS      zgemm_[m=595,n=1,k=4]           12  0.0%      0.0000      0.0000
+   BLAS      zgemm_[m=1,n=8,k=580]            4  0.0%      0.0000      0.0000
+   BLAS      zgemm_[m=1,n=8,k=586]            4  0.0%      0.0000      0.0000
+   BLAS      zgemm_[m=2,n=6,k=555]            6  0.0%      0.0000      0.0000
+   BLAS      zgemm_[m=1,n=8,k=581]            4  0.0%      0.0000      0.0000
+   BLAS      zgemm_[m=594,n=4,k=6]            4  0.0%      0.0000      0.0000
+   BLAS      zgemm_[m=1,n=8,k=579]            4  0.0%      0.0000      0.0000
+   BLAS      zgemm_[m=1,n=8,k=575]            4  0.0%      0.0000      0.0000
+   BLAS      zgemm_[m=8,n=2,k=584]            4 10.0%      0.0000      0.0000
+   BLAS      zgemm_[m=585,n=1,k=6]            8  0.0%      0.0000      0.0000
+   BLAS      zgemm_[m=590,n=1,k=8]            5  0.0%      0.0000      0.0000
+   BLAS      zgemm_[m=580,n=1,k=6]            8  0.0%      0.0000      0.0000
+   BLAS      zgemm_[m=581,n=2,k=4]           10  0.0%      0.0000      0.0000
+   BLAS      zgemm_[m=570,n=2,k=8]            5  0.0%      0.0000      0.0000
+   BLAS      zgemm_[m=581,n=8,k=8]            2 16.7%      0.0000      0.0000
+   BLAS      zgemm_[m=1,n=7,k=595]            4  0.0%      0.0000      0.0000
+   BLAS      zgemm_[m=547,n=2,k=4]            4  0.0%      0.0000      0.0000
+   BLAS      zgemm_[m=573,n=4,k=6]            4 20.0%      0.0000      0.0000
+   LAPACK    dgetri_                          1  0.0%      0.0000      0.0000
+   BLAS      zgemm_[m=567,n=4,k=6]            4  0.0%      0.0000      0.0000
+   BLAS      zgemm_[m=8,n=3,k=579]            3 40.0%      0.0000      0.0000
+   BLAS      zgemm_[m=592,n=3,k=8]            3  0.0%      0.0000      0.0000
+   BLAS      zgemm_[m=8,n=3,k=592]            3  0.0%      0.0000      0.0000
+   BLAS      zgemm_[m=1,n=6,k=578]            6  0.0%      0.0000      0.0000
+   BLAS      zgemm_[m=1,n=7,k=590]            4  0.0%      0.0000      0.0000
+   BLAS      zgemm_[m=561,n=2,k=4]           10  0.0%      0.0000      0.0000
+   BLAS      zgemm_[m=8,n=3,k=585]            3  0.0%      0.0000      0.0000
+   BLAS      zgemm_[m=591,n=4,k=5]            4  0.0%      0.0000      0.0000
+   BLAS      zgemm_[m=8,n=3,k=564]            3  0.0%      0.0000      0.0000
+   BLAS      zgemv_[m=2,n=2]                300  0.0%      0.0000      0.0000
+   BLAS      zgemm_[m=8,n=3,k=576]            3 25.0%      0.0000      0.0000
+   BLAS      zgemm_[m=8,n=3,k=570]            3  0.0%      0.0000      0.0000
+   BLAS      zgemm_[m=595,n=3,k=4]            6  0.0%      0.0000      0.0000
+   BLAS      zgemm_[m=1,n=7,k=563]            4  0.0%      0.0000      0.0000
+   BLAS      zgemm_[m=564,n=4,k=6]            4  0.0%      0.0000      0.0000
+   BLAS      zgemm_[m=564,n=2,k=4]           10  0.0%      0.0000      0.0000
+   BLAS      zgemm_[m=572,n=1,k=8]            5 28.6%      0.0000      0.0000
+   BLAS      zgemm_[m=591,n=3,k=4]            6  0.0%      0.0000      0.0000
+   BLAS      zgemm_[m=594,n=4,k=5]            4  0.0%      0.0000      0.0000
+   BLAS      zgemm_[m=585,n=3,k=4]            6  0.0%      0.0000      0.0000
+   BLAS      zgemm_[m=1,n=6,k=563]            6  0.0%      0.0000      0.0000
+   BLAS      zgemm_[m=1,n=7,k=570]            4  0.0%      0.0000      0.0000
+   BLAS      zgemm_[m=591,n=3,k=8]            3  0.0%      0.0000      0.0000
+   BLAS      zgemm_[m=573,n=4,k=5]            4  0.0%      0.0000      0.0000
+   BLAS      zgemm_[m=1,n=7,k=561]            4  0.0%      0.0000      0.0000
+   BLAS      zgemm_[m=1,n=7,k=569]            4  0.0%      0.0000      0.0000
+   BLAS      zgemm_[m=567,n=1,k=7]            6  0.0%      0.0000      0.0000
+   BLAS      zgemm_[m=1,n=7,k=571]            4  0.0%      0.0000      0.0000
+   BLAS      zgemm_[m=579,n=2,k=6]            4 33.3%      0.0000      0.0000
+   BLAS      zgemm_[m=584,n=1,k=7]            6 40.0%      0.0000      0.0000
+   LAPACK    dsytf2_                          4  0.0%      0.0000      0.0000
+   BLAS      zgemm_[m=8,n=2,k=585]            4  0.0%      0.0000      0.0000
+   BLAS      zgemm_[m=592,n=3,k=4]            6  0.0%      0.0000      0.0000
+   BLAS      zgemm_[m=570,n=4,k=5]            4  0.0%      0.0000      0.0000
+   BLAS      zgemm_[m=579,n=3,k=4]            6 40.0%      0.0000      0.0000
+   BLAS      zgemm_[m=567,n=1,k=5]            8  0.0%      0.0000      0.0000
+   BLAS      zgemm_[m=584,n=8,k=8]            2 33.3%      0.0000      0.0000
+   BLAS      zgemm_[m=570,n=3,k=8]            3  0.0%      0.0000      0.0000
+   BLAS      zgemm_[m=584,n=2,k=8]            4 10.0%      0.0000      0.0000
+   BLAS      zgemm_[m=570,n=3,k=4]            6  0.0%      0.0000      0.0000
+   BLAS      zgemm_[m=579,n=2,k=4]            9 25.0%      0.0000      0.0000
+   BLAS      zgemm_[m=576,n=3,k=4]            6 25.0%      0.0000      0.0000
+   BLAS      zgemm_[m=595,n=3,k=8]            3  0.0%      0.0000      0.0000
+   BLAS      zgemm_[m=564,n=3,k=4]            6  0.0%      0.0000      0.0000
+   BLAS      zgemm_[m=571,n=4,k=7]            3  0.0%      0.0000      0.0000
+   BLAS      zgemm_[m=581,n=1,k=6]            5 16.7%      0.0000      0.0000
+   BLAS      zgemm_[m=8,n=2,k=577]            4 33.3%      0.0000      0.0000
+   LAPACK    dsytrf_                          4  0.0%      0.0000      0.0000
+   BLAS      zgemm_[m=574,n=2,k=8]            4 10.0%      0.0000      0.0000
+   BLAS      zgemm_[m=585,n=3,k=8]            3  0.0%      0.0000      0.0000
+   BLAS      zgemm_[m=573,n=1,k=4]           10  0.0%      0.0000      0.0000
+   BLAS      zgemm_[m=564,n=3,k=8]            3  0.0%      0.0000      0.0000
+   BLAS      zgemm_[m=576,n=3,k=8]            3 25.0%      0.0000      0.0000
+   BLAS      zgemm_[m=3,n=7,k=602]            2  0.0%      0.0000      0.0000
+   BLAS      zgemm_[m=563,n=1,k=4]           10  0.0%      0.0000      0.0000
+   BLAS      zgemm_[m=1,n=5,k=572]            3 25.0%      0.0000      0.0000
+   BLAS      zgemm_[m=1,n=5,k=575]            3 25.0%      0.0000      0.0000
+   BLAS      zgemm_[m=580,n=4,k=6]            3  0.0%      0.0000      0.0000
+   BLAS      zgemm_[m=8,n=3,k=584]            2 37.5%      0.0000      0.0000
+   BLAS      zgemm_[m=585,n=2,k=4]            8  0.0%      0.0000      0.0000
+   LAPACK    disnan_                      17995 50.0%      0.0000      0.0000
+   BLAS      zgemm_[m=579,n=8,k=8]            2 33.3%      0.0000      0.0000
+   BLAS      zgemm_[m=571,n=1,k=8]            4  0.0%      0.0000      0.0000
+   BLAS      zgemm_[m=591,n=1,k=6]            6  0.0%      0.0000      0.0000
+   BLAS      zgemm_[m=8,n=3,k=574]            2 16.7%      0.0000      0.0000
+   BLAS      zgemm_[m=586,n=2,k=8]            4  0.0%      0.0000      0.0000
+   BLAS      zgemm_[m=575,n=8,k=8]            2  0.0%      0.0000      0.0000
+   BLAS      zgemm_[m=585,n=2,k=8]            4  0.0%      0.0000      0.0000
+   BLAS      zgemm_[m=583,n=8,k=8]            2  0.0%      0.0000      0.0000
+   BLAS      zgemm_[m=589,n=8,k=8]            2  0.0%      0.0000      0.0000
+   BLAS      zgemm_[m=576,n=8,k=8]            2 33.3%      0.0000      0.0000
+   BLAS      zgemm_[m=592,n=8,k=8]            2  0.0%      0.0000      0.0000
+   BLAS      zgemm_[m=577,n=2,k=8]            4 33.3%      0.0000      0.0000
+   BLAS      zgemm_[m=584,n=2,k=4]            8 20.0%      0.0000      0.0000
+   BLAS      zgemm_[m=586,n=2,k=4]            8  0.0%      0.0000      0.0000
+   BLAS      zgemm_[m=574,n=8,k=8]            2  0.0%      0.0000      0.0000
+   BLAS      zgemm_[m=586,n=1,k=6]            6  0.0%      0.0000      0.0000
+   BLAS      zgemm_[m=3,n=7,k=588]            2  0.0%      0.0000      0.0000
+   BLAS      zgemm_[m=579,n=1,k=8]            4  0.0%      0.0000      0.0000
+   BLAS      zgemm_[m=3,n=7,k=583]            2  0.0%      0.0000      0.0000
+   BLAS      zgemm_[m=583,n=1,k=6]            6  0.0%      0.0000      0.0000
+   BLAS      zgemm_[m=3,n=7,k=589]            2  0.0%      0.0000      0.0000
+   BLAS      zgemm_[m=562,n=8,k=8]            2  0.0%      0.0000      0.0000
+   BLAS      zgemm_[m=575,n=2,k=4]            8 20.0%      0.0000      0.0000
+   BLAS      zgemm_[m=3,n=7,k=575]            2  0.0%      0.0000      0.0000
+   BLAS      zgemm_[m=570,n=2,k=4]            8  0.0%      0.0000      0.0000
+   BLAS      zgemm_[m=584,n=1,k=6]            6 40.0%      0.0000      0.0000
+   BLAS      zgemm_[m=3,n=7,k=571]            2  0.0%      0.0000      0.0000
+   BLAS      zgemm_[m=561,n=4,k=6]            3  0.0%      0.0000      0.0000
+   BLAS      zgemm_[m=589,n=1,k=8]            4  0.0%      0.0000      0.0000
+   BLAS      zgemm_[m=561,n=8,k=8]            2  0.0%      0.0000      0.0000
+   BLAS      zgemm_[m=574,n=1,k=7]            5 16.7%      0.0000      0.0000
+   BLAS      zgemm_[m=588,n=8,k=8]            2  0.0%      0.0000      0.0000
+   BLAS      zgemm_[m=3,n=7,k=557]            2  0.0%      0.0000      0.0000
+   BLAS      zgemm_[m=562,n=1,k=8]            4  0.0%      0.0000      0.0000
+   BLAS      zgemm_[m=584,n=3,k=4]            5 37.5%      0.0000      0.0000
+   BLAS      zgemm_[m=3,n=7,k=561]            2  0.0%      0.0000      0.0000
+   BLAS      zgemm_[m=576,n=1,k=6]            6  0.0%      0.0000      0.0000
+   BLAS      zgemm_[m=3,n=7,k=547]            2  0.0%      0.0000      0.0000
+   BLAS      zgemm_[m=2,n=6,k=590]            4  0.0%      0.0000      0.0000
+   BLAS      zgemm_[m=1,n=7,k=574]            3 25.0%      0.0000      0.0000
+   BLAS      zgemm_[m=574,n=3,k=4]            5 16.7%      0.0000      0.0000
+   BLAS      zgemm_[m=2,n=6,k=593]            4  0.0%      0.0000      0.0000
+   BLAS      zgemm_[m=571,n=8,k=8]            2  0.0%      0.0000      0.0000
+   LAPACK    dlaev2_                        300  0.0%      0.0000      0.0000
+   BLAS      zgemm_[m=2,n=6,k=589]            4  0.0%      0.0000      0.0000
+   BLAS      zgemm_[m=564,n=8,k=8]            2  0.0%      0.0000      0.0000
+   BLAS      zgemm_[m=1,n=6,k=569]            2  0.0%      0.0000      0.0000
+   BLAS      zgemm_[m=2,n=6,k=602]            4  0.0%      0.0000      0.0000
+   BLAS      zgemm_[m=587,n=1,k=6]            6  0.0%      0.0000      0.0000
+   BLAS      zgemm_[m=555,n=4,k=6]            3  0.0%      0.0000      0.0000
+   BLAS      zgemm_[m=3,n=7,k=559]            2  0.0%      0.0000      0.0000
+   BLAS      zgemm_[m=2,n=6,k=572]            4 33.3%      0.0000      0.0000
+   BLAS      zgemm_[m=576,n=1,k=7]            5 16.7%      0.0000      0.0000
+   BLAS      zgemm_[m=1,n=6,k=566]            4  0.0%      0.0000      0.0000
+   BLAS      zgemm_[m=1,n=7,k=572]            3 25.0%      0.0000      0.0000
+   BLAS      zgemm_[m=586,n=1,k=5]            6  0.0%      0.0000      0.0000
+   BLAS      zgemm_[m=2,n=6,k=583]            4  0.0%      0.0000      0.0000
+   BLAS      zgemm_[m=588,n=1,k=4]            8  0.0%      0.0000      0.0000
+   BLAS      zgemm_[m=583,n=4,k=5]            3  0.0%      0.0000      0.0000
+   BLAS      zgemm_[m=561,n=1,k=4]            8  0.0%      0.0000      0.0000
+   BLAS      zgemm_[m=2,n=6,k=560]            4  0.0%      0.0000      0.0000
+   BLAS      zgemm_[m=577,n=2,k=4]            7 30.0%      0.0000      0.0000
+   BLAS      zgemm_[m=574,n=3,k=8]            2 16.7%      0.0000      0.0000
+   BLAS      zgemm_[m=581,n=4,k=7]            2 16.7%      0.0000      0.0000
+   BLAS      zgemm_[m=2,n=6,k=559]            4  0.0%      0.0000      0.0000
+   BLAS      zgemm_[m=2,n=6,k=562]            4  0.0%      0.0000      0.0000
+   BLAS      zgemm_[m=8,n=2,k=576]            3  0.0%      0.0000      0.0000
+   BLAS      zgemm_[m=2,n=6,k=571]            4  0.0%      0.0000      0.0000
+   BLAS      zgemm_[m=584,n=3,k=8]            2 37.5%      0.0000      0.0000
+   BLAS      zgemm_[m=2,n=6,k=547]            4  0.0%      0.0000      0.0000
+   BLAS      zgemm_[m=594,n=1,k=4]            8  0.0%      0.0000      0.0000
+   BLAS      zgemm_[m=584,n=4,k=7]            2 37.5%      0.0000      0.0000
+   BLAS      zgemm_[m=574,n=2,k=4]            7 12.5%      0.0000      0.0000
+   BLAS      zgemm_[m=2,n=6,k=554]            4  0.0%      0.0000      0.0000
+   BLAS      zgemm_[m=561,n=4,k=5]            3  0.0%      0.0000      0.0000
+   BLAS      zgemm_[m=578,n=1,k=5]            6  0.0%      0.0000      0.0000
+   BLAS      zgemm_[m=586,n=1,k=4]            8  0.0%      0.0000      0.0000
+   BLAS      zgemm_[m=579,n=4,k=7]            2 37.5%      0.0000      0.0000
+   BLAS      zgemm_[m=575,n=1,k=6]            5 37.5%      0.0000      0.0000
+   BLAS      zgemm_[m=583,n=1,k=4]            8  0.0%      0.0000      0.0000
+   BLAS      zgemm_[m=588,n=4,k=5]            3  0.0%      0.0000      0.0000
+   BLAS      zgemm_[m=580,n=1,k=7]            4  0.0%      0.0000      0.0000
+   BLAS      zgemm_[m=1,n=6,k=591]            4  0.0%      0.0000      0.0000
+   BLAS      zgemm_[m=1,n=6,k=581]            4  0.0%      0.0000      0.0000
+   BLAS      zgemm_[m=570,n=1,k=4]            8  0.0%      0.0000      0.0000
+   BLAS      zgemm_[m=8,n=2,k=562]            3  0.0%      0.0000      0.0000
+   BLAS      zgemm_[m=1,n=6,k=587]            4  0.0%      0.0000      0.0000
+   BLAS      zgemm_[m=8,n=2,k=555]            3  0.0%      0.0000      0.0000
+   BLAS      zgemm_[m=8,n=3,k=580]            2  0.0%      0.0000      0.0000
+   BLAS      zgemm_[m=573,n=1,k=6]            5 16.7%      0.0000      0.0000
+   LAPACK    ilazlc_                       7799  0.0%      0.0000      0.0000
+   BLAS      zgemm_[m=8,n=3,k=577]            2  0.0%      0.0000      0.0000
+   BLAS      zgemm_[m=8,n=3,k=581]            2  0.0%      0.0000      0.0000
+   BLAS      zgemm_[m=8,n=3,k=572]            2 33.3%      0.0000      0.0000
+   BLAS      zgemm_[m=8,n=2,k=582]            2  0.0%      0.0000      0.0000
+   BLAS      zgemm_[m=590,n=4,k=7]            2  0.0%      0.0000      0.0000
+   BLAS      zgemm_[m=579,n=1,k=7]            4  0.0%      0.0000      0.0000
+   BLAS      zgemm_[m=581,n=4,k=6]            2 37.5%      0.0000      0.0000
+   BLAS      zgemm_[m=594,n=1,k=7]            4  0.0%      0.0000      0.0000
+   BLAS      zgemm_[m=580,n=3,k=4]            4  0.0%      0.0000      0.0000
+   BLAS      zgemm_[m=591,n=2,k=6]            4  0.0%      0.0000      0.0000
+   BLAS      zgemm_[m=577,n=4,k=6]            2 16.7%      0.0000      0.0000
+   BLAS      zgemm_[m=572,n=1,k=7]            4 33.3%      0.0000      0.0000
+   BLAS      zgemm_[m=575,n=1,k=7]            4  0.0%      0.0000      0.0000
+   BLAS      zgemm_[m=581,n=1,k=7]            4  0.0%      0.0000      0.0000
+   BLAS      zgemm_[m=586,n=1,k=7]            4  0.0%      0.0000      0.0000
+   BLAS      zgemm_[m=8,n=3,k=562]            2  0.0%      0.0000      0.0000
+   BLAS      zgemm_[m=585,n=1,k=7]            4  0.0%      0.0000      0.0000
+   BLAS      zgemm_[m=587,n=2,k=6]            4  0.0%      0.0000      0.0000
+   BLAS      zgemm_[m=563,n=2,k=6]            4  0.0%      0.0000      0.0000
+   BLAS      zgemm_[m=595,n=2,k=6]            4  0.0%      0.0000      0.0000
+   BLAS      zgemm_[m=581,n=3,k=4]            4  0.0%      0.0000      0.0000
+   BLAS      zgemm_[m=577,n=3,k=4]            4  0.0%      0.0000      0.0000
+   BLAS      zgemm_[m=569,n=4,k=7]            2  0.0%      0.0000      0.0000
+   BLAS      zgemm_[m=575,n=4,k=7]            2 33.3%      0.0000      0.0000
+   BLAS      zgemm_[m=593,n=1,k=8]            3  0.0%      0.0000      0.0000
+   BLAS      zgemm_[m=572,n=3,k=4]            4 33.3%      0.0000      0.0000
+   BLAS      zgemm_[m=577,n=8,k=8]            2 25.0%      0.0000      0.0000
+   BLAS      zgemm_[m=580,n=3,k=8]            2  0.0%      0.0000      0.0000
+   BLAS      zgemm_[m=562,n=3,k=4]            4  0.0%      0.0000      0.0000
+   BLAS      zgemm_[m=562,n=3,k=8]            2  0.0%      0.0000      0.0000
+   BLAS      zgemm_[m=589,n=4,k=7]            2  0.0%      0.0000      0.0000
+   BLAS      zgemm_[m=572,n=8,k=8]            2 25.0%      0.0000      0.0000
+   BLAS      zgemm_[m=594,n=2,k=6]            4  0.0%      0.0000      0.0000
+   BLAS      zgemm_[m=555,n=2,k=4]            6  0.0%      0.0000      0.0000
+   BLAS      zgemm_[m=592,n=1,k=8]            3  0.0%      0.0000      0.0000
+   BLAS      zgemm_[m=2,n=8,k=592]            2  0.0%      0.0000      0.0000
+   BLAS      zgemm_[m=576,n=2,k=4]            6  0.0%      0.0000      0.0000
+   BLAS      zgemm_[m=577,n=3,k=8]            2  0.0%      0.0000      0.0000
+   BLAS      zgemm_[m=557,n=1,k=8]            3  0.0%      0.0000      0.0000
+   BLAS      zgemm_[m=555,n=2,k=8]            3  0.0%      0.0000      0.0000
+   BLAS      zgemm_[m=1,n=5,k=579]            2  0.0%      0.0000      0.0000
+   BLAS      zgemm_[m=1,n=5,k=577]            2  0.0%      0.0000      0.0000
+   BLAS      zgemm_[m=2,n=8,k=582]            2  0.0%      0.0000      0.0000
+   BLAS      zgemm_[m=576,n=2,k=8]            3  0.0%      0.0000      0.0000
+   BLAS      zgemm_[m=1,n=5,k=592]            2  0.0%      0.0000      0.0000
+   BLAS      zgemm_[m=569,n=1,k=6]            4  0.0%      0.0000      0.0000
+   BLAS      zgemm_[m=554,n=1,k=8]            3  0.0%      0.0000      0.0000
+   BLAS      zgemm_[m=573,n=2,k=6]            4  0.0%      0.0000      0.0000
+   BLAS      zgemm_[m=581,n=3,k=8]            2  0.0%      0.0000      0.0000
+   BLAS      zgemm_[m=572,n=3,k=8]            2 33.3%      0.0000      0.0000
+   BLAS      zgemm_[m=557,n=4,k=7]            2  0.0%      0.0000      0.0000
+   BLAS      zgemm_[m=2,n=8,k=575]            2  0.0%      0.0000      0.0000
+   BLAS      zgemm_[m=1,n=5,k=564]            2  0.0%      0.0000      0.0000
+   BLAS      zgemm_[m=1,n=5,k=555]            2  0.0%      0.0000      0.0000
+   BLAS      zgemm_[m=562,n=4,k=7]            2  0.0%      0.0000      0.0000
+   BLAS      zgemm_[m=2,n=8,k=584]            2  0.0%      0.0000      0.0000
+   BLAS      zgemm_[m=2,n=8,k=581]            2  0.0%      0.0000      0.0000
+   BLAS      zgemm_[m=585,n=1,k=4]            6  0.0%      0.0000      0.0000
+   BLAS      zgemm_[m=2,n=8,k=588]            2  0.0%      0.0000      0.0000
+   BLAS      zgemm_[m=2,n=8,k=567]            2  0.0%      0.0000      0.0000
+   BLAS      zgemm_[m=2,n=8,k=570]            2  0.0%      0.0000      0.0000
+   BLAS      zgemm_[m=2,n=8,k=578]            2  0.0%      0.0000      0.0000
+   BLAS      zgemm_[m=2,n=8,k=562]            2  0.0%      0.0000      0.0000
+   BLAS      zgemm_[m=1,n=5,k=560]            2  0.0%      0.0000      0.0000
+   BLAS      zgemm_[m=2,n=8,k=577]            2  0.0%      0.0000      0.0000
+   BLAS      zgemm_[m=577,n=1,k=8]            3 25.0%      0.0000      0.0000
+   BLAS      zgemm_[m=590,n=1,k=6]            4  0.0%      0.0000      0.0000
+   BLAS      zgemm_[m=2,n=8,k=574]            2  0.0%      0.0000      0.0000
+   BLAS      zgemm_[m=2,n=8,k=564]            2  0.0%      0.0000      0.0000
+   BLAS      zgemm_[m=2,n=8,k=561]            2  0.0%      0.0000      0.0000
+   BLAS      zgemm_[m=562,n=2,k=8]            3  0.0%      0.0000      0.0000
+   BLAS      zgemm_[m=1,n=8,k=595]            2  0.0%      0.0000      0.0000
+   BLAS      zgemm_[m=595,n=1,k=6]            4  0.0%      0.0000      0.0000
+   BLAS      zgemm_[m=1,n=8,k=587]            2  0.0%      0.0000      0.0000
+   BLAS      zgemm_[m=560,n=1,k=8]            3  0.0%      0.0000      0.0000
+   BLAS      zgemm_[m=1,n=8,k=592]            2  0.0%      0.0000      0.0000
+   BLAS      zgemm_[m=1,n=8,k=591]            2  0.0%      0.0000      0.0000
+   BLAS      zgemm_[m=1,n=8,k=588]            2  0.0%      0.0000      0.0000
+   BLAS      zgemm_[m=566,n=4,k=6]            2  0.0%      0.0000      0.0000
+   BLAS      zgemm_[m=577,n=4,k=7]            2  0.0%      0.0000      0.0000
+   BLAS      zgemm_[m=561,n=1,k=6]            4  0.0%      0.0000      0.0000
+   BLAS      zgemm_[m=1,n=8,k=577]            2  0.0%      0.0000      0.0000
+   BLAS      zgemm_[m=589,n=4,k=6]            2  0.0%      0.0000      0.0000
+   BLAS      zgemm_[m=570,n=1,k=6]            4  0.0%      0.0000      0.0000
+   BLAS      zgemm_[m=1,n=8,k=570]            2  0.0%      0.0000      0.0000
+   BLAS      zgemm_[m=1,n=8,k=562]            2  0.0%      0.0000      0.0000
+   BLAS      zgemm_[m=579,n=4,k=6]            2  0.0%      0.0000      0.0000
+   BLAS      zgemm_[m=581,n=1,k=4]            6  0.0%      0.0000      0.0000
+   BLAS      zgemm_[m=563,n=1,k=6]            4  0.0%      0.0000      0.0000
+   BLAS      zgemm_[m=569,n=1,k=4]            6  0.0%      0.0000      0.0000
+   BLAS      zgemm_[m=1,n=8,k=560]            2  0.0%      0.0000      0.0000
+   BLAS      zgemm_[m=602,n=4,k=6]            2  0.0%      0.0000      0.0000
+   BLAS      zgemm_[m=1,n=7,k=589]            2  0.0%      0.0000      0.0000
+   BLAS      zgemm_[m=571,n=1,k=6]            4  0.0%      0.0000      0.0000
+   BLAS      zgemm_[m=1,n=7,k=594]            2  0.0%      0.0000      0.0000
+   BLAS      zgemm_[m=593,n=4,k=5]            2  0.0%      0.0000      0.0000
+   BLAS      zgemm_[m=562,n=4,k=5]            2  0.0%      0.0000      0.0000
+   BLAS      zgemm_[m=559,n=4,k=6]            2  0.0%      0.0000      0.0000
+   BLAS      zgemm_[m=8,n=2,k=602]            2  0.0%      0.0000      0.0000
+   BLAS      zgemm_[m=1,n=7,k=592]            2  0.0%      0.0000      0.0000
+   BLAS      zgemm_[m=1,n=7,k=593]            2  0.0%      0.0000      0.0000
+   BLAS      zgemm_[m=585,n=4,k=5]            2  0.0%      0.0000      0.0000
+   BLAS      zgemm_[m=591,n=1,k=5]            4  0.0%      0.0000      0.0000
+   BLAS      zgemm_[m=8,n=2,k=593]            2  0.0%      0.0000      0.0000
+   BLAS      zgemm_[m=1,n=7,k=562]            2  0.0%      0.0000      0.0000
+   BLAS      zgemm_[m=581,n=4,k=5]            2 33.3%      0.0000      0.0000
+   BLAS      zgemm_[m=576,n=4,k=5]            2  0.0%      0.0000      0.0000
+   BLAS      zgemm_[m=575,n=4,k=6]            2  0.0%      0.0000      0.0000
+   BLAS      zgemm_[m=1,n=7,k=577]            2  0.0%      0.0000      0.0000
+   BLAS      zgemm_[m=8,n=2,k=583]            2  0.0%      0.0000      0.0000
+   BLAS      zgemm_[m=1,n=7,k=579]            2  0.0%      0.0000      0.0000
+   BLAS      zgemm_[m=571,n=4,k=5]            2  0.0%      0.0000      0.0000
+   BLAS      zgemm_[m=1,n=7,k=588]            2  0.0%      0.0000      0.0000
+   BLAS      zgemm_[m=1,n=7,k=560]            2  0.0%      0.0000      0.0000
+   BLAS      zgemm_[m=566,n=1,k=5]            4  0.0%      0.0000      0.0000
+   BLAS      zgemm_[m=1,n=7,k=554]            2  0.0%      0.0000      0.0000
+   BLAS      zgemm_[m=1,n=7,k=566]            2  0.0%      0.0000      0.0000
+   BLAS      zgemm_[m=8,n=2,k=590]            2  0.0%      0.0000      0.0000
+   BLAS      zgemm_[m=8,n=2,k=560]            2  0.0%      0.0000      0.0000
+   BLAS      zgemm_[m=8,n=2,k=572]            2 33.3%      0.0000      0.0000
+   BLAS      zgemm_[m=557,n=4,k=5]            2  0.0%      0.0000      0.0000
+   BLAS      zgemm_[m=563,n=4,k=5]            2  0.0%      0.0000      0.0000
+   BLAS      zgemm_[m=1,n=7,k=557]            2  0.0%      0.0000      0.0000
+   BLAS      zgemm_[m=581,n=1,k=5]            4  0.0%      0.0000      0.0000
+   BLAS      zgemm_[m=576,n=1,k=4]            5 16.7%      0.0000      0.0000
+   BLAS      zgemm_[m=587,n=1,k=5]            4  0.0%      0.0000      0.0000
+   BLAS      zgemm_[m=554,n=4,k=5]            2  0.0%      0.0000      0.0000
+   BLAS      zgemm_[m=8,n=2,k=589]            2  0.0%      0.0000      0.0000
+   BLAS      zgemm_[m=569,n=4,k=5]            2  0.0%      0.0000      0.0000
+   BLAS      zgemm_[m=584,n=4,k=5]            2  0.0%      0.0000      0.0000
+   BLAS      zgemm_[m=547,n=4,k=6]            2  0.0%      0.0000      0.0000
+   BLAS      zgemm_[m=8,n=2,k=571]            2  0.0%      0.0000      0.0000
+   BLAS      zgemm_[m=574,n=4,k=5]            2 33.3%      0.0000      0.0000
+   BLAS      zgemm_[m=8,n=2,k=547]            2  0.0%      0.0000      0.0000
+   BLAS      zgemm_[m=8,n=2,k=554]            2  0.0%      0.0000      0.0000
+   BLAS      zgemm_[m=8,n=2,k=559]            2  0.0%      0.0000      0.0000
+   LAPACK    dtrtri_                          1  0.0%      0.0000      0.0000
+   BLAS      zgemm_[m=574,n=1,k=4]            5 37.5%      0.0000      0.0000
+   BLAS      zgemm_[m=584,n=1,k=4]            5 16.7%      0.0000      0.0000
+   BLAS      zgemm_[m=582,n=8,k=8]            1  0.0%      0.0000      0.0000
+   BLAS      zgemm_[m=602,n=2,k=4]            4  0.0%      0.0000      0.0000
+   BLAS      zgemm_[m=589,n=2,k=8]            2  0.0%      0.0000      0.0000
+   BLAS      zgemm_[m=574,n=4,k=7]            2 25.0%      0.0000      0.0000
+   BLAS      zgemm_[m=593,n=2,k=8]            2  0.0%      0.0000      0.0000
+   BLAS      zgemm_[m=589,n=2,k=4]            4  0.0%      0.0000      0.0000
+   BLAS      zgemm_[m=554,n=2,k=4]            4  0.0%      0.0000      0.0000
+   LAPACK    dsytri_                          4  0.0%      0.0000      0.0000
+   BLAS      zgemm_[m=590,n=8,k=8]            1  0.0%      0.0000      0.0000
+   BLAS      zgemm_[m=583,n=2,k=4]            4  0.0%      0.0000      0.0000
+   BLAS      zgemm_[m=559,n=2,k=4]            4  0.0%      0.0000      0.0000
+   BLAS      zgemm_[m=593,n=2,k=4]            4  0.0%      0.0000      0.0000
+   BLAS      zgemm_[m=583,n=2,k=8]            2  0.0%      0.0000      0.0000
+   BLAS      zgemm_[m=574,n=1,k=6]            3 25.0%      0.0000      0.0000
+   BLAS      zgemm_[m=569,n=8,k=8]            1  0.0%      0.0000      0.0000
+   BLAS      zgemm_[m=571,n=2,k=8]            2  0.0%      0.0000      0.0000
+   BLAS      zgemm_[m=602,n=2,k=8]            2  0.0%      0.0000      0.0000
+   BLAS      zgemm_[m=572,n=2,k=8]            2 33.3%      0.0000      0.0000
+   BLAS      zgemm_[m=559,n=2,k=8]            2  0.0%      0.0000      0.0000
+   BLAS      zgemm_[m=572,n=2,k=4]            4 33.3%      0.0000      0.0000
+   BLAS      zgemm_[m=593,n=8,k=8]            1  0.0%      0.0000      0.0000
+   BLAS      zgemm_[m=560,n=8,k=8]            1  0.0%      0.0000      0.0000
+   BLAS      zgemm_[m=590,n=2,k=8]            2  0.0%      0.0000      0.0000
+   BLAS      zgemm_[m=566,n=8,k=8]            1  0.0%      0.0000      0.0000
+   BLAS      zgemm_[m=554,n=2,k=8]            2  0.0%      0.0000      0.0000
+   BLAS      zgemm_[m=590,n=2,k=4]            4  0.0%      0.0000      0.0000
+   BLAS      zgemm_[m=572,n=4,k=7]            2 25.0%      0.0000      0.0000
+   BLAS      zgemm_[m=571,n=2,k=4]            4  0.0%      0.0000      0.0000
+   BLAS      zgemm_[m=561,n=3,k=8]            1  0.0%      0.0000      0.0000
+   BLAS      zgemm_[m=8,n=3,k=559]            1  0.0%      0.0000      0.0000
+   BLAS      zgemm_[m=572,n=1,k=6]            3 25.0%      0.0000      0.0000
+   BLAS      zgemm_[m=547,n=2,k=8]            2  0.0%      0.0000      0.0000
+   BLAS      dsymv_                           6  0.0%      0.0000      0.0000
+   BLAS      zgemm_[m=602,n=8,k=8]            1  0.0%      0.0000      0.0000
+   BLAS      zgemm_[m=560,n=2,k=4]            4  0.0%      0.0000      0.0000
+   BLAS      zgemm_[m=560,n=2,k=8]            2  0.0%      0.0000      0.0000
+   BLAS      zgemm_[m=562,n=2,k=4]            4  0.0%      0.0000      0.0000
+   BLAS      zgemm_[m=555,n=8,k=8]            1  0.0%      0.0000      0.0000
+   BLAS      zgemm_[m=554,n=8,k=8]            1  0.0%      0.0000      0.0000
+   BLAS      zgemm_[m=574,n=4,k=6]            2 25.0%      0.0000      0.0000
+   BLAS      zgemm_[m=572,n=4,k=5]            2 25.0%      0.0000      0.0000
+   BLAS      zgemm_[m=557,n=8,k=8]            1  0.0%      0.0000      0.0000
+   BLAS      zgemm_[m=2,n=6,k=582]            2  0.0%      0.0000      0.0000
+   BLAS      zgemm_[m=559,n=8,k=8]            1  0.0%      0.0000      0.0000
+   BLAS      zgemm_[m=2,n=6,k=569]            2  0.0%      0.0000      0.0000
+   BLAS      zgemm_[m=562,n=1,k=4]            4  0.0%      0.0000      0.0000
+   BLAS      zgemm_[m=547,n=8,k=8]            1  0.0%      0.0000      0.0000
+   BLAS      zgemm_[m=8,n=3,k=602]            1  0.0%      0.0000      0.0000
+   BLAS      zgemm_[m=2,n=6,k=557]            2  0.0%      0.0000      0.0000
+   BLAS      zgemm_[m=593,n=1,k=4]            4  0.0%      0.0000      0.0000
+   BLAS      zgemm_[m=2,n=6,k=566]            2  0.0%      0.0000      0.0000
+   BLAS      zgemm_[m=566,n=1,k=4]            4  0.0%      0.0000      0.0000
+   BLAS      zgemm_[m=8,n=3,k=547]            1  0.0%      0.0000      0.0000
+   BLAS      zgemm_[m=589,n=1,k=4]            4  0.0%      0.0000      0.0000
+   BLAS      zgemm_[m=1,n=6,k=589]            2  0.0%      0.0000      0.0000
+   BLAS      zgemm_[m=590,n=1,k=4]            4  0.0%      0.0000      0.0000
+   BLAS      zgemm_[m=593,n=4,k=7]            1  0.0%      0.0000      0.0000
+   BLAS      zgemm_[m=557,n=1,k=4]            4  0.0%      0.0000      0.0000
+   BLAS      zgemm_[m=8,n=3,k=588]            1  0.0%      0.0000      0.0000
+   BLAS      zgemm_[m=571,n=1,k=4]            4  0.0%      0.0000      0.0000
+   BLAS      zgemm_[m=1,n=6,k=583]            2  0.0%      0.0000      0.0000
+   BLAS      zgemm_[m=1,n=6,k=590]            2  0.0%      0.0000      0.0000
+   BLAS      zgemm_[m=1,n=6,k=574]            2  0.0%      0.0000      0.0000
+   BLAS      zgemm_[m=582,n=2,k=8]            2  0.0%      0.0000      0.0000
+   BLAS      zgemm_[m=1,n=6,k=573]            2  0.0%      0.0000      0.0000
+   BLAS      zgemm_[m=1,n=6,k=561]            2  0.0%      0.0000      0.0000
+   BLAS      zgemm_[m=1,n=6,k=588]            2  0.0%      0.0000      0.0000
+   BLAS      zgemm_[m=602,n=3,k=4]            2  0.0%      0.0000      0.0000
+   BLAS      zgemm_[m=1,n=6,k=584]            2  0.0%      0.0000      0.0000
+   BLAS      zgemm_[m=1,n=6,k=585]            2  0.0%      0.0000      0.0000
+   BLAS      zgemm_[m=554,n=1,k=4]            4  0.0%      0.0000      0.0000
+   BLAS      zgemm_[m=8,n=3,k=589]            1  0.0%      0.0000      0.0000
+   BLAS      zgemm_[m=1,n=6,k=577]            2  0.0%      0.0000      0.0000
+   BLAS      zgemm_[m=8,n=3,k=575]            1  0.0%      0.0000      0.0000
+   BLAS      zgemm_[m=1,n=6,k=575]            2  0.0%      0.0000      0.0000
+   BLAS      zgemm_[m=8,n=3,k=583]            1  0.0%      0.0000      0.0000
+   BLAS      zgemm_[m=1,n=6,k=576]            2  0.0%      0.0000      0.0000
+   BLAS      zgemm_[m=8,n=3,k=557]            1  0.0%      0.0000      0.0000
+   BLAS      zgemm_[m=8,n=3,k=571]            1  0.0%      0.0000      0.0000
+   BLAS      zgemm_[m=583,n=3,k=4]            2  0.0%      0.0000      0.0000
+   BLAS      zgemm_[m=570,n=2,k=6]            2  0.0%      0.0000      0.0000
+   BLAS      zgemm_[m=577,n=1,k=7]            2  0.0%      0.0000      0.0000
+   BLAS      zgemm_[m=584,n=2,k=6]            2  0.0%      0.0000      0.0000
+   BLAS      zgemm_[m=602,n=3,k=8]            1  0.0%      0.0000      0.0000
+   BLAS      zgemm_[m=571,n=3,k=4]            2  0.0%      0.0000      0.0000
+   LAPACK    dladiv2_                     15598  0.0%      0.0000      0.0000
+   BLAS      zgemm_[m=591,n=1,k=7]            2  0.0%      0.0000      0.0000
+   BLAS      zgemm_[m=577,n=2,k=6]            2  0.0%      0.0000      0.0000
+   BLAS      zgemm_[m=587,n=1,k=7]            2  0.0%      0.0000      0.0000
+   BLAS      zgemm_[m=554,n=4,k=7]            1  0.0%      0.0000      0.0000
+   BLAS      zgemm_[m=588,n=1,k=7]            2  0.0%      0.0000      0.0000
+   BLAS      zgemm_[m=575,n=3,k=4]            2  0.0%      0.0000      0.0000
+   BLAS      zgemm_[m=602,n=4,k=7]            1  0.0%      0.0000      0.0000
+   BLAS      zgemm_[m=589,n=3,k=4]            2  0.0%      0.0000      0.0000
+   BLAS      zgemm_[m=574,n=2,k=6]            2  0.0%      0.0000      0.0000
+   BLAS      zgemm_[m=571,n=3,k=8]            1  0.0%      0.0000      0.0000
+   BLAS      zgemm_[m=8,n=3,k=561]            1  0.0%      0.0000      0.0000
+   BLAS      zgemm_[m=561,n=2,k=6]            2  0.0%      0.0000      0.0000
+   BLAS      zgemm_[m=588,n=3,k=8]            1  0.0%      0.0000      0.0000
+   BLAS      zgemm_[m=588,n=3,k=4]            2  0.0%      0.0000      0.0000
+   BLAS      zgemm_[m=592,n=2,k=6]            2  0.0%      0.0000      0.0000
+   BLAS      zgemm_[m=557,n=3,k=4]            2  0.0%      0.0000      0.0000
+   BLAS      zgemm_[m=588,n=2,k=6]            2  0.0%      0.0000      0.0000
+   BLAS      zgemm_[m=595,n=1,k=7]            2  0.0%      0.0000      0.0000
+   BLAS      zgemm_[m=588,n=4,k=7]            1  0.0%      0.0000      0.0000
+   BLAS      zgemm_[m=561,n=3,k=4]            2  0.0%      0.0000      0.0000
+   BLAS      zgemm_[m=562,n=1,k=7]            2  0.0%      0.0000      0.0000
+   BLAS      zgemm_[m=560,n=1,k=7]            2  0.0%      0.0000      0.0000
+   BLAS      zgemm_[m=592,n=1,k=7]            2  0.0%      0.0000      0.0000
+   BLAS      zgemm_[m=557,n=3,k=8]            1  0.0%      0.0000      0.0000
+   BLAS      zgemm_[m=567,n=2,k=6]            2  0.0%      0.0000      0.0000
+   BLAS      zgemm_[m=583,n=3,k=8]            1  0.0%      0.0000      0.0000
+   BLAS      zgemm_[m=559,n=3,k=4]            2  0.0%      0.0000      0.0000
+   BLAS      zgemm_[m=547,n=3,k=8]            1  0.0%      0.0000      0.0000
+   BLAS      zgemm_[m=581,n=2,k=6]            2  0.0%      0.0000      0.0000
+   BLAS      zgemm_[m=547,n=4,k=7]            1  0.0%      0.0000      0.0000
+   BLAS      zgemm_[m=547,n=3,k=4]            2  0.0%      0.0000      0.0000
+   BLAS      zgemm_[m=589,n=3,k=8]            1  0.0%      0.0000      0.0000
+   BLAS      zgemm_[m=566,n=4,k=7]            1  0.0%      0.0000      0.0000
+   BLAS      zgemm_[m=564,n=2,k=6]            2  0.0%      0.0000      0.0000
+   BLAS      zgemm_[m=570,n=1,k=7]            2  0.0%      0.0000      0.0000
+   BLAS      zgemm_[m=594,n=1,k=6]            2  0.0%      0.0000      0.0000
+   BLAS      zgemm_[m=575,n=3,k=8]            1  0.0%      0.0000      0.0000
+   BLAS      zgemm_[m=578,n=2,k=6]            2  0.0%      0.0000      0.0000
+   BLAS      zgemm_[m=589,n=1,k=6]            2  0.0%      0.0000      0.0000
+   BLAS      zgemm_[m=572,n=4,k=6]            1  0.0%      0.0000      0.0000
+   BLAS      zgemm_[m=579,n=1,k=6]            2  0.0%      0.0000      0.0000
+   BLAS      zgemm_[m=559,n=3,k=8]            1  0.0%      0.0000      0.0000
+   BLAS      zgemm_[m=569,n=1,k=5]            2  0.0%      0.0000      0.0000
+   BLAS      zgemm_[m=593,n=1,k=6]            2  0.0%      0.0000      0.0000
+   BLAS      zgemm_[m=585,n=4,k=6]            1  0.0%      0.0000      0.0000
+   BLAS      zgemm_[m=575,n=2,k=6]            2  0.0%      0.0000      0.0000
+   BLAS      zgemm_[m=566,n=1,k=6]            2  0.0%      0.0000      0.0000
+   BLAS      zgemm_[m=570,n=4,k=6]            1  0.0%      0.0000      0.0000
+   BLAS      zgemm_[m=562,n=2,k=6]            2  0.0%      0.0000      0.0000
+   BLAS      zgemm_[m=575,n=1,k=4]            3 25.0%      0.0000      0.0000
+   BLAS      zgemm_[m=554,n=1,k=6]            2  0.0%      0.0000      0.0000
+   BLAS      zgemm_[m=584,n=4,k=6]            1  0.0%      0.0000      0.0000
+   BLAS      zgemm_[m=560,n=1,k=6]            2  0.0%      0.0000      0.0000
+   BLAS      zgemm_[m=559,n=4,k=7]            1  0.0%      0.0000      0.0000
+   BLAS      zgemm_[m=577,n=1,k=6]            2  0.0%      0.0000      0.0000
+   BLAS      zgemm_[m=572,n=1,k=4]            3 25.0%      0.0000      0.0000
+   BLAS      zgemm_[m=588,n=1,k=6]            2  0.0%      0.0000      0.0000
+   BLAS      zgemm_[m=576,n=4,k=6]            1  0.0%      0.0000      0.0000
+   BLAS      zgemm_[m=574,n=1,k=5]            2  0.0%      0.0000      0.0000
+   BLAS      zgemm_[m=592,n=1,k=6]            2  0.0%      0.0000      0.0000
+   BLAS      zgemm_[m=593,n=4,k=6]            1  0.0%      0.0000      0.0000
+   BLAS      zgemm_[m=590,n=4,k=5]            1  0.0%      0.0000      0.0000
+   BLAS      zgemm_[m=592,n=4,k=5]            1  0.0%      0.0000      0.0000
+   BLAS      zgemm_[m=573,n=1,k=5]            2  0.0%      0.0000      0.0000
+   BLAS      zgemm_[m=561,n=1,k=5]            2  0.0%      0.0000      0.0000
+   BLAS      zgemm_[m=562,n=1,k=6]            2  0.0%      0.0000      0.0000
+   BLAS      zgemm_[m=589,n=4,k=5]            1  0.0%      0.0000      0.0000
+   BLAS      zgemm_[m=557,n=1,k=6]            2  0.0%      0.0000      0.0000
+   BLAS      zgemm_[m=590,n=4,k=6]            1  0.0%      0.0000      0.0000
+   BLAS      zgemm_[m=586,n=4,k=5]            1  0.0%      0.0000      0.0000
+   BLAS      zgemm_[m=579,n=4,k=5]            1  0.0%      0.0000      0.0000
+   BLAS      zgemm_[m=555,n=4,k=5]            1  0.0%      0.0000      0.0000
+   BLAS      zgemm_[m=588,n=1,k=5]            2  0.0%      0.0000      0.0000
+   BLAS      zgemm_[m=583,n=1,k=5]            2  0.0%      0.0000      0.0000
+   BLAS      zgemm_[m=8,n=2,k=557]            1  0.0%      0.0000      0.0000
+   BLAS      zgemm_[m=575,n=4,k=5]            1  0.0%      0.0000      0.0000
+   BLAS      zgemm_[m=575,n=1,k=5]            2  0.0%      0.0000      0.0000
+   BLAS      zgemm_[m=8,n=2,k=566]            1  0.0%      0.0000      0.0000
+   BLAS      zgemm_[m=590,n=1,k=5]            2  0.0%      0.0000      0.0000
+   BLAS      zgemm_[m=8,n=2,k=569]            1  0.0%      0.0000      0.0000
+   BLAS      zgemm_[m=576,n=1,k=5]            2  0.0%      0.0000      0.0000
+   BLAS      zgemm_[m=564,n=4,k=5]            1  0.0%      0.0000      0.0000
+   BLAS      zgemm_[m=554,n=4,k=6]            1  0.0%      0.0000      0.0000
+   BLAS      zgemm_[m=577,n=1,k=5]            2  0.0%      0.0000      0.0000
+   BLAS      zgemm_[m=589,n=1,k=5]            2  0.0%      0.0000      0.0000
+   BLAS      zgemm_[m=560,n=4,k=6]            1  0.0%      0.0000      0.0000
+   BLAS      zswap_                         569  0.0%      0.0000      0.0000
+   BLAS      zgemm_[m=585,n=1,k=5]            2  0.0%      0.0000      0.0000
+   BLAS      zgemm_[m=560,n=4,k=5]            1  0.0%      0.0000      0.0000
+   BLAS      zgemm_[m=584,n=1,k=5]            2  0.0%      0.0000      0.0000
+   BLAS      zgemm_[m=569,n=2,k=8]            1  0.0%      0.0000      0.0000
+   BLAS      zgemm_[m=566,n=2,k=8]            1  0.0%      0.0000      0.0000
+   BLAS      zgemm_[m=555,n=1,k=8]            1  0.0%      0.0000      0.0000
+   BLAS      zgemm_[m=566,n=2,k=4]            2  0.0%      0.0000      0.0000
+   BLAS      zgemm_[m=569,n=2,k=4]            2  0.0%      0.0000      0.0000
+   BLAS      zgemm_[m=557,n=2,k=8]            1  0.0%      0.0000      0.0000
+   BLAS      zgemm_[m=582,n=2,k=4]            2  0.0%      0.0000      0.0000
+   BLAS      zgemm_[m=564,n=1,k=8]            1  0.0%      0.0000      0.0000
+   BLAS      zgemm_[m=557,n=2,k=4]            2  0.0%      0.0000      0.0000
+   BLAS      zgemm_[m=579,n=1,k=4]            2  0.0%      0.0000      0.0000
+   BLAS      zgemm_[m=592,n=1,k=4]            2  0.0%      0.0000      0.0000
+   BLAS      zgemm_[m=555,n=1,k=4]            2  0.0%      0.0000      0.0000
+   BLAS      zgemm_[m=564,n=1,k=4]            2  0.0%      0.0000      0.0000
+   BLAS      zgemm_[m=577,n=1,k=4]            2  0.0%      0.0000      0.0000
+   BLAS      zgemm_[m=560,n=1,k=4]            2  0.0%      0.0000      0.0000
+   BLAS      dgemv_[m=3,n=1]                  1  0.0%      0.0000      0.0000
+   BLAS      dsyr_                           10  0.0%      0.0000      0.0000
+   BLAS      dswap_                          16  0.0%      0.0000      0.0000
+   BLAS      dgemv_[m=3,n=2]                  1  0.0%      0.0000      0.0000
+
+Table 4:  I/O statistics  (tracing)
+
+  I/O
+  ----------------------------------------------------------------------
+   call            count[imb]   r/R    incl(s)        bytes     GB/s
+  ----------------------------------------------------------------------
+   read                219  8.8%   2/2       0.0538       621756     0.01
+   pwrite              490  0.0%   1/2       0.0012      6565092     5.33
+   close               350 16.1%   2/2       0.0011            0     0.00
+   open                198 25.2%   2/2       0.0009            0     0.00
+   write               600  4.0%   2/2       0.0002       127945     0.54
+   pread                60  0.0%   1/2       0.0000            0     0.00
+   fwrite               17 37.0%   2/2       0.0000       153584     8.45
+   fread                16 40.7%   2/2       0.0000       314538    19.40
+   openat                1  0.0%   2/2       0.0000            0     0.00
+   lseek                 4 30.0%   2/2       0.0000            0     0.00
+  ----------------------------------------------------------------------
+   total I/O volume: 0.008 GB  (sum over ranks)
+
+
+Per-PE summary
+ ------------------------------------------------------------
+   PE       runtime(s)  lib excl(s)     lib%
+   0             3.460        1.325    38.3%
+   1             3.460        1.043    30.1%
+ ------------------------------------------------------------
+   slowest PE 0 (3.460s); mean 3.460s; spread 0.0%
+
