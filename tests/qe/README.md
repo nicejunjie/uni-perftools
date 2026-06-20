@@ -51,8 +51,17 @@ $DRV report out/run_mpi                       # combined (uaps + upat)
 $DRV report out/run_mpi -o out                # separate files: report.uaps.txt + report.upat.txt
 $DRV report out/run_serial --collector uaps   # snapshot half only
 $DRV report out/run_serial --detail blas      # per-shape BLAS breakdown (post analysis)
-$DRV report out/run_mpi    --detail mpi        # MPI comm matrix + size histogram
+$DRV report out/run_mpi    --detail mpi        # MPI volume + size histogram (text)
+
+# HTML reports (self-contained; comm matrix as a heatmap figure, like Intel APS)
+$DRV report out/run_serial --format html -o out            # → out/report.html
+$DRV report out/run_mpi --detail mpi --format html -o out  # → out/report.mpi.html
 ```
+
+The text MPI report shows the full rank×rank matrix only for small jobs (≤8
+ranks); beyond that it lists per-rank volume and points to the HTML, whose
+heatmap down-samples into ≤256×256 buckets so it stays legible at thousand-rank
+scale.
 
 ## Saved reports (`out/`)
 
@@ -62,7 +71,9 @@ $DRV report out/run_mpi    --detail mpi        # MPI comm matrix + size histogra
 | `report.uaps.txt` / `report.upat.txt`  | the two collectors as separate files (MPI run) |
 | `roofline_func.txt`                     | per-function roofline (single-threaded) |
 | `detail.blas.txt`                       | `--detail blas` per-shape breakdown |
-| `detail.mpi.txt`                        | `--detail mpi` comm matrix + size histogram |
+| `detail.mpi.txt`                        | `--detail mpi` comm matrix + size histogram (text) |
+| `report.html`                           | HTML report (SVG roofline + styled tables) |
+| `report.mpi.html`                       | HTML MPI analysis (comm-matrix heatmap + histogram) |
 | `qe.*.out`                              | QE's own stdout for each run |
 
 ## What it validated

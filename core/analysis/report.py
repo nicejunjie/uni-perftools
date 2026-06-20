@@ -107,6 +107,12 @@ def render(result_dir, fmt="text", view="all", collector="both", detail=None):
         print()
         return
 
+    if fmt == "html":
+        import htmlrep
+        suite = insights.suite_insights(snap, profile)
+        print(htmlrep.build(result_dir, manifest, snap, profile, suite, detail=detail))
+        return
+
     # focused per-facility detail (a UPAT post-recording analysis)
     if detail:
         if not profs:

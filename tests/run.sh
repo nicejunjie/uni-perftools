@@ -49,6 +49,9 @@ ok "split: report.uaps.txt"        "[ -s $TMP/split/report.uaps.txt ]"
 ok "split: report.upat.txt"        "[ -s $TMP/split/report.upat.txt ]"
 ok "split: uaps file has no sci-lib table" "! grep -q 'Library calls by group' $TMP/split/report.uaps.txt"
 ok "split: upat file has sci-lib table"    "grep -q 'Library calls by group' $TMP/split/report.upat.txt"
+$DRV report "$TMP/r1" --format html -o "$TMP/html" >/dev/null 2>&1
+ok "html: report.html written"     "[ -s $TMP/html/report.html ]"
+ok "html: svg roofline figure"     "grep -q '<svg' $TMP/html/report.html"
 
 # per-function roofline (B): needs perf_event sampling access; skip if blocked
 RFOUT=$("$DRV" roofline -o "$TMP/rf" -- "$TMP/s" 2>/dev/null)
@@ -67,6 +70,9 @@ extern void dgemm_(char*,char*,int*,int*,int*,double*,double*,int*,double*,int*,
 int main(int c,char**v){MPI_Init(&c,&v);int r;MPI_Comm_rank(MPI_COMM_WORLD,&r);
  double s[64],d[64];for(int i=0;i<64;i++)s[i]=i;
  for(int i=0;i<30;i++)MPI_Allreduce(s,d,64,MPI_DOUBLE,MPI_SUM,MPI_COMM_WORLD);
+ int np;MPI_Comm_size(MPI_COMM_WORLD,&np);
+ int nxt=(r+1)%np,prv=(r-1+np)%np;MPI_Status st;
+ for(int i=0;i<20;i++)MPI_Sendrecv(s,64,MPI_DOUBLE,nxt,0,d,64,MPI_DOUBLE,prv,0,MPI_COMM_WORLD,&st);
  int n=128;char N='N';double a=1,b=0;double*A=calloc(n*n,8),*B=calloc(n*n,8),*C=calloc(n*n,8);
  int it=(r==0)?20:10;for(int i=0;i<it;i++)dgemm_(&N,&N,&n,&n,&n,&a,A,&n,B,&n,&b,C,&n);
  MPI_Finalize();return 0;}
@@ -87,6 +93,9 @@ if [ "$HAVE_MPI" = 1 ]; then
   AOUT=$(OMPI_MCA_rmaps_base_oversubscribe=1 "$DRV" report "$TMP/r2" --view anomaly 2>/dev/null)
   ok "anomaly: variance view"       "echo \"$AOUT\" | grep -q 'Anomaly / variance'"
   ok "anomaly: per-call variance"   "echo \"$AOUT\" | grep -q 'most variable call:'"
+  "$DRV" report "$TMP/r2" --detail mpi --format html -o "$TMP/html" >/dev/null 2>&1
+  ok "html mpi: comm-matrix heatmap" "grep -qE \"class=.hm.\" $TMP/html/report.mpi.html"
+  ok "html mpi: size histogram bars" "grep -qE \"class=.bar.\" $TMP/html/report.mpi.html"
 fi
 
 rm -rf "$TMP"

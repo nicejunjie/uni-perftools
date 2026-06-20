@@ -438,8 +438,12 @@ def fmt_mpi_detail(ranks, rows):
         if d:
             sent[r.get("rank", 0)] = d.get("sent", [])
     if any(sum(v) for v in sent.values()):
-        out += ["", "  Communication matrix  (sent MB, row=from rank, col=to rank)"]
-        if nr <= 16:
+        # The full NxN matrix is unreadable past a handful of ranks — render it
+        # as a heatmap figure in the HTML report (report --detail mpi --format
+        # html). In text, only print the matrix for small jobs; otherwise show
+        # the per-rank sent totals (top senders).
+        if nr <= 8:
+            out += ["", "  Communication matrix  (sent MB, row=from rank, col=to rank)"]
             hdr = "        " + "".join("%8d" % c for c in sorted(rank_of))
             out.append(hdr)
             for rk in sorted(rank_of):
@@ -447,9 +451,13 @@ def fmt_mpi_detail(ranks, rows):
                 cells = "".join("%8.1f" % (v[c] / 1e6 if c < len(v) else 0.0) for c in sorted(rank_of))
                 out.append("   %4d %s" % (rk, cells))
         else:
-            out.append("   (%d ranks — too large to print; per-rank sent totals:)" % nr)
-            for rk in sorted(rank_of):
-                out.append("   rank %4d sent %10.3f GB" % (rk, sum(sent.get(rk, [])) / 1e9))
+            out += ["", "  Communication volume per rank  (%d ranks; full matrix → "
+                    "report --detail mpi --format html)" % nr]
+            tot = sorted(((sum(sent.get(rk, [])), rk) for rk in rank_of), reverse=True)
+            for s, rk in tot[:12]:
+                out.append("   rank %5d  sent %10.3f GB" % (rk, s / 1e9))
+            if nr > 12:
+                out.append("   ... (%d more ranks)" % (nr - 12))
     return "\n".join(out)
 
 

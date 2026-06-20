@@ -136,7 +136,7 @@ def render(points, pk, out):
                    % (dp, bw, dp / bw if bw else 0))
     if not points:
         return
-    hdr = ("    %-22s %4s %8s %10s %10s %8s  bound"
+    hdr = ("    %-26s %4s %8s %10s %10s %8s  bound"
            % ("point", "prec", "AI", "GFLOP/s", "ceiling", "%peak"))
     rule = "    " + "─" * (len(hdr) - 4)
     out.append(hdr)
@@ -147,6 +147,6 @@ def render(points, pk, out):
         if not c:
             continue
         ceil, pct, bound = c
-        out.append("    %-22s %4s %8.2f %10.1f %10.1f %7.0f%%  %s"
-                   % (p["label"][:22], prec.upper(), p["ai"], p["gflops"], ceil, pct, bound))
+        out.append("    %-26s %4s %8.2f %10.1f %10.1f %7.0f%%  %s"
+                   % (p["label"][:26], prec.upper(), p["ai"], p["gflops"], ceil, pct, bound))
     out.append(rule)

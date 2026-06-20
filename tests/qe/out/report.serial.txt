@@ -20,10 +20,10 @@
   Roofline (empirical peaks for AMD Ryzen 9 9950X 16-Core Processor):
     peak compute  FP64 1112 | FP32 2261 GFLOP/s   peak BW 53 GB/s
     ridge AI  FP64 20.85 | FP32 42.41 FLOP/byte  (point judged vs its own precision)
-    point                  prec       AI    GFLOP/s    ceiling    %peak  bound
-    ──────────────────────────────────────────────────────────────────────────
-    whole-program (measure   DP     9.92        2.6      529.0       0%  memory
-    ──────────────────────────────────────────────────────────────────────────
+    point                      prec       AI    GFLOP/s    ceiling    %peak  bound
+    ──────────────────────────────────────────────────────────────────────────────
+    whole-program (measured)     DP     9.92        2.6      529.0       0%  memory
+    ──────────────────────────────────────────────────────────────────────────────
     whole program is memory-bound at 0% of the DP ceiling.
     (per-function roofline → future profile two-pass: survey hotspots, then characterize)
 
