@@ -10,7 +10,7 @@
  * to ANY function — library, user, or system — including inlined code, with cost
  * independent of call frequency. See core/analysis docs.
  *
- * Enabled by SCILIB_ROOFLINE=1. AMD core-PMU events for now; other vendors
+ * Enabled by UPAT_ROOFLINE=1. AMD core-PMU events for now; other vendors
  * degrade to "unsupported" (no roofline_sampling block emitted).
  */
 #define _GNU_SOURCE

@@ -12,7 +12,7 @@ BLAS=$(ls /lib/x86_64-linux-gnu/libblas.so* /usr/lib/x86_64-linux-gnu/libblas.so
 
 ok(){ if eval "$2"; then echo "  PASS: $1"; PASS=$((PASS+1)); else echo "  FAIL: $1"; FAIL=$((FAIL+1)); fi; }
 
-[ -f "$ROOT/collectors/profile/libscilibprof-preload.so" ] || { echo "build first (make)"; exit 1; }
+[ -f "$ROOT/collectors/profile/libupat-preload.so" ] || { echo "build first (make)"; exit 1; }
 
 # --- serial BLAS/LAPACK app ---
 cat > "$TMP/s.c" <<'EOF'

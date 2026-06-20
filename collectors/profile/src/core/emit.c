@@ -1,6 +1,6 @@
 /* Writes this process's raw profile as <prefix>.<rank>.json. No analysis, no
  * cross-rank work, no MPI calls - aggregation/imbalance/formatting all happen in
- * the postprocess tool (tools/scilib-report.py) reading these files. */
+ * the postprocess tool (tools/upat-report.py) reading these files. */
 #define _GNU_SOURCE
 #include "libprof.h"
 #include "report.h"
@@ -42,7 +42,7 @@ void libprof_write_raw(libprof_row_t *rows, int n, double apptime)
     snprintf(path, sizeof(path), "%s.%d.json", libprof_cfg.prefix, rank);
 
     FILE *f = fopen(path, "w");
-    if (!f) { perror("scilib-prof: fopen"); return; }
+    if (!f) { perror("upat: fopen"); return; }
 
     char *exe = NULL;
     get_exe_path(&exe);
@@ -71,6 +71,6 @@ void libprof_write_raw(libprof_row_t *rows, int n, double apptime)
     fclose(f);
 
     if (!libprof_cfg.quiet)
-        fprintf(stderr, "[scilib-prof] wrote %s  (analyze: scilib-report %s.*.json)\n",
+        fprintf(stderr, "[upat] wrote %s  (analyze: upat-report %s.*.json)\n",
                 path, libprof_cfg.prefix);
 }

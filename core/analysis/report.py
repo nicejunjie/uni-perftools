@@ -29,7 +29,7 @@ VIEWS = {
 VIEW_ORDER = ["roofline", "roofline-func", "microarch", "memory", "vectorization",
               "threading", "mpi", "imbalance", "anomaly"]
 
-PROFILE_REPORT = os.path.join(_ROOT, "collectors", "profile", "tools", "scilib-report.py")
+PROFILE_REPORT = os.path.join(_ROOT, "collectors", "profile", "tools", "upat-report.py")
 
 
 def _profile_json(profs):

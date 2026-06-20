@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Generate the descriptor table, slot enum, and wrapper bodies for scilib-prof.
+"""Generate the descriptor table, slot enum, and wrapper bodies for upat.
 
 One wrapper body is emitted per symbol; the symbol *name* is chosen at compile
 time by the WRAP() macro (real name for preload, libprof_dbi_* for frida), so the

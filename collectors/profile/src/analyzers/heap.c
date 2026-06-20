@@ -1,4 +1,4 @@
-/* Heap high-water tracking (opt-in: SCILIB_HEAP=1). Interposes the allocator and
+/* Heap high-water tracking (opt-in: UPAT_HEAP=1). Interposes the allocator and
  * records live bytes, peak (high-water), and allocation count. Off by default, so
  * the wrappers are pure passthrough unless enabled. Not compatible with a second
  * preloaded allocator (jemalloc/tcmalloc).

@@ -1,5 +1,5 @@
 #!/bin/bash
-# Smoke/regression tests for scilib-prof. Builds tiny host programs against the
+# Smoke/regression tests for upat. Builds tiny host programs against the
 # system BLAS/LAPACK/FFTW/MPI, runs them under the profiler (which writes raw
 # per-rank JSON), then checks the postprocess report.
 # Usage: tests/run.sh [preload|frida]   (default: preload)
@@ -7,8 +7,8 @@ set -u
 cd "$(dirname "$0")/.."
 ROOT=$(pwd)
 BACKEND=${1:-preload}
-LIB="$ROOT/libscilibprof-$BACKEND.so"
-RPT="$ROOT/tools/scilib-report.py"
+LIB="$ROOT/libupat-$BACKEND.so"
+RPT="$ROOT/tools/upat-report.py"
 CC=${CC:-mpicc}
 TMP=$(mktemp -d)
 PASS=0; FAIL=0
@@ -18,7 +18,7 @@ FFTW=$(ls /lib/x86_64-linux-gnu/libfftw3.so* 2>/dev/null | head -1)
 ok(){ if eval "$2"; then echo "  PASS: $1"; PASS=$((PASS+1)); else echo "  FAIL: $1"; FAIL=$((FAIL+1)); fi; }
 run(){ # run $1=exe under profiler writing into $TMP, echo the report
   rm -f "$TMP"/p.*.json
-  env SCILIB_QUIET=1 ${2:-} SCILIB_OUTPUT="$TMP/p" LD_PRELOAD="$LIB" "$1" >/dev/null 2>&1
+  env UPAT_QUIET=1 ${2:-} UPAT_OUTPUT="$TMP/p" LD_PRELOAD="$LIB" "$1" >/dev/null 2>&1
   python3 "$RPT" "$TMP"/p.*.json 2>&1
 }
 
@@ -68,7 +68,7 @@ int main(){int n=1024;fftw_complex*a=calloc(n,16),*b=calloc(n,16);
  for(int i=0;i<100;i++)fftw_execute(p); fftw_destroy_plan(p); return 0;}
 EOF
 $CC -O2 "$TMP/t3.c" -o "$TMP/t3" "$FFTW" 2>/dev/null
-OUT=$(run "$TMP/t3" "SCILIB_SHAPE=1")
+OUT=$(run "$TMP/t3" "UPAT_SHAPE=1")
 ok "fftw_execute[1024] counted 100x" "echo \"$OUT\" | grep -E 'fftw_execute\[1024\]' | grep -qE ' 100 '"
 fi
 
@@ -87,7 +87,7 @@ EOF
 $CC -O2 "$TMP/t4.c" -o "$TMP/t4" "$BLAS" 2>/dev/null
 rm -f "$TMP"/p.*.json
 OMPI_MCA_rmaps_base_oversubscribe=1 mpirun --oversubscribe -n 4 \
-  -x SCILIB_QUIET=1 -x SCILIB_OUTPUT="$TMP/p" -x LD_PRELOAD="$LIB" "$TMP/t4" >/dev/null 2>&1
+  -x UPAT_QUIET=1 -x UPAT_OUTPUT="$TMP/p" -x LD_PRELOAD="$LIB" "$TMP/t4" >/dev/null 2>&1
 NFILES=$(ls "$TMP"/p.*.json 2>/dev/null | wc -l)
 OUT=$(python3 "$RPT" "$TMP"/p.*.json 2>&1)
 ok "4 per-rank files written"  "[ $NFILES -eq 4 ]"
@@ -105,7 +105,7 @@ int main(){ double s=0; for(int k=0;k<300;k++){ s+=hot(2000000); s+=cold(100000)
 EOF
 $CC -O2 -g "$TMP/t5.c" -o "$TMP/t5" 2>/dev/null
 rm -f "$TMP"/p.*.json
-env SCILIB_QUIET=1 SCILIB_SAMPLE=1 SCILIB_SAMPLE_HZ=2000 SCILIB_OUTPUT="$TMP/p" \
+env UPAT_QUIET=1 UPAT_SAMPLE=1 UPAT_SAMPLE_HZ=2000 UPAT_OUTPUT="$TMP/p" \
     LD_PRELOAD="$LIB" "$TMP/t5" >/dev/null 2>&1
 OUT=$(python3 "$RPT" "$TMP"/p.*.json 2>&1)
 ok "sampling: grouped table (CrayPAT-style)" "echo \"$OUT\" | grep -q 'Profile by Function Group'"
@@ -118,7 +118,7 @@ FOLD=$(python3 "$RPT" --folded "$TMP"/p.*.json 2>&1)
 ok "sampling: folded flamegraph export"  "echo \"$FOLD\" | grep -qE 'main;.*hot [0-9]+'"
 
 # --- driver: one command runs + reports ---
-DRV="$ROOT/bin/scilib-prof"
+DRV="$ROOT/bin/upat"
 OUT=$("$DRV" --no-sample "$TMP/t1" 2>&1)
 ok "driver: prints a report"        "echo \"$OUT\" | grep -q 'Scientific Library Profiler'"
 ok "driver: traced dgemm"           "echo \"$OUT\" | grep -q ' dgemm_ '"
@@ -128,13 +128,13 @@ cat > "$TMP/t6.c" <<'EOF'
 #include <unistd.h>
 #include <fcntl.h>
 int main(){ char b[65536]; for(int i=0;i<65536;i++) b[i]=i;
- int fd=open("/tmp/.scilib_t6",O_WRONLY|O_CREAT|O_TRUNC,0644);
+ int fd=open("/tmp/.upat_t6",O_WRONLY|O_CREAT|O_TRUNC,0644);
  for(int i=0;i<100;i++) if(write(fd,b,65536)<0) return 1; close(fd);
- fd=open("/tmp/.scilib_t6",O_RDONLY); while(read(fd,b,65536)>0){} close(fd);
- unlink("/tmp/.scilib_t6"); return 0; }
+ fd=open("/tmp/.upat_t6",O_RDONLY); while(read(fd,b,65536)>0){} close(fd);
+ unlink("/tmp/.upat_t6"); return 0; }
 EOF
 $CC -O2 "$TMP/t6.c" -o "$TMP/t6" 2>/dev/null
-OUT=$(run "$TMP/t6" "SCILIB_SAMPLE=0")
+OUT=$(run "$TMP/t6" "UPAT_SAMPLE=0")
 ok "I/O: table present"              "echo \"$OUT\" | grep -q 'I/O statistics'"
 ok "I/O: write traced with bytes"   "echo \"$OUT\" | grep -E '^   write ' | grep -qE '[0-9]{7}'"
 
@@ -146,10 +146,10 @@ int main(){ void* a[32]; for(int i=0;i<32;i++){a[i]=malloc(4<<20); memset(a[i],1
  for(int i=0;i<32;i++) free(a[i]); return 0; }
 EOF
 $CC -O0 "$TMP/t7.c" -o "$TMP/t7" 2>/dev/null   # -O0: keep allocations from being elided
-OUT=$(run "$TMP/t7" "SCILIB_SAMPLE=0 SCILIB_HEAP=1")
+OUT=$(run "$TMP/t7" "UPAT_SAMPLE=0 UPAT_HEAP=1")
 ok "heap: high-water reported"      "echo \"$OUT\" | grep -q 'Heap high-water'"
 ok "heap: peak ~128MB"              "echo \"$OUT\" | grep -qE 'peak .*0\.1[0-9]+ GB'"
-OUT=$(run "$TMP/t7" "SCILIB_SAMPLE=0")
+OUT=$(run "$TMP/t7" "UPAT_SAMPLE=0")
 ok "heap: off by default"           "! echo \"$OUT\" | grep -q 'Heap high-water'"
 
 # --- MPI detail (histogram + comm matrix) + observations ---
@@ -165,7 +165,7 @@ EOF
 $CC -O2 "$TMP/t8.c" -o "$TMP/t8" 2>/dev/null
 rm -f "$TMP"/p.*.json
 OMPI_MCA_rmaps_base_oversubscribe=1 mpirun --oversubscribe -n 4 \
-  -x SCILIB_QUIET=1 -x SCILIB_SAMPLE=0 -x SCILIB_OUTPUT="$TMP/p" -x LD_PRELOAD="$LIB" "$TMP/t8" >/dev/null 2>&1
+  -x UPAT_QUIET=1 -x UPAT_SAMPLE=0 -x UPAT_OUTPUT="$TMP/p" -x LD_PRELOAD="$LIB" "$TMP/t8" >/dev/null 2>&1
 OUT=$(python3 "$RPT" "$TMP"/p.*.json 2>&1)
 ok "MPI: size distribution"          "echo \"$OUT\" | grep -q 'message-size distribution'"
 ok "MPI: communication matrix"       "echo \"$OUT\" | grep -q 'Communication matrix'"

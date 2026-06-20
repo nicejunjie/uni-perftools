@@ -37,8 +37,8 @@ install: profile
 	mkdir -p $(DEST)/collectors/profile/tools \
 	         $(DEST)/collectors/snapshot/target/release \
 	         $(DESTDIR)$(PREFIX)/bin
-	install -m644 $(PROFILE)/libscilibprof-preload.so $(PROFILE)/libscilibprof-frida.so $(DEST)/collectors/profile/
-	install -m755 $(PROFILE)/tools/scilib-report.py $(DEST)/collectors/profile/tools/
+	install -m644 $(PROFILE)/libupat-preload.so $(PROFILE)/libupat-frida.so $(DEST)/collectors/profile/
+	install -m755 $(PROFILE)/tools/upat-report.py $(DEST)/collectors/profile/tools/
 	install -m755 $(SNAPSHOT)/target/release/uaps $(DEST)/collectors/snapshot/target/release/
 	cp -r core $(DEST)/
 	printf '#!/bin/sh\nexec "%s/lib/perfsuite/core/cli/perfsuite" "$$@"\n' "$(PREFIX)" > $(DESTDIR)$(PREFIX)/bin/perfsuite

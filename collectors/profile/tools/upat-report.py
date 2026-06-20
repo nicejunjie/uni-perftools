@@ -1,14 +1,14 @@
 #!/usr/bin/env python3
-"""scilib-report - postprocess raw scilib-prof per-rank JSON into a report.
+"""upat-report - postprocess raw upat per-rank JSON into a report.
 
-The profiled run writes one scilib-prof.<rank>.json per process (no analysis).
+The profiled run writes one upat.<rank>.json per process (no analysis).
 This tool reduces across ranks and prints a COMPUTE table (BLAS/LAPACK/...) and a
 separate MPI table (with communication volume / GB/s), plus load imbalance.
 
 Usage:
-  scilib-report scilib-prof.*.json
-  scilib-report out/                       # a directory of json files
-  scilib-report --imbalance world --format csv scilib-prof.*.json
+  upat-report upat.*.json
+  upat-report out/                       # a directory of json files
+  upat-report --imbalance world --format csv upat.*.json
 """
 import sys, os, json, glob, argparse, subprocess, collections
 
@@ -89,7 +89,7 @@ def group_of(path, func, app_base):
         return "LAPACK"
     if "libfftw" in b:
         return "FFTW"
-    if "scilibprof" in b:
+    if "libupat" in b:
         return "ETC"        # our own overhead
     return "ETC"
 
@@ -256,7 +256,7 @@ def load(paths):
         with open(fn) as f:
             ranks.append(json.load(f))
     if not ranks:
-        sys.exit("scilib-report: no input files matched")
+        sys.exit("upat-report: no input files matched")
     return ranks
 
 

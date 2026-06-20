@@ -52,6 +52,6 @@ breakdown (charges `read()`-under-MPI to MPI via the stack).
 
 ## Standalone vs suite
 Each collector also runs standalone (profile: `collectors/profile` make + its
-`scilib-report.py`; snapshot: `cargo run`). The suite (`core/cli/perfsuite`)
+`upat-report.py`; snapshot: `cargo run`). The suite (`core/cli/perfsuite`)
 composes them and renders one report. See `../SUITE_PLAN.md` for the roadmap and
 open-gap decisions; `../core/contract/SCHEMA.md` for the on-disk format.

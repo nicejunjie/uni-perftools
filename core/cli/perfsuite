@@ -37,7 +37,7 @@ def find(env, cands):
 def tools(dbi):
     lib = find("PROFILE_LIB", [os.path.join(
         ROOT, "collectors", "profile",
-        "libscilibprof-%s.so" % ("frida" if dbi else "preload"))])
+        "libupat-%s.so" % ("frida" if dbi else "preload"))])
     snap = find("SNAPSHOT_BIN", [os.path.join(
         ROOT, "collectors", "snapshot", "target", b, "uaps") for b in ("release", "debug")])
     return lib, snap
@@ -62,19 +62,19 @@ def do_collect(args):
     result = args.outdir or os.path.join(os.getcwd(), "perf.%d" % os.getpid())
     os.makedirs(result, exist_ok=True)
 
-    env_vars = {"LD_PRELOAD": lib, "SCILIB_OUTPUT": os.path.join(result, "prof"),
-                "SCILIB_QUIET": "1",
-                "SCILIB_SHAPE": "1"}   # size-resolved rows in the profile drill-down
+    env_vars = {"LD_PRELOAD": lib, "UPAT_OUTPUT": os.path.join(result, "prof"),
+                "UPAT_QUIET": "1",
+                "UPAT_SHAPE": "1"}   # size-resolved rows in the profile drill-down
     if args.no_sample:
-        env_vars["SCILIB_SAMPLE"] = "0"
+        env_vars["UPAT_SAMPLE"] = "0"
     if args.heap:
-        env_vars["SCILIB_HEAP"] = "1"
+        env_vars["UPAT_HEAP"] = "1"
     if getattr(args, "roofline", False):
         # characterize pass: FP-op + DRAM-fill event sampling for per-function
         # roofline (B). Leaf sampling gives clean exclusive-time attribution.
-        env_vars["SCILIB_ROOFLINE"] = "1"
-        env_vars["SCILIB_SAMPLE"] = "1"
-        env_vars["SCILIB_SAMPLE_STACK"] = "1"
+        env_vars["UPAT_ROOFLINE"] = "1"
+        env_vars["UPAT_SAMPLE"] = "1"
+        env_vars["UPAT_SAMPLE_STACK"] = "1"
         snap = None       # profile owns the PMU here; running uaps too would
                           # multiplex the FP counter and starve the sampler.
 

@@ -1,7 +1,7 @@
-# scilib-prof - scientific library profiler
+# upat - scientific library profiler
 # Builds two preloadable profilers:
-#   libscilibprof-preload.so : LD_PRELOAD symbol interposition (dynamic libs)
-#   libscilibprof-frida.so   : Frida DBI (also static libs)
+#   libupat-preload.so : LD_PRELOAD symbol interposition (dynamic libs)
+#   libupat-frida.so   : Frida DBI (also static libs)
 
 CC      ?= cc
 PYTHON  ?= python3
@@ -39,8 +39,8 @@ CORE_OBJ := $(patsubst src/core/%.c,$(OBJ)/shared/%.o,$(CORE_SRC)) \
 WRAP_PRE := $(patsubst %,$(OBJ)/preload/%_wrap.o,$(WRAP_GRP))
 WRAP_FRI := $(patsubst %,$(OBJ)/frida/%_wrap.o,$(WRAP_GRP))
 
-TARGET_PRE := libscilibprof-preload.so
-TARGET_FRI := libscilibprof-frida.so
+TARGET_PRE := libupat-preload.so
+TARGET_FRI := libupat-frida.so
 
 all: $(TARGET_PRE) $(TARGET_FRI)
 preload: $(TARGET_PRE)
@@ -108,9 +108,9 @@ PREFIX ?= /usr/local
 install: all
 	mkdir -p $(DESTDIR)$(PREFIX)/lib $(DESTDIR)$(PREFIX)/bin
 	install -m 755 $(TARGET_PRE) $(TARGET_FRI) $(DESTDIR)$(PREFIX)/lib/
-	install -m 755 bin/scilib-prof $(DESTDIR)$(PREFIX)/bin/scilib-prof
-	install -m 755 tools/scilib-report.py $(DESTDIR)$(PREFIX)/bin/scilib-report
-	@echo "installed to $(DESTDIR)$(PREFIX) — run: scilib-prof ./your_app"
+	install -m 755 bin/upat $(DESTDIR)$(PREFIX)/bin/upat
+	install -m 755 tools/upat-report.py $(DESTDIR)$(PREFIX)/bin/upat-report
+	@echo "installed to $(DESTDIR)$(PREFIX) — run: upat ./your_app"
 
 .PHONY: all preload frida dirs clean veryclean install
 clean:

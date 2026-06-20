@@ -8,7 +8,7 @@
 void libprof_register_analyzers(void);
 
 /* Build a shaped key (interned in the calling thread's arena) when
- * SCILIB_SHAPE is enabled. Returns 1 if a key was produced, else 0. */
+ * UPAT_SHAPE is enabled. Returns 1 if a key was produced, else 0. */
 int libprof_make_shape(libprof_key_t *k, const libprof_desc_t *d, const char *fmt, ...);
 
 #endif

@@ -1,5 +1,5 @@
 /* Statistical sampling profiler. Per-thread POSIX timer -> realtime signal ->
- * handler records the interrupted PC (leaf) and, when SCILIB_SAMPLE_STACK>1, the
+ * handler records the interrupted PC (leaf) and, when UPAT_SAMPLE_STACK>1, the
  * call stack via backtrace(). No malloc/lock on the signal path (all per-thread
  * buffers are preallocated). Symbolization happens in postprocess. */
 #define _GNU_SOURCE

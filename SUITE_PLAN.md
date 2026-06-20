@@ -7,7 +7,7 @@ binaries, built/versioned/tested together), organized like VTune: two **collecto
 feeding a shared **core** (result format → finalization → analysis/report), driven by
 one CLI.
 
-- **profile collector** (C `.so`, today's scilib-prof) — CrayPAT-like: sampling/
+- **profile collector** (C `.so`, today's upat) — CrayPAT-like: sampling/
   call-stack, top functions/lines, sci-lib tracing (BLAS/LAPACK/PBLAS/ScaLAPACK/
   CBLAS/LAPACKe/FFTW), MPI (portable `mpi.h`-free PMPI), per-call I/O, heap.
 - **snapshot collector** (Rust, today's uaps) — APS-like: HWPC (IPC, %peak, top-down,
@@ -28,7 +28,7 @@ target vs Rust `perf` counting from outside); they compose at runtime as
 ## Directory structure (monorepo)
 
 ```
-<repo>/                     # suite (name TBD; root replaces today's scilib-prof)
+<repo>/                     # suite (name TBD; root replaces today's upat)
   collectors/               # the two tools
     profile/                #   C   → libprofile.so   (today's src/, gen/)
     snapshot/               #   Rust → snapshot bin    (today's uaps crates, moved in)
@@ -56,7 +56,7 @@ target vs Rust `perf` counting from outside); they compose at runtime as
 ## Phases
 
 ### Phase 0 — Restructure into the monorepo
-Create `collectors/profile/` from today's scilib-prof (`src/`, `gen/`, `tests`), move
+Create `collectors/profile/` from today's upat (`src/`, `gen/`, `tests`), move
 uaps into `collectors/snapshot/` (copy tree; history stays in the old repo), and stand
 up `core/` + top `Makefile`. Each component still builds. (Pure move + build wiring.)
 
@@ -66,7 +66,7 @@ Pin `schema_version=1`, result-dir layout (`manifest.json` + `snap.json` +
 **aggregation + imbalance** conventions both collectors obey.
 
 ### Phase 2 — Core analysis as viewpoints (core/analysis + core/symbolize + core/cli)
-Move scilib-prof's report logic into `core/analysis` as an importable module; add the
+Move upat's report logic into `core/analysis` as an importable module; add the
 snapshot viewpoint (from `snap.json`); organize as selectable **viewpoints** over the
 result. `core/symbolize` owns PC→source. `core/cli` exposes `collect` (orchestrate
 snapshot-outer + profile-inner → result) and `report` (render viewpoints, `--format
@@ -99,7 +99,7 @@ files — N `prof.*` + 1 `snap`, no stray file; unified imbalance; cross-link + 
 insight). One top README + the contract spec in `docs/`.
 
 ## Critical files / moves
-- `collectors/profile/` ← current `src/`, `gen/`, `tools/scilib-report.py` (report
+- `collectors/profile/` ← current `src/`, `gen/`, `tools/upat-report.py` (report
   logic migrates to `core/analysis`), `tests/run.sh`, `Makefile`.
 - `collectors/snapshot/` ← `../aps-profiler-universal/{crates,Cargo.*,build.rs,testbench}`.
 - `core/contract/` (schema), `core/symbolize/` (addr2line), `core/analysis/` (viewpoints
@@ -146,7 +146,7 @@ insight). One top README + the contract spec in `docs/`.
    `collectors/profile/third_party/` or top `third_party/`). Rust stays a cargo
    workspace under `collectors/snapshot/`.
 6. **Standalone story.** profile keeps its current built-in text report (today's
-   `scilib-report.py`) so it works standalone without the Python core; `core/analysis`
+   `upat-report.py`) so it works standalone without the Python core; `core/analysis`
    *reuses/extends* that module and adds the snapshot view + insights. snapshot keeps
    its Rust report standalone. Suite report = `core/analysis` over the result.
 7. **Naming / license / history.** Driver `perfsuite`; collector artifacts renamed in

@@ -8,7 +8,7 @@ spirit, with two complementary views from a single run:
   but with no `-pg` rebuild and full support for threads and MPI ranks. Captures
   **call stacks** by default, so time is attributed inclusively and charged to the
   right group (e.g. blocking in MPI shows as **MPI**, not libc `poll`); exports
-  **folded stacks** for flame graphs (`scilib-report --folded`).
+  **folded stacks** for flame graphs (`upat-report --folded`).
 - **Tracing** (scientific libraries + MPI + I/O): exact call interception of
   **BLAS, LAPACK, PBLAS, ScaLAPACK, CBLAS, LAPACKe, FFTW, MPI, POSIX I/O** →
   per-function counts, inclusive/exclusive time, communication/I/O volume (GB/s),
@@ -19,13 +19,13 @@ spirit, with two complementary views from a single run:
 
 ```
 make
-bin/scilib-prof ./your_app                 # run + report, one step
-bin/scilib-prof mpirun -n 4 ./your_app     # parallel; env propagated for you
-bin/scilib-prof --dbi ./static_app         # Frida backend (also static libs)
-make install PREFIX=~/.local               # then just: scilib-prof ./your_app
+bin/upat ./your_app                 # run + report, one step
+bin/upat mpirun -n 4 ./your_app     # parallel; env propagated for you
+bin/upat --dbi ./static_app         # Frida backend (also static libs)
+make install PREFIX=~/.local               # then just: upat ./your_app
 ```
 
-`scilib-prof` sets `LD_PRELOAD` + config for the child, runs it, and aggregates
+`upat` sets `LD_PRELOAD` + config for the child, runs it, and aggregates
 the per-rank raw files into a report automatically. The report mimics CrayPAT —
 a sampling "Profile by Function Group and Function" followed by exact library
 tracing tables:
@@ -47,14 +47,14 @@ Table 3:  MPI message statistics  (tracing)
 ```
 
 Groups: **USER** (your code), **MPI**, **BLAS**, **LAPACK**, **FFTW**, **ETC**
-(libc/runtime). Use `SCILIB_SAMPLE_CPU=1` to focus on compute and push MPI wait
+(libc/runtime). Use `UPAT_SAMPLE_CPU=1` to focus on compute and push MPI wait
 time out of the picture.
 
 ## Manual use (no driver)
 
 ```
-LD_PRELOAD=./libscilibprof-preload.so ./app      # writes scilib-prof.<rank>.json
-tools/scilib-report.py scilib-prof.*.json        # symbolize + aggregate
+LD_PRELOAD=./libupat-preload.so ./app      # writes upat.<rank>.json
+tools/upat-report.py upat.*.json        # symbolize + aggregate
 ```
 
 The library only ever *writes raw per-process data*; all analysis (symbolization
@@ -68,25 +68,25 @@ Library (measurement) — environment variables:
 
 | Variable            | Default | Meaning                                          |
 |---------------------|---------|--------------------------------------------------|
-| `SCILIB_SAMPLE`     | `1`     | statistical sampling on/off                      |
-| `SCILIB_SAMPLE_HZ`  | `1000`  | sampling rate (Hz)                               |
-| `SCILIB_SAMPLE_CPU` | `0`     | sample CPU time (`1`) vs wall time (`0`)         |
-| `SCILIB_SAMPLE_STACK`| `64`   | call-stack depth to unwind per sample (`1`=leaf only) |
-| `SCILIB_HEAP`       | `0`     | track heap high-water mark (interposes malloc)   |
-| `SCILIB_SHAPE`      | `0`     | per-shape tracing rows (`dgemm_[m=…,n=…,k=…]`)   |
-| `SCILIB_OUTPUT`     | `scilib-prof` | raw-file path prefix (`<prefix>.<rank>.json`)|
-| `SCILIB_QUIET`      | `0`     | suppress the "wrote …" note                      |
+| `UPAT_SAMPLE`     | `1`     | statistical sampling on/off                      |
+| `UPAT_SAMPLE_HZ`  | `1000`  | sampling rate (Hz)                               |
+| `UPAT_SAMPLE_CPU` | `0`     | sample CPU time (`1`) vs wall time (`0`)         |
+| `UPAT_SAMPLE_STACK`| `64`   | call-stack depth to unwind per sample (`1`=leaf only) |
+| `UPAT_HEAP`       | `0`     | track heap high-water mark (interposes malloc)   |
+| `UPAT_SHAPE`      | `0`     | per-shape tracing rows (`dgemm_[m=…,n=…,k=…]`)   |
+| `UPAT_OUTPUT`     | `upat` | raw-file path prefix (`<prefix>.<rank>.json`)|
+| `UPAT_QUIET`      | `0`     | suppress the "wrote …" note                      |
 
 Wall-clock sampling (default) shows where real time goes, *including* MPI waits
-and load imbalance; `SCILIB_SAMPLE_CPU=1` focuses on compute hotspots.
+and load imbalance; `UPAT_SAMPLE_CPU=1` focuses on compute hotspots.
 
-Postprocess (analysis): `scilib-report.py [--imbalance active|world]
+Postprocess (analysis): `upat-report.py [--imbalance active|world]
 [--format table|json|csv] [--sort t_excl|t_incl|count] [--top N] FILES...`.
 
 ## Build
 
 ```
-make                 # libscilibprof-preload.so + libscilibprof-frida.so
+make                 # libupat-preload.so + libupat-frida.so
 make ILP64=1         # profile 64-bit-integer BLAS/LAPACK (MKL/NVPL ILP64)
 make install PREFIX=...
 tests/run.sh [preload|frida]
@@ -105,8 +105,8 @@ src/backends/   preload.c (dlsym RTLD_NEXT), frida.c (gum replace)
 src/analyzers/  blas.c (+cblas shapes), fftw.c (plan registry), mpi.c (bytes,
                 size histogram, comm matrix), io.c (POSIX bytes), heap.c (high-water)
 gen/gen.py      reads gen/prototypes/*.txt, emits one thin wrapper per symbol
-tools/scilib-report.py   symbolize + reduce across ranks -> tables
-bin/scilib-prof          one-command driver (run + auto-report)
+tools/upat-report.py   symbolize + reduce across ranks -> tables
+bin/upat          one-command driver (run + auto-report)
 ```
 
 A single **universal** pipeline serves every library group; there is no

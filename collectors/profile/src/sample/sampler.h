@@ -6,7 +6,7 @@
  * Symbolization (PC -> function/source line) is deferred to the postprocess
  * tool, so the hot path stays tiny and signal-safe. */
 
-int  libprof_sample_enabled(void);   /* SCILIB_SAMPLE!=0 and setup succeeded */
+int  libprof_sample_enabled(void);   /* UPAT_SAMPLE!=0 and setup succeeded */
 int  libprof_sample_hz(void);
 void libprof_sample_init(void);      /* install handler + arm the main thread */
 void libprof_sample_stop_all(void);  /* disarm globally before emit */

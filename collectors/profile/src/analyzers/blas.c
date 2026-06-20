@@ -1,7 +1,7 @@
-/* BLAS shape analyzers: when SCILIB_SHAPE=1 they split rows by problem size
+/* BLAS shape analyzers: when UPAT_SHAPE=1 they split rows by problem size
  * (e.g. dgemm_[m=400,n=400,k=400]). They carry no flop model - flop counting
  * was dropped as it is only exact for a tiny subset of functions. These are
- * bound only when SCILIB_SHAPE is on, so the default hot path is untouched. */
+ * bound only when UPAT_SHAPE is on, so the default hot path is untouched. */
 #include "analyzer.h"
 #include "config.h"
 #include <stdarg.h>
