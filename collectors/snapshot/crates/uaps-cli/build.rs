@@ -1,9 +1,9 @@
-//! Build the MPI PMPI shim with `mpicc`, if available.
+//! Build the MPI timing shim with `cc`.
 //!
-//! The compiled `uaps_mpi.so` path is exposed to the crate via the
-//! `UAPS_MPI_SHIM_BUILT` compile-time env var (empty string when mpicc is
-//! absent, so `uaps run --mpi` can report a clear error instead of failing
-//! the whole build on machines without MPI).
+//! The shim is now mpi.h-free (forwards to PMPI_* / pmpi_*_ via dlsym), so it
+//! compiles with a plain C compiler — no mpicc, no MPI headers — and works
+//! against any MPI at runtime (OpenMPI/MPICH/Cray) for C and Fortran codes.
+//! The compiled path is exposed via the `UAPS_MPI_SHIM_BUILT` compile-time env.
 
 use std::env;
 use std::process::Command;
@@ -17,8 +17,9 @@ fn main() {
     println!("cargo:rerun-if-changed={src}");
     println!("cargo:rerun-if-env-changed=UAPS_MPI_SHIM");
 
-    let built = Command::new("mpicc")
-        .args(["-shared", "-fPIC", "-O2", &src, "-o", &so])
+    let cc = env::var("CC").unwrap_or_else(|_| "cc".into());
+    let built = Command::new(cc)
+        .args(["-shared", "-fPIC", "-O2", &src, "-o", &so, "-ldl", "-lpthread"])
         .status()
         .map(|s| s.success())
         .unwrap_or(false);
@@ -27,9 +28,6 @@ fn main() {
         println!("cargo:rustc-env=UAPS_MPI_SHIM_BUILT={so}");
     } else {
         println!("cargo:rustc-env=UAPS_MPI_SHIM_BUILT=");
-        println!(
-            "cargo:warning=uaps: mpicc unavailable or MPI shim build failed; \
-             `uaps run --mpi` will be disabled (set UAPS_MPI_SHIM to a prebuilt .so to enable)"
-        );
+        println!("cargo:warning=uaps: MPI shim build failed; set UAPS_MPI_SHIM to a prebuilt .so");
     }
 }

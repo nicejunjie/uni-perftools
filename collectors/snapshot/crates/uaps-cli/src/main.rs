@@ -109,6 +109,15 @@ fn run(
 ) -> Result<()> {
     let (program, args) = argv.split_first().expect("clap guarantees at least one arg");
 
+    // APS-style auto-detect: if the target is an MPI launcher, enable MPI mode
+    // even without --mpi (so `uaps run -- mpirun -n N ./app` just works).
+    let launcher = Path::new(program)
+        .file_name()
+        .map(|s| s.to_string_lossy().into_owned())
+        .unwrap_or_default();
+    let mpi = mpi
+        || matches!(launcher.as_str(), "mpirun" | "mpiexec" | "orterun" | "srun" | "aprun" | "prun" | "jsrun");
+
     let mut collectors: Vec<Box<dyn Collector>> = vec![
         Box::new(ElapsedCollector::new()),
         Box::new(ProcCollector::new()),
@@ -119,23 +128,31 @@ fn run(
     ];
 
     let mut cmd = Command::new(program);
-    cmd.args(args);
 
     // MPI mode: LD_PRELOAD the PMPI shim and point it at a temp output dir,
     // then aggregate the per-rank files via MpiCollector.
+    let is_openmpi = matches!(launcher.as_str(), "mpirun" | "mpiexec" | "orterun");
     if mpi {
         let shim = resolve_mpi_shim()?;
         let dir = std::env::temp_dir().join(format!("uaps_mpi_{}", std::process::id()));
         std::fs::create_dir_all(&dir)
             .with_context(|| format!("failed to create MPI temp dir {}", dir.display()))?;
-        cmd.env("UAPS_MPI_OUTDIR", &dir);
         let mut preload = std::env::var("LD_PRELOAD").unwrap_or_default();
         if !preload.is_empty() {
             preload.push(':');
         }
         preload.push_str(&shim);
-        cmd.env("LD_PRELOAD", preload);
+        cmd.env("UAPS_MPI_OUTDIR", &dir);
+        cmd.env("LD_PRELOAD", &preload);
+        // OpenMPI does not forward the launcher's env to ranks — inject -x so the
+        // shim + outdir reach every rank. (srun/aprun forward env by default.)
+        if is_openmpi {
+            cmd.arg("-x").arg("LD_PRELOAD").arg("-x").arg("UAPS_MPI_OUTDIR");
+        }
+        cmd.args(args);
         collectors.push(Box::new(MpiCollector::new(dir)));
+    } else {
+        cmd.args(args);
     }
 
     let mut child = cmd

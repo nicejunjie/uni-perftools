@@ -1,0 +1,58 @@
+uaps — Application Performance Snapshot
+=======================================
+
+Bottleneck: Frontend-bound
+
+Overview
+  Elapsed time                   9.554 s
+  Physical core utilization      84.7%
+  CPU utilization                27.11 cores
+  Threads (peak)                 65
+
+Compute
+  CPU time                       258.96 s
+  IPC (instructions/cycle)       0.13
+  CPI (cycles/instruction)       7.68
+  FP throughput                  1.93 GFLOP/s
+  Branch mispredict rate         0.1%
+
+Top-down (% of pipeline slots)
+  Retiring                       2.6%
+  Frontend bound                 46.3%
+  Backend bound                  26.1%
+    ↳ memory bound               14.8%
+    ↳ core bound                 11.3%
+  Bad speculation                0.0%
+
+Memory
+  Memory footprint (peak RSS)    74.1 MiB
+  Cache miss rate                14.5%
+  LLC misses / 1K instr          1.65 MPKI
+  DRAM fills / 1K instr          0.16 DPKI
+  DRAM-bound (of demand fills)   3.4%
+  NUMA remote access             0.0%
+  Memory bound                   0.6%
+
+Parallelism (MPI / threads)
+  Active worker threads          33
+  Thread imbalance               4.9%
+
+I/O
+  Disk read                      0 B
+  Disk write                     6.1 MiB
+  I/O read (logical)             891.6 KiB
+  I/O write (logical)            6.4 MiB
+
+Hardware counters
+  Instructions                   184316138122
+  CPU cycles                     1414646060898
+  Cache references               2097275133
+  Cache misses (LLC)             303917829
+  Branch instructions            43203858285
+  Branch misses                  26211560
+  Demand fills (all sources)     849032244
+  Demand fills from DRAM         28757773
+  Demand fills from remote node  0
+
+Insights
+  • Frontend-bound: 46.3% of pipeline slots stalled on instruction supply. Reduce code footprint / I-cache pressure; check for excessive branching or large unrolled hot paths.

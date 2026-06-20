@@ -74,6 +74,7 @@ scale.
 | `roofline_func.txt`                     | per-function roofline (single-threaded) |
 | `detail.blas.txt`                       | `--detail blas` per-shape breakdown |
 | `detail.mpi.txt`                        | `--detail mpi` comm matrix + size histogram (text) |
+| `snapshot.serial.txt` / `snapshot.mpi.txt` | `uaps` snapshots (APS-style; MPI section on the MPI run) |
 | `report.html`                           | HTML report (SVG roofline + styled tables) |
 | `report.mpi.html`                       | HTML MPI analysis (comm-matrix heatmap + histogram) |
 | `qe.*.out`                              | QE's own stdout for each run |

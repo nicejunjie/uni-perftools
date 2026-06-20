@@ -105,7 +105,7 @@ impl Collector for MpiCollector {
             0.0
         };
 
-        // Aggregate per-function time across ranks; surface the heaviest call.
+        // Aggregate per-function time across ranks; surface the top 5 (APS-style).
         let mut fn_totals: Vec<(String, f64)> = Vec::new();
         for r in &ranks {
             for (name, t, _c) in &r.fns {
@@ -116,6 +116,7 @@ impl Collector for MpiCollector {
             }
         }
         fn_totals.sort_by(|a, b| b.1.partial_cmp(&a.1).unwrap_or(std::cmp::Ordering::Equal));
+        let fn_sum: f64 = fn_totals.iter().map(|(_, t)| t).sum();
 
         let mut out = vec![
             Metric {
@@ -139,10 +140,15 @@ impl Collector for MpiCollector {
                 value: MetricValue::Percent(imbalance_pct),
             },
         ];
-        if let Some((name, t)) = fn_totals.first() {
+        // Top 5 MPI functions by aggregate time (the keys mpi_top1..5 are listed
+        // in the report's Parallelism section). Label carries name + %-of-MPI;
+        // value is total seconds across ranks.
+        const TOPKEYS: [&str; 5] = ["mpi_top1", "mpi_top2", "mpi_top3", "mpi_top4", "mpi_top5"];
+        for (i, (name, t)) in fn_totals.iter().take(5).enumerate() {
+            let pct = if fn_sum > 0.0 { t / fn_sum * 100.0 } else { 0.0 };
             out.push(Metric {
-                key: "mpi_top_fn_time",
-                label: format!("Top MPI call ({name}, total)"),
+                key: TOPKEYS[i],
+                label: format!("  {name}  ({pct:.0}% of MPI)"),
                 value: MetricValue::Float { value: *t, unit: "s" },
             });
         }

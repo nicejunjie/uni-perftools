@@ -108,6 +108,14 @@ if [ "$HAVE_MPI" = 1 ]; then
   "$UPAT" report "$TMP/r2" --detail mpi --format html -o "$TMP/o" >/dev/null 2>&1
   ok "html mpi: comm-matrix heatmap" "grep -qE \"class=.hm.\" $TMP/o/report.mpi.html"
   ok "html mpi: size histogram bars" "grep -qE \"class=.bar.\" $TMP/o/report.mpi.html"
+
+  # uaps snapshot tier: APS-style MPI (auto-detected launcher, mpi.h-free shim)
+  if [ -n "$UAPS" ]; then
+    SOUT=$(OMPI_MCA_rmaps_base_oversubscribe=1 "$UAPS" run -- mpirun --oversubscribe -n 4 "$TMP/m" 2>/dev/null)
+    ok "uaps: APS MPI section"        "echo \"$SOUT\" | grep -q 'MPI ranks'"
+    ok "uaps: MPI time + imbalance"   "echo \"$SOUT\" | grep -q 'MPI time' && echo \"$SOUT\" | grep -q 'MPI imbalance'"
+    ok "uaps: top MPI function"       "echo \"$SOUT\" | grep -qE 'MPI_(Allreduce|Sendrecv|Bcast).*of MPI'"
+  fi
 fi
 
 rm -rf "$TMP"

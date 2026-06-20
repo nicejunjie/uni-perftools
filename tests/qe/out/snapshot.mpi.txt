@@ -1,0 +1,66 @@
+uaps — Application Performance Snapshot
+=======================================
+
+Bottleneck: MPI-bound
+
+Overview
+  Elapsed time                   4.907 s
+  Physical core utilization      0.0%
+  CPU utilization                0.00 cores
+  Threads (peak)                 3
+
+Compute
+  CPU time                       0.01 s
+  IPC (instructions/cycle)       1.32
+  CPI (cycles/instruction)       0.76
+  FP throughput                  0.00 GFLOP/s
+  Branch mispredict rate         1.3%
+
+Top-down (% of pipeline slots)
+  Retiring                       16.4%
+  Frontend bound                 50.6%
+  Backend bound                  29.8%
+    ↳ memory bound               29.4%
+    ↳ core bound                 0.4%
+  Bad speculation                2.8%
+
+Memory
+  Memory footprint (peak RSS)    12.9 MiB
+  Cache miss rate                12.3%
+  LLC misses / 1K instr          6.46 MPKI
+  DRAM fills / 1K instr          0.81 DPKI
+  DRAM-bound (of demand fills)   13.2%
+  NUMA remote access             0.0%
+  Memory bound                   31.8%
+
+Parallelism (MPI / threads)
+  MPI ranks                      2
+  MPI time (avg/rank)            1.19 s
+  MPI time                       32.1%
+  MPI imbalance                  7.8%
+    MPI_Alltoall  (82% of MPI)   1.96 s
+    MPI_Barrier  (16% of MPI)    0.37 s
+    MPI_Bcast  (1% of MPI)       0.03 s
+    MPI_Allreduce  (1% of MPI)   0.02 s
+    MPI_Alltoallv  (0% of MPI)   0.00 s
+
+I/O
+  Disk read                      0 B
+  Disk write                     312.0 KiB
+  I/O read (logical)             206.7 KiB
+  I/O write (logical)            386.3 KiB
+
+Hardware counters
+  Instructions                   120244187
+  CPU cycles                     91331106
+  Cache references               6320806
+  Cache misses (LLC)             776320
+  Branch instructions            28972926
+  Branch misses                  362854
+  Demand fills (all sources)     732992
+  Demand fills from DRAM         96921
+  Demand fills from remote node  0
+
+Insights
+  • MPI-bound: 32.1% of time spent in MPI. Reduce communication/wait: balance work across ranks, overlap comm with compute, or aggregate messages.
+  • Frontend-bound: 50.6% of pipeline slots stalled on instruction supply. Reduce code footprint / I-cache pressure; check for excessive branching or large unrolled hot paths.
