@@ -30,15 +30,29 @@ Then, from this directory, with `UPAT=../../core/cli/upat` and `UAPS` pointing a
 the built `uaps` binary. The two are cost tiers — run one. To get the combined
 view, drop a `uaps` snapshot into the same result dir and `upat report` folds it in.
 
-```sh
-# A) deep profile (upat), serial
-$UPAT run -o out/run_serial -- ./pw -in si.scf.in > out/qe.serial.out
-$UPAT report  out/run_serial                       > out/report.serial.txt
-# optional: add the snapshot tier into the same dir → combined report
-$UAPS run --format json -o out/run_serial/snap.json -- ./pw -in si.scf.in
+**Pin to physical cores.** This box is 16 physical cores / 32 logical (SMT2).
+Letting QE/OpenMP/OpenBLAS spread across all 32 logical CPUs oversubscribes the
+SMT siblings and both slows the run and skews the counters — on this Si SCF it
+made the serial run ~3× slower (8.5 s vs 2.9 s). So we set `OMP_PLACES=cores`
+(one thread per physical core, never a hyperthread) and cap the thread count at
+the 16 physical cores. Get the count with `lscpu -p=Socket,Core | grep -v '^#' |
+sort -u | wc -l`.
 
-# B) MPI, 2 ranks (conda openmpi)
-$UPAT run -o out/run_mpi -- qenv/bin/mpirun -np 2 ./pw -in si.scf.in > out/qe.mpi.out
+```sh
+export OMP_PLACES=cores OMP_PROC_BIND=close   # physical-core placement, no SMT oversubscribe
+
+# A) deep profile (upat), serial — 16 threads on 16 physical cores
+OMP_NUM_THREADS=16 OPENBLAS_NUM_THREADS=16 \
+  $UPAT run -o out/run_serial -- ./pw -in si.scf.in > out/qe.serial.out
+$UPAT report  out/run_serial                        > out/report.serial.txt
+# optional: add the snapshot tier into the same dir → combined report
+OMP_NUM_THREADS=16 OPENBLAS_NUM_THREADS=16 \
+  $UAPS run --format json -o out/run_serial/snap.json -- ./pw -in si.scf.in
+
+# B) MPI, 2 ranks × 8 threads = 16 physical cores (conda openmpi, bound to cores)
+OMP_NUM_THREADS=8 OPENBLAS_NUM_THREADS=8 \
+  $UPAT run -o out/run_mpi -- qenv/bin/mpirun -np 2 --bind-to core --map-by socket:PE=8 \
+    ./pw -in si.scf.in > out/qe.mpi.out
 $UPAT report  out/run_mpi                                            > out/report.mpi.txt
 
 # C) per-function roofline (event sampling), single-threaded for clean hotspots
@@ -47,7 +61,8 @@ OMP_NUM_THREADS=1 OPENBLAS_NUM_THREADS=1 \
 $UPAT report out/run_rf1 --view roofline-func          > out/roofline_func.txt
 
 # the snapshot tier on its own (APS-style bird's-eye, no injection)
-$UAPS run -- qenv/bin/mpirun -np 2 ./pw -in si.scf.in
+OMP_NUM_THREADS=8 OPENBLAS_NUM_THREADS=8 \
+  $UAPS run -- qenv/bin/mpirun -np 2 --bind-to core --map-by socket:PE=8 ./pw -in si.scf.in
 ```
 
 Reporting options (calls aggregate over input sizes by default):

@@ -7,3 +7,4 @@ pkg/
 scratch/
 out/run_*/
 out/collect.*.log
+out/qe.snap_serial.out

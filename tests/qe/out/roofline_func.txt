@@ -3,17 +3,17 @@
   flops = FP-op samples x period (ops-based proxy); bytes = DRAM-fill samples x line.
     function                    self(s)      AI   GFLOP/s   ceiling   %peak  bound
     ──────────────────────────────────────────────────────────────────────────────
-    epoll_wait                    1.523     inf       0.0      1112      0%  compute
-    __GI___poll                   1.456     inf       0.0      1112      0%  compute
-    n1bv_32                       0.257  8582.8      21.4      1112      2%  compute
-    n1fv_32                       0.204     inf      20.3      1112      2%  compute
-    __pthread_rwlock_rdunlock     0.132     inf       1.0      1112      0%  compute
-    0x7d85bb60ec4b                0.079     inf       4.4      1112      0%  compute
-    n1_32                         0.062     inf       6.0      1112      1%  compute
-    vloc_psi_k_acc_               0.044     inf      24.5      1112      2%  compute
-    __fft_scalar_fftw3_MOD_cff    0.036     inf      30.2      1112      3%  compute
-    __fft_helper_subroutines_M    0.027     inf       0.0      1112      0%  compute
-    n1fv_8                        0.024     inf       3.0      1112      0%  compute
-    libc_feholdsetround_sse_ct    0.023     inf       5.2      1112      0%  compute
+    epoll_wait                    1.508     inf       0.0      1112      0%  compute
+    __GI___poll                   1.442     inf       0.0      1112      0%  compute
+    n1bv_32                       0.222     inf      23.9      1112      2%  compute
+    n1fv_32                       0.217     inf      18.9      1112      2%  compute
+    __pthread_rwlock_rdunlock     0.108     inf       1.5      1112      0%  compute
+    0x7f72ac5e4c4b                0.078     inf       2.6      1112      0%  compute
+    n1_32                         0.071     inf       5.3      1112      0%  compute
+    __fft_scalar_fftw3_MOD_cff    0.050     inf      21.6      1112      2%  compute
+    vloc_psi_k_acc_               0.044     inf      25.2      1112      2%  compute
+    apply                         0.026     inf      13.5      1112      1%  compute
+    libprof_now                   0.025     inf       3.4      1112      0%  compute
+    libc_feholdsetround_sse_ct    0.025     inf       5.2      1112      0%  compute
     ──────────────────────────────────────────────────────────────────────────────
     (AI=inf → no DRAM traffic sampled = cache-resident/compute-bound; precision assumed DP)
