@@ -18,14 +18,20 @@
 /* Non-temporal (streaming) stores bypass the cache, so the triad writes a[]
  * straight to DRAM with no read-for-ownership. That makes the real traffic
  * 24 B/iter (2 reads + 1 streaming write) and yields the true sustained DRAM
- * bandwidth (what STREAM reports on x86). Without NT stores a normal store
- * incurs a write-allocate read → 32 B/iter. */
-#if defined(__AVX512F__) || defined(__AVX__)
+ * bandwidth (what STREAM reports). Without NT stores a normal store incurs a
+ * write-allocate read → 32 B/iter. NT instructions are ISA-specific:
+ *   x86  → _mm{256,512}_stream_pd      (AVX / AVX-512)
+ *   ARM  → STNP (store-pair non-temporal) over NEON float64x2
+ * both compile under gcc and clang; anything else falls back to scalar. */
+#if (defined(__x86_64__) || defined(__i386__)) && (defined(__AVX512F__) || defined(__AVX__))
 #include <immintrin.h>
-#define TRIAD_NT 1
+#define NT_X86 1
+#define TRIAD_BYTES 24.0
+#elif defined(__aarch64__)
+#include <arm_neon.h>
+#define NT_ARM 1
 #define TRIAD_BYTES 24.0
 #else
-#define TRIAD_NT 0
 #define TRIAD_BYTES 32.0
 #endif
 
@@ -40,7 +46,7 @@ static double now(void)
 static void triad(double *restrict a, const double *restrict b,
                   const double *restrict c, double s, long n)
 {
-#if TRIAD_NT
+#if defined(NT_X86)
 #ifdef _OPENMP
     #pragma omp parallel
 #endif
@@ -65,6 +71,23 @@ static void triad(double *restrict a, const double *restrict b,
         }
 #endif
         _mm_sfence();              /* make NT stores globally visible before join */
+    }
+#elif defined(NT_ARM)
+#ifdef _OPENMP
+    #pragma omp parallel
+#endif
+    {
+        /* two float64x2 (= 4 doubles) per STNP, the NEON non-temporal store-pair */
+#ifdef _OPENMP
+        #pragma omp for schedule(static) nowait
+#endif
+        for (long i = 0; i < n; i += 4) {
+            float64x2_t a0 = vfmaq_n_f64(vld1q_f64(&b[i]),     vld1q_f64(&c[i]),     s);
+            float64x2_t a1 = vfmaq_n_f64(vld1q_f64(&b[i + 2]), vld1q_f64(&c[i + 2]), s);
+            __asm__ volatile("stnp %q[v0], %q[v1], [%[p]]"
+                             :: [v0] "w"(a0), [v1] "w"(a1), [p] "r"(&a[i]) : "memory");
+        }
+        __asm__ volatile("dsb st" ::: "memory");   /* drain NT stores before join */
     }
 #else
 #ifdef _OPENMP
