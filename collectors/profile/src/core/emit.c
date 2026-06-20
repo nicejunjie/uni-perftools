@@ -10,6 +10,7 @@
 #include <stdlib.h>
 
 __attribute__((weak)) void libprof_sample_emit(void *file);
+__attribute__((weak)) void libprof_roofline_emit(void *file);
 
 /* registry of extra per-rank JSON emitters (MPI comm matrix, heap, ...) */
 #define LIBPROF_MAX_EMIT 8
@@ -64,6 +65,7 @@ void libprof_write_raw(libprof_row_t *rows, int n, double apptime)
     }
     fprintf(f, "\n  ]");
     if (libprof_sample_emit) libprof_sample_emit(f);
+    if (libprof_roofline_emit) libprof_roofline_emit(f);
     libprof_emit_extras(f);
     fprintf(f, "\n}\n");
     fclose(f);

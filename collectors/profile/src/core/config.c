@@ -27,6 +27,10 @@ void libprof_config_parse(void)
     if (c->sample_hz < 1) c->sample_hz = 1;
     if (c->sample_hz > 100000) c->sample_hz = 100000;
 
+    c->roofline = getenv_int("SCILIB_ROOFLINE", 0);          /* pass-2 characterize */
+    c->roof_fp_period  = getenv_int("SCILIB_ROOFLINE_FP_PERIOD", 1000000);
+    c->roof_mem_period = getenv_int("SCILIB_ROOFLINE_MEM_PERIOD", 10000);
+
     const char *out = getenv("SCILIB_OUTPUT");
     snprintf(c->prefix, sizeof(c->prefix), "%s", (out && *out) ? out : "scilib-prof");
 }

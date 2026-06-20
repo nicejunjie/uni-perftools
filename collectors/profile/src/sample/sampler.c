@@ -251,22 +251,30 @@ void libprof_sample_emit(void *fp)
 typedef void *(*startfn)(void *);
 struct tramparg { startfn fn; void *arg; };
 
+__attribute__((weak)) void libprof_roofline_thread_start(void);
+__attribute__((weak)) void libprof_roofline_thread_stop(void);
+
 static void *tramp(void *p)
 {
     struct tramparg a = *(struct tramparg *)p;
     free(p);
     libprof_sample_thread_start();
+    if (libprof_roofline_thread_start) libprof_roofline_thread_start();
     void *r = a.fn(a.arg);
+    if (libprof_roofline_thread_stop) libprof_roofline_thread_stop();
     libprof_sample_thread_stop();
     return r;
 }
+
+__attribute__((weak)) int libprof_roofline_enabled(void);
 
 int pthread_create(pthread_t *thread, const pthread_attr_t *attr,
                    void *(*start)(void *), void *arg)
 {
     static int (*real)(pthread_t *, const pthread_attr_t *, void *(*)(void *), void *);
     if (!real) real = dlsym(RTLD_NEXT, "pthread_create");
-    if (!enabled) return real(thread, attr, start, arg);
+    int roof = libprof_roofline_enabled && libprof_roofline_enabled();
+    if (!enabled && !roof) return real(thread, attr, start, arg);
     struct tramparg *ta = malloc(sizeof(*ta));
     if (!ta) return real(thread, attr, start, arg);
     ta->fn = start; ta->arg = arg;

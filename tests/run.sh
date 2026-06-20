@@ -41,6 +41,15 @@ if [ -f "$TMP/r1/snap.json" ]; then
   ok "serial: SNAPSHOT section"     "echo \"$OUT\" | grep -q 'SNAPSHOT'"
 fi
 
+# per-function roofline (B): needs perf_event sampling access; skip if blocked
+RFOUT=$("$DRV" roofline -o "$TMP/rf" -- "$TMP/s" 2>/dev/null)
+if echo "$RFOUT" | grep -q 'Roofline (per function'; then
+  ok "roofline-func: per-function view" "echo \"$RFOUT\" | grep -q 'Roofline (per function'"
+  ok "roofline-func: dgemm characterized" "echo \"$RFOUT\" | grep -q 'dgemm_'"
+else
+  echo "  SKIP: roofline-func (no perf_event sampling access)"
+fi
+
 # --- MPI app with rank imbalance ---
 cat > "$TMP/m.c" <<'EOF'
 #include <mpi.h>

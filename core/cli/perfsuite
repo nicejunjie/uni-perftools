@@ -69,6 +69,14 @@ def do_collect(args):
         env_vars["SCILIB_SAMPLE"] = "0"
     if args.heap:
         env_vars["SCILIB_HEAP"] = "1"
+    if getattr(args, "roofline", False):
+        # characterize pass: FP-op + DRAM-fill event sampling for per-function
+        # roofline (B). Leaf sampling gives clean exclusive-time attribution.
+        env_vars["SCILIB_ROOFLINE"] = "1"
+        env_vars["SCILIB_SAMPLE"] = "1"
+        env_vars["SCILIB_SAMPLE_STACK"] = "1"
+        snap = None       # profile owns the PMU here; running uaps too would
+                          # multiplex the FP counter and starve the sampler.
 
     inner = scoped(args.cmd, env_vars)
     # snapshot = outer parent; emits run-level snap.json. (No --mpi: MPI is profile's.)
@@ -90,13 +98,17 @@ def do_collect(args):
 def main():
     ap = argparse.ArgumentParser(prog="perfsuite")
     sub = ap.add_subparsers(dest="verb", required=True)
-    VIEWS = ["all", "hotspots", "roofline", "microarch", "memory", "imbalance",
-             "threading", "mpi", "vectorization", "anomaly"]
-    for name in ("collect", "run"):
-        p = sub.add_parser(name)
+    VIEWS = ["all", "hotspots", "roofline", "roofline-func", "microarch", "memory",
+             "imbalance", "threading", "mpi", "vectorization", "anomaly"]
+    for name in ("collect", "run", "roofline"):
+        p = sub.add_parser(name, help="per-function roofline (FP/DRAM event sampling)"
+                           if name == "roofline" else None)
         p.add_argument("--dbi", action="store_true", help="profile via Frida backend")
         p.add_argument("--no-sample", action="store_true")
         p.add_argument("--heap", action="store_true")
+        if name != "roofline":
+            p.add_argument("--roofline", action="store_true",
+                           help="also sample FP/DRAM events for per-function roofline")
         p.add_argument("-o", "--outdir")
         p.add_argument("--format", default="text", choices=["text", "json"])
         p.add_argument("--view", default="all", choices=VIEWS)
@@ -109,16 +121,18 @@ def main():
     sc.add_argument("results", nargs="+")
 
     args = ap.parse_args()
-    if args.verb in ("collect", "run"):
+    if args.verb in ("collect", "run", "roofline"):
+        if args.verb == "roofline":
+            args.roofline = True                 # the verb forces the characterize pass
         if args.cmd and args.cmd[0] == "--":
             args.cmd = args.cmd[1:]
         if not args.cmd:
             ap.error("no command (use: perfsuite %s -- <command>)" % args.verb)
         result, rc = do_collect(args)
-        if args.verb == "run":
-            report.render(result, args.format, args.view)
-        else:
+        if args.verb == "collect":
             sys.stderr.write("[perfsuite] result: %s  (perfsuite report %s)\n" % (result, result))
+        else:
+            report.render(result, args.format, args.view)
         sys.exit(rc)
     elif args.verb == "scale":
         import scaling

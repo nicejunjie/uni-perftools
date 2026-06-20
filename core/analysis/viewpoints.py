@@ -69,6 +69,53 @@ def roofline_view(snap, profile, out):
     out.append("    (per-function roofline → future profile two-pass: survey hotspots, then characterize)")
 
 
+# ------------------------------------------------ per-function roofline (B)
+def roofline_func_view(profile, out):
+    """Per-function roofline from event-based sampling (the characterize pass):
+    flops = FP-op samples x period, DRAM bytes = fill samples x period x line,
+    time = exclusive (self) time samples / Hz. Works for any function — library,
+    user, or system — ranked by exclusive time (the survey). Precision per
+    arbitrary function isn't knowable from the FP counter, so points are judged
+    against the DP ceiling."""
+    rf = (profile or {}).get("roofline_functions")
+    if not rf:
+        return
+    pk = roofline.peaks()
+    fp_p, mem_p = rf.get("fp_period", 0), rf.get("mem_period", 0)
+    bpf, hz = rf.get("bytes_per_fill", 64), rf.get("hz", 0)
+    rows = []
+    for fn, e in rf.get("functions", {}).items():
+        self_s, fp, mem = e.get("self", 0), e.get("fp", 0), e.get("mem", 0)
+        if self_s < 2 and fp < 4:               # below the noise floor
+            continue
+        t = self_s / hz if hz else 0.0
+        if t <= 0:
+            continue
+        flops = fp * fp_p
+        byts = mem * mem_p * bpf
+        gflops = flops / t / 1e9
+        ai = (flops / byts) if byts > 0 else None
+        rows.append((self_s, fn, e.get("group", "ETC"), t, gflops, ai))
+    if not rows:
+        return
+    rows.sort(reverse=True)                       # by exclusive time = the hotspots
+    out.append("\n══ Roofline (per function — measured, event-based sampling) ══")
+    out.append("  flops = FP-op samples x period (ops-based proxy); bytes = DRAM-fill samples x line.")
+    out.append("    %-26s %8s %7s %9s %9s %7s  bound"
+               % ("function", "self(s)", "AI", "GFLOP/s", "ceiling", "%peak"))
+    for self_s, fn, grp, t, gflops, ai in rows[:12]:
+        c = roofline.classify(ai if ai is not None else 1e12, gflops, pk, "dp")
+        if not c:
+            continue
+        ceil, pct, bound = c
+        ais = "%.1f" % ai if ai is not None else "  inf"
+        if ai is None:
+            bound = "compute"
+        out.append("    %-26s %8.3f %7s %9.1f %9.0f %6.0f%%  %s"
+                   % (fn[:26], t, ais, gflops, ceil, pct, bound))
+    out.append("    (AI=inf → no DRAM traffic sampled = cache-resident/compute-bound; precision assumed DP)")
+
+
 # ------------------------------------------------------- microarch / memory
 def microarch_view(snap, out):
     if not snap:

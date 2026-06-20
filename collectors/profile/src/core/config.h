@@ -12,6 +12,9 @@ typedef struct {
     int  sample_cpu;        /* SCILIB_SAMPLE_CPU  1 => CPU-time clock instead of wall */
     int  sample_stack;      /* SCILIB_SAMPLE_STACK  frames to unwind (1=leaf; default 64) */
     int  heap;              /* SCILIB_HEAP        1 => track heap high-water mark */
+    int  roofline;          /* SCILIB_ROOFLINE    1 => per-function FP/DRAM event sampling */
+    int  roof_fp_period;    /* SCILIB_ROOFLINE_FP_PERIOD   FP-ops sample period */
+    int  roof_mem_period;   /* SCILIB_ROOFLINE_MEM_PERIOD  DRAM-fill sample period */
     char prefix[1024];      /* SCILIB_OUTPUT      output path prefix (default scilib-prof) */
 } libprof_config_t;
 

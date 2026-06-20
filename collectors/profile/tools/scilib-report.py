@@ -179,6 +179,71 @@ def symbolize_samples(ranks):
     return s
 
 
+def symbolize_roofline(ranks, samp):
+    """Per-function FP-op and DRAM-fill attribution from the roofline_sampling
+    block (the characterize pass), reusing the same PC->symbol pipeline. Returns
+    per-function {group, file, fp, mem, self} sample counts plus the sample
+    periods, or None when no rank carries roofline data. Works for any function
+    (library / user / system) because attribution is by sampled PC."""
+    if not any(r.get("roofline_sampling") for r in ranks):
+        return None
+    app_base = os.path.basename(ranks[0].get("application", "")) if ranks else ""
+    addrs = collections.defaultdict(set)
+    per_rank = []
+    fp_period = mem_period = bpf = 0
+    for r in ranks:
+        rf = r.get("roofline_sampling")
+        if not rf:
+            per_rank.append(None); continue
+        fp_period = rf.get("fp_period", fp_period)
+        mem_period = rf.get("mem_period", mem_period)
+        bpf = rf.get("bytes_per_fill", bpf) or 64
+        maps = rf.get("maps", [])
+
+        def collect(lst):
+            out = []
+            for pc, cnt in lst:
+                m = map_lookup(maps, pc)
+                if m:
+                    a = file_vaddr(m, pc); addrs[m["path"]].add(a); out.append((m["path"], a, cnt))
+                else:
+                    out.append((None, pc, cnt))
+            return out
+        per_rank.append((collect(rf.get("fp_samples", [])), collect(rf.get("mem_samples", []))))
+
+    sym = {}
+    for path, aset in addrs.items():
+        for a, v in addr2line(path, aset).items():
+            sym[(path, a)] = v
+
+    def info(path, a):
+        fn, fl = sym.get((path, a), ("0x%x" % a, "?")) if path else ("0x%x" % a, "?")
+        return group_of(path, fn, app_base), fn, fl
+
+    funcs = {}
+
+    def add(path, a, cnt, key):
+        g, fn, fl = info(path, a)
+        e = funcs.setdefault(fn, {"group": g, "file": fl, "fp": 0, "mem": 0, "self": 0})
+        e[key] += cnt
+    for pr in per_rank:
+        if not pr:
+            continue
+        fpl, meml = pr
+        for path, a, cnt in fpl: add(path, a, cnt, "fp")
+        for path, a, cnt in meml: add(path, a, cnt, "mem")
+    # exclusive (self) time samples per function, from the time sampler's leaf data
+    if samp and samp.leaf:
+        for c in samp.leaf:
+            if not c:
+                continue
+            for (g, fn, fl), cnt in c.items():
+                e = funcs.setdefault(fn, {"group": g, "file": fl, "fp": 0, "mem": 0, "self": 0})
+                e["self"] += cnt
+    return {"fp_period": fp_period, "mem_period": mem_period, "bytes_per_fill": bpf,
+            "hz": samp.hz if samp else 0, "functions": funcs}
+
+
 def load(paths):
     files = []
     for p in paths:
@@ -565,9 +630,13 @@ def main():
                 if c:
                     for g, n in c.items():
                         groups[g] = groups.get(g, 0) + n
-        json.dump({"version": 1, "application": app, "runtime_s": runtime,
-                   "nranks": len(ranks), "functions": rows,
-                   "groups": groups, "group_total": s.total}, sys.stdout, indent=2)
+        out = {"version": 1, "application": app, "runtime_s": runtime,
+               "nranks": len(ranks), "functions": rows,
+               "groups": groups, "group_total": s.total}
+        rf = symbolize_roofline(ranks, s)
+        if rf:
+            out["roofline_functions"] = rf
+        json.dump(out, sys.stdout, indent=2)
         print()
         return
     if args.format == "csv":
