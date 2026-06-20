@@ -37,6 +37,39 @@ def _stale():
         return True
 
 
+def _phys_cores():
+    """Physical core count (not SMT siblings) from /proc/cpuinfo; fall back to
+    half the logical CPUs (typical with SMT) or all of them."""
+    try:
+        cores, cur = set(), {}
+        for line in open("/proc/cpuinfo"):
+            if ":" not in line:
+                if "physical id" in cur and "core id" in cur:
+                    cores.add((cur["physical id"], cur["core id"]))
+                cur = {}
+                continue
+            k, v = line.split(":", 1)
+            cur[k.strip()] = v.strip()
+        if "physical id" in cur and "core id" in cur:
+            cores.add((cur["physical id"], cur["core id"]))
+        if cores:
+            return len(cores)
+    except OSError:
+        pass
+    n = os.cpu_count() or 1
+    return max(1, n // 2)
+
+
+def _run_env():
+    """Pin one thread per physical core so the bandwidth triad is reproducible
+    (unpinned SMT oversubscription across CCDs is what causes run-to-run swing)."""
+    env = dict(os.environ)
+    env.setdefault("OMP_NUM_THREADS", str(_phys_cores()))
+    env.setdefault("OMP_PROC_BIND", "spread")
+    env.setdefault("OMP_PLACES", "cores")
+    return env
+
+
 def peaks(force=False):
     """Return {peak_gflops, peak_bw_gbs, cpu} — empirical, cached per build."""
     if not force and os.path.exists(_PEAKS) and not _stale():
@@ -49,7 +82,8 @@ def peaks(force=False):
     if not os.path.exists(_BIN):
         return None
     try:
-        r = subprocess.run([_BIN], capture_output=True, text=True, timeout=120)
+        r = subprocess.run([_BIN], capture_output=True, text=True, timeout=120,
+                           env=_run_env())
         p = json.loads(r.stdout.strip())
     except Exception:
         return None
