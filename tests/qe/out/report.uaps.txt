@@ -1,48 +1,47 @@
  command: qenv/bin/mpirun -np 2 ./pw -in si.scf.in
 
 ── INSIGHTS  (combined uaps + upat) ──────────────────────────────────────────
-  ▶ Memory-bound (36% of slots) — improve data locality / working-set size.
-  ▶ MPI is 35% of time with 43% imbalance — rebalance work or check rank placement; see the communication matrix.
+  ▶ MPI is 35% of time with 46% imbalance — rebalance work or check rank placement; see the communication matrix.
 
 
 ──────────────────────────────────────────────────────────────────────────────
   UAPS  —  Universal Application Performance Snapshot   (bird's-eye: HW counters)
 ──────────────────────────────────────────────────────────────────────────────
-    Elapsed time 3.138 s   |   Physical core utilization 0.0%
-    IPC (instructions/cycle) 0.98   |   CPI (cycles/instruction) 1.02
-    Memory bound 35.8%   |   DRAM-bound (of demand fills) 25.8%
-    NUMA remote access 0.0%   |   Memory footprint (peak RSS) 12.8 MiB
+    Elapsed time 3.817 s   |   Physical core utilization 0.0%
+    IPC (instructions/cycle) 1.09   |   CPI (cycles/instruction) 0.92
+    Memory bound 25.7%   |   DRAM-bound (of demand fills) 11.7%
+    NUMA remote access 0.0%   |   Memory footprint (peak RSS) 12.7 MiB
     Disk read 0 B   |   Disk write 332.0 KiB
 
 ══ Roofline (whole program) ══
   Roofline (empirical peaks for AMD Ryzen 9 9950X 16-Core Processor):
     peak compute  FP64 1112 | FP32 2261 GFLOP/s   peak BW 53 GB/s
     ridge AI  FP64 20.85 | FP32 42.41 FLOP/byte  (point judged vs its own precision)
-    point                  prec       AI    GFLOP/s    ceiling    %peak  bound
-    ──────────────────────────────────────────────────────────────────────────
-    whole-program (measure   DP     0.00        0.0        0.0       0%  memory
-    ──────────────────────────────────────────────────────────────────────────
+    point                      prec       AI    GFLOP/s    ceiling    %peak  bound
+    ──────────────────────────────────────────────────────────────────────────────
+    whole-program (measured)     DP     0.00        0.0        0.0       0%  memory
+    ──────────────────────────────────────────────────────────────────────────────
     whole program is memory-bound at 0% of the DP ceiling.
     (per-function roofline → future profile two-pass: survey hotspots, then characterize)
 
 ══ Microarchitecture (top-down pipeline slots) ══
-    retiring (useful)   14.3%
-    frontend-bound      49.1%
-    backend-bound       33.9%
-      └ memory          31.7%
-      └ core             2.2%
-    bad speculation      2.2%
-    IPC                0.98
-    CPI                1.02
+    retiring (useful)   20.7%
+    frontend-bound      38.9%
+    backend-bound       38.4%
+      └ memory          37.4%
+      └ core             1.0%
+    bad speculation      1.4%
+    IPC                1.09
+    CPI                0.92
 
 ══ Memory access ══
-    cache-miss rate        19.3%
-    LLC MPKI               10.96 MPKI
-    DRAM fills / 1K-instr  1.22 DPKI
-    DRAM-bound             25.8%
+    cache-miss rate        22.9%
+    LLC MPKI               13.39 MPKI
+    DRAM fills / 1K-instr  0.78 DPKI
+    DRAM-bound             11.7%
     NUMA remote access     0.0%
-    memory-bound (slots)   35.8%
-    peak RSS               12.8 MiB
+    memory-bound (slots)   25.7%
+    peak RSS               12.7 MiB
 
 ══ Vectorization ══
     FP efficiency 0.0% of vector peak (0 / 1112 GFLOP/s)

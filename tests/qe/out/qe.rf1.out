@@ -1,5 +1,5 @@
 
-     Program PWSCF v.7.5 starts on 20Jun2026 at  1: 1:59 
+     Program PWSCF v.7.5 starts on 20Jun2026 at  1:20:43 
 
      This program is part of the open-source Quantum ESPRESSO suite
      for quantum simulation of materials; please cite
@@ -15,7 +15,7 @@
      Threads/MPI process:                     1
 
      MPI processes distributed on     1 nodes
-     5433 MiB available memory on the printing compute node when the environment starts
+     5852 MiB available memory on the printing compute node when the environment starts
 
      Reading input from si.scf.in
 
@@ -480,8 +480,8 @@
 
      Forces acting on atoms (cartesian axes, Ry/au):
 
-     atom    1 type  1   force =    -0.00000000   -0.00000000   -0.00000000
-     atom    2 type  1   force =     0.00000000    0.00000000    0.00000000
+     atom    1 type  1   force =     0.00000000    0.00000000    0.00000000
+     atom    2 type  1   force =    -0.00000000   -0.00000000   -0.00000000
 
      Total force =     0.000000     Total SCF correction =     0.000000
 
@@ -489,57 +489,57 @@
      Computing stress (Cartesian axis) and pressure
 
           total   stress  (Ry/bohr**3)                   (kbar)     P=      -14.83
-  -0.00010081   0.00000000  -0.00000000          -14.83        0.00       -0.00
-   0.00000000  -0.00010081   0.00000000            0.00      -14.83        0.00
-   0.00000000   0.00000000  -0.00010081            0.00        0.00      -14.83
+  -0.00010081  -0.00000000  -0.00000000          -14.83       -0.00       -0.00
+  -0.00000000  -0.00010081  -0.00000000           -0.00      -14.83       -0.00
+  -0.00000000  -0.00000000  -0.00010081           -0.00       -0.00      -14.83
 
 
      Writing all to output data dir ./scratch/si.save/ :
      XML data file, charge density, pseudopotentials, collected wavefunctions
 
-     init_run     :      0.24s CPU      0.25s WALL (       1 calls)
-     electrons    :      1.01s CPU      1.06s WALL (       1 calls)
+     init_run     :      0.25s CPU      0.25s WALL (       1 calls)
+     electrons    :      0.99s CPU      1.04s WALL (       1 calls)
      forces       :      0.01s CPU      0.01s WALL (       1 calls)
      stress       :      0.05s CPU      0.05s WALL (       1 calls)
 
      Called by init_run:
      wfcinit      :      0.15s CPU      0.16s WALL (       1 calls)
      potinit      :      0.00s CPU      0.00s WALL (       1 calls)
-     hinit0       :      0.08s CPU      0.09s WALL (       1 calls)
+     hinit0       :      0.09s CPU      0.09s WALL (       1 calls)
 
      Called by electrons:
-     c_bands      :      0.85s CPU      0.89s WALL (       7 calls)
+     c_bands      :      0.83s CPU      0.88s WALL (       7 calls)
      sum_band     :      0.15s CPU      0.16s WALL (       7 calls)
      v_of_rho     :      0.00s CPU      0.00s WALL (       7 calls)
      mix_rho      :      0.00s CPU      0.00s WALL (       7 calls)
 
      Called by c_bands:
      init_us_2    :      0.05s CPU      0.05s WALL (    1020 calls)
-     cegterg      :      0.82s CPU      0.86s WALL (     420 calls)
+     cegterg      :      0.80s CPU      0.84s WALL (     420 calls)
 
      Called by *egterg:
      cdiaghg      :      0.03s CPU      0.03s WALL (    1372 calls)
-     h_psi        :      0.87s CPU      0.92s WALL (    1492 calls)
+     h_psi        :      0.86s CPU      0.90s WALL (    1492 calls)
      g_psi        :      0.01s CPU      0.01s WALL (    1012 calls)
 
      Called by h_psi:
      h_psi:calbec :      0.01s CPU      0.01s WALL (    1492 calls)
-     vloc_psi     :      0.85s CPU      0.89s WALL (    1492 calls)
+     vloc_psi     :      0.84s CPU      0.88s WALL (    1492 calls)
                                         0.00s GPU  (    1492 calls)
      add_vuspsi   :      0.01s CPU      0.01s WALL (    1492 calls)
 
      General routines
      calbec       :      0.02s CPU      0.02s WALL (    2512 calls)
-     fft          :      0.07s CPU      0.08s WALL (      26 calls)
+     fft          :      0.08s CPU      0.08s WALL (      26 calls)
      ffts         :      0.00s CPU      0.00s WALL (       7 calls)
-     fftw         :      0.88s CPU      0.93s WALL (   12434 calls)
+     fftw         :      0.87s CPU      0.91s WALL (   12434 calls)
 
      Parallel routines
 
-     PWSCF        :      1.32s CPU      1.39s WALL
+     PWSCF        :      1.31s CPU      1.37s WALL
 
 
-   This run was terminated on:   1: 2: 0  20Jun2026            
+   This run was terminated on:   1:20:44  20Jun2026            
 
 =------------------------------------------------------------------------------=
    JOB DONE.
