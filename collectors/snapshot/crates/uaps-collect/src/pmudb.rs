@@ -405,6 +405,171 @@ pub fn cpu_format(pmu: &str) -> HashMap<String, Vec<(u8, u8)>> {
     sysfs_format(pmu)
 }
 
+// ---------------------------------------------------------------- collector
+use anyhow::Result;
+use crate::pmu::{EventCfg, ThreadGroups, TYPE_RAW};
+use uaps_core::{Collector, Metric, MetricValue, Target};
+
+/// Canonical snapshot metrics → candidate perf metric names (first present wins).
+/// AMD names come from amdzen pipeline.json; Intel `tma_*` from the TMA tree.
+const CANON: &[(&str, &str, &[&str])] = &[
+    ("topdown_retiring_pct", "Retiring", &["retiring", "tma_retiring"]),
+    ("topdown_frontend_pct", "Frontend bound", &["frontend_bound", "tma_frontend_bound"]),
+    ("topdown_backend_pct", "Backend bound", &["backend_bound", "tma_backend_bound"]),
+    ("topdown_badspec_pct", "Bad speculation", &["bad_speculation", "tma_bad_speculation"]),
+];
+
+fn pmu_type(unit: &str) -> u32 {
+    let u = if unit.is_empty() { "cpu" } else { unit };
+    std::fs::read_to_string(format!("/sys/devices/{u}/type"))
+        .ok()
+        .and_then(|s| s.trim().parse().ok())
+        .unwrap_or(TYPE_RAW)
+}
+
+/// HWPC collector driven by the pmu-events db: resolves the canonical metrics for
+/// this CPU, counts exactly the events their formulas reference, evaluates them.
+/// Unsupported metric / missing event / unknown CPU → that metric is simply absent.
+struct Chosen {
+    key: &'static str,
+    label: &'static str,
+    metric: String,
+    group: usize, // index into `groups_ev`: every event this metric needs is here
+}
+
+pub struct HwpcCollector {
+    db: Option<PmuDb>,
+    chosen: Vec<Chosen>,
+    groups_ev: Vec<Vec<String>>, // event names per perf group (read_sums order)
+    groups: ThreadGroups,
+}
+
+impl HwpcCollector {
+    pub fn new() -> Self {
+        let db = detect();
+        let mut chosen = Vec::new();
+        let mut groups_ev: Vec<Vec<String>> = Vec::new();
+        if let Some(db) = &db {
+            let mut fmts: HashMap<String, HashMap<String, Vec<(u8, u8)>>> = HashMap::new();
+            let mut encodes = |e: &str| -> bool {
+                db.events.get(e).is_some_and(|ev| {
+                    let f = fmts.entry(ev.unit.clone()).or_insert_with(|| sysfs_format(&ev.unit));
+                    encode(ev, f).is_some()
+                })
+            };
+            for &(key, label, cands) in CANON {
+                let Some(mname) = cands.iter().copied().find(|c| db.metrics.contains_key(*c)) else {
+                    continue;
+                };
+                // discover the events the formula references (also proves it's supported)
+                let mut refs: Vec<String> = Vec::new();
+                let ok = eval_metric(db, mname, &mut |e| {
+                    if !refs.contains(&e.to_string()) {
+                        refs.push(e.to_string());
+                    }
+                    Some(1.0)
+                })
+                .is_some();
+                if !ok || !refs.iter().all(|e| encodes(e)) {
+                    continue; // unsupported construct or unencodable event → gap
+                }
+                // metric-aware packing: place ALL of this metric's events in ONE
+                // perf group (≤5) so its numerator/denominator are co-scheduled.
+                if refs.len() > 5 {
+                    continue; // can't co-schedule → would be inaccurate; gap, not guess
+                }
+                let gi = groups_ev.iter().position(|g| {
+                    let extra = refs.iter().filter(|e| !g.contains(e)).count();
+                    g.len() + extra <= 5
+                });
+                let gi = match gi {
+                    Some(i) => i,
+                    None => {
+                        groups_ev.push(Vec::new());
+                        groups_ev.len() - 1
+                    }
+                };
+                for e in &refs {
+                    if !groups_ev[gi].contains(e) {
+                        groups_ev[gi].push(e.clone());
+                    }
+                }
+                chosen.push(Chosen { key, label, metric: mname.to_string(), group: gi });
+            }
+        }
+        // encode each group's events
+        let groups_spec: Vec<Vec<EventCfg>> = if let Some(db) = &db {
+            let mut fmts: HashMap<String, HashMap<String, Vec<(u8, u8)>>> = HashMap::new();
+            groups_ev
+                .iter()
+                .map(|g| {
+                    g.iter()
+                        .filter_map(|e| {
+                            let ev = db.events.get(e)?;
+                            let f = fmts.entry(ev.unit.clone()).or_insert_with(|| sysfs_format(&ev.unit));
+                            Some(EventCfg { etype: pmu_type(&ev.unit), config: encode(ev, f)? })
+                        })
+                        .collect()
+                })
+                .collect()
+        } else {
+            Vec::new()
+        };
+        HwpcCollector { db, chosen, groups_ev, groups: ThreadGroups::new(groups_spec) }
+    }
+
+    /// True when the db resolved ≥1 metric (caller drops the hand-coded
+    /// TopdownCollector in favour of this perf-data-driven one).
+    pub fn active(&self) -> bool {
+        !self.chosen.is_empty()
+    }
+}
+
+impl Collector for HwpcCollector {
+    fn name(&self) -> &'static str {
+        "hwpc(pmu-events)"
+    }
+    fn start(&mut self, target: &Target) -> Result<()> {
+        self.groups.start(target.pid);
+        Ok(())
+    }
+    fn sample(&mut self) -> Result<()> {
+        self.groups.scan();
+        Ok(())
+    }
+    fn finish(&mut self) -> Result<Vec<Metric>> {
+        let Some(db) = &self.db else { return Ok(Vec::new()) };
+        // read_sums is flat in group order; rebuild per-group event→count maps so
+        // each metric reads its co-scheduled counts.
+        let sums = self.groups.read_sums();
+        let mut per_group: Vec<HashMap<String, f64>> = Vec::new();
+        let mut off = 0;
+        for g in &self.groups_ev {
+            let mut m = HashMap::new();
+            for name in g {
+                if let Some(Some(v)) = sums.get(off) {
+                    m.insert(name.clone(), *v);
+                }
+                off += 1;
+            }
+            per_group.push(m);
+        }
+        let mut out = Vec::new();
+        for c in &self.chosen {
+            let counts = &per_group[c.group];
+            let mut read = |e: &str| counts.get(e).copied();
+            if let Some(v) = eval_metric(db, &c.metric, &mut read) {
+                out.push(Metric {
+                    key: c.key,
+                    label: c.label.into(),
+                    value: MetricValue::Percent(v * 100.0), // top-down formulas are fractions
+                });
+            }
+        }
+        Ok(out)
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

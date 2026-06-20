@@ -12,8 +12,8 @@ use std::time::Duration;
 use anyhow::{Context, Result};
 use clap::{Parser, Subcommand, ValueEnum};
 use uaps_collect::{
-    ElapsedCollector, MpiCollector, PerfCollector, ProcCollector, RawPmuCollector, ThreadCollector,
-    TopdownCollector,
+    ElapsedCollector, HwpcCollector, MpiCollector, PerfCollector, ProcCollector, RawPmuCollector,
+    ThreadCollector, TopdownCollector,
 };
 use uaps_core::{Collector, Snapshot, Target};
 use uaps_report::{render, Format};
@@ -124,8 +124,15 @@ fn run(
         Box::new(ThreadCollector::new()),
         Box::new(PerfCollector::new()),
         Box::new(RawPmuCollector::new()),
-        Box::new(TopdownCollector::new()),
     ];
+    // Top-down: prefer the perf-data-driven engine (vendor-neutral, from the
+    // vendored pmu-events) when it resolves for this CPU; else the hand-coded one.
+    let hwpc = HwpcCollector::new();
+    if hwpc.active() {
+        collectors.push(Box::new(hwpc));
+    } else {
+        collectors.push(Box::new(TopdownCollector::new()));
+    }
 
     let mut cmd = Command::new(program);
 

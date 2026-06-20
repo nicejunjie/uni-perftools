@@ -28,8 +28,8 @@ mod threads;
 mod topdown;
 #[cfg(target_os = "linux")]
 pub use {
-    perf::PerfCollector, proc::ProcCollector, raw_pmu::RawPmuCollector, threads::ThreadCollector,
-    topdown::TopdownCollector,
+    perf::PerfCollector, pmudb::HwpcCollector, proc::ProcCollector, raw_pmu::RawPmuCollector,
+    threads::ThreadCollector, topdown::TopdownCollector,
 };
 
 // Compiled on every platform so Linux builds keep it valid, but only used as
