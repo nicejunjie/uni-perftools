@@ -10,7 +10,13 @@ Usage:
   upat-report out/                       # a directory of json files
   upat-report --imbalance world --format csv upat.*.json
 """
-import sys, os, re, json, glob, argparse, subprocess, collections
+import sys, os, re, json, glob, argparse, subprocess, collections, heapq
+
+# One consistent table rule everywhere: a solid box-drawing line (matching the
+# core/analysis sections), 78 wide, 2-space indent — never ASCII dashes, never a
+# mix of widths. Use RULE for every table divider.
+RULEW = 78
+RULE = "  " + "─" * RULEW
 
 COMPUTE_GROUPS = ["BLAS", "LAPACK", "PBLAS", "ScaLAPACK", "CBLAS", "LAPACKe", "FFTW"]
 
@@ -29,7 +35,7 @@ def base_name(name):
 def foot(pairs, width=78):
     """A CrayPAT-style legend explaining a table's columns/acronyms, preceded by
     a divider separating it from the table body."""
-    out = ["  " + "-" * width, "  legend:"]
+    out = [RULE, "  legend:"]
     for k, v in pairs:
         out.append("    %-12s %s" % (k, v))
     return "\n".join(out)
@@ -121,6 +127,15 @@ def addr2line(path, addrs):
     return out
 
 
+# Idle/wait functions: OpenMP worker spin, barriers, futex/lock waits, poll/sleep.
+# These are "the program waiting", not useful work — split out from the ETC catch-all
+# so a breakdown reads "idle 70%" (actionable) instead of "other 70%" (meaningless).
+_WAIT_RE = re.compile(
+    r"do_spin|futex|gomp_barrier|gomp_team_barrier|barrier_wait|gomp_.*wait|"
+    r"epoll_wait|__poll|ppoll|pselect|sched_yield|nanosleep|usleep|"
+    r"cond_wait|cond_timedwait|sem_wait|sem_timedwait|__lll_lock_wait")
+
+
 # CrayPAT-style function groups. Classify each sample by its module/symbol.
 def group_of(path, func, app_base):
     b = os.path.basename(path).lower() if path else ""
@@ -137,14 +152,33 @@ def group_of(path, func, app_base):
         return "LAPACK"
     if "libfftw" in b:
         return "FFTW"
+    if _WAIT_RE.search(func):
+        return "WAIT"
     if "libupat" in b:
         return "ETC"        # our own overhead
     return "ETC"
 
 
-# dominant-group priority: a sample is charged to the highest-priority group on
-# its stack, so time waiting in MPI counts as MPI (not the libc poll it blocks in).
-GROUP_PRIO = {"MPI": 6, "BLAS": 5, "LAPACK": 5, "FFTW": 5, "IO": 4, "USER": 3, "ETC": 0}
+# dominant-group priority: a sample is charged to the highest-priority group on its
+# stack — so real work outranks idle/wait, and time blocked in MPI counts as MPI
+# (not the libc poll it blocks in). WAIT outranks only ETC: a purely-idle thread
+# (gomp spin, no user/lib frames) lands in WAIT, but any real frame above it wins.
+GROUP_PRIO = {"MPI": 6, "BLAS": 5, "LAPACK": 5, "FFTW": 5, "IO": 4, "USER": 3,
+              "WAIT": 1, "ETC": 0}
+
+# Universal process/thread entry + runtime frames that sit at ~100% inclusive on
+# every stack and are never actionable — plus two libcuda symbols that the nearest-
+# symbol fallback misresolves to on NVIDIA-driver hosts (no CUDA is actually used).
+# Dropped from the INCLUSIVE table only (they're never a leaf/self hotspot).
+ENTRY_FRAMES = {
+    "tramp", "start_thread", "clone", "clone3", "__clone", "_start",
+    "__libc_start_main", "__libc_start_call_main", "call_init", "__GI___clone",
+    "libprof_sample_init", "cuEGLApiInit", "cuVDPAUCtxCreate",
+    # the MPI async-progress thread's poll loop — a dedicated thread that spins in
+    # the library, not the app's call tree (shows ~constant inclusive %).
+    "progress_engine", "opal_progress", "event_base_loop", "epoll_dispatch",
+    "epoll_wait", "ompi_sync_wait_mt",
+}
 
 
 class Samp:
@@ -218,7 +252,7 @@ def symbolize_samples(ranks):
                     g, fn, _ = info(fr)
                     if GROUP_PRIO.get(g, 0) > GROUP_PRIO.get(best, 0):
                         best = g
-                    if fn not in seenf:
+                    if fn not in seenf and fn not in ENTRY_FRAMES:
                         incf[(g, fn)] += cnt; seenf.add(fn)
                     names.append(fn)
                 dom[best] += cnt
@@ -228,24 +262,27 @@ def symbolize_samples(ranks):
 
 
 def symbolize_roofline(ranks, samp):
-    """Per-function FP-op and DRAM-fill attribution from the roofline_sampling
-    block (the characterize pass), reusing the same PC->symbol pipeline. Returns
-    per-function {group, file, fp, mem, self} sample counts plus the sample
-    periods, or None when no rank carries roofline data. Works for any function
-    (library / user / system) because attribution is by sampled PC."""
+    """Per-function FLOP and DRAM-byte attribution from the roofline_sampling
+    block (the characterize pass), reusing the same PC->symbol pipeline.
+
+    The sampler emits N weighted *channels* (role=fp|mem, period, scale). Each
+    PC sample contributes `period × scale` to its function: flops for an fp
+    channel (scale = flops/op — 1 for an AMD op-proxy, or 1/2/4/8 for Intel's
+    width-split FP_ARITH umasks), bytes for a mem channel (scale = bytes/sample,
+    i.e. a cache line). Multiple fp channels are summed per function, so the
+    width-weighted Intel FLOP count and the single-event AMD count come out on
+    the same footing. Returns per-function {group, file, flops, bytes, fp_samp,
+    self}, or None when no rank carries roofline data. Attribution is by sampled
+    PC, so it works for any function (library / user / system)."""
     if not any(r.get("roofline_sampling") for r in ranks):
         return None
     app_base = os.path.basename(ranks[0].get("application", "")) if ranks else ""
     addrs = collections.defaultdict(set)
-    per_rank = []
-    fp_period = mem_period = bpf = 0
+    per_rank = []   # list of [(role, period, scale, [(path,a,cnt)...]), ...] per rank
     for r in ranks:
         rf = r.get("roofline_sampling")
         if not rf:
             per_rank.append(None); continue
-        fp_period = rf.get("fp_period", fp_period)
-        mem_period = rf.get("mem_period", mem_period)
-        bpf = rf.get("bytes_per_fill", bpf) or 64
         maps = rf.get("maps", [])
 
         def collect(lst):
@@ -257,7 +294,11 @@ def symbolize_roofline(ranks, samp):
                 else:
                     out.append((None, pc, cnt))
             return out
-        per_rank.append((collect(rf.get("fp_samples", [])), collect(rf.get("mem_samples", []))))
+        chans = []
+        for ch in rf.get("channels", []):
+            chans.append((ch.get("role", "fp"), ch.get("period", 0) or 0,
+                          float(ch.get("scale", 0) or 0), collect(ch.get("samples", []))))
+        per_rank.append(chans)
 
     sym = {}
     for path, aset in addrs.items():
@@ -270,26 +311,32 @@ def symbolize_roofline(ranks, samp):
 
     funcs = {}
 
-    def add(path, a, cnt, key):
+    def ent(path, a):
         g, fn, fl = info(path, a)
-        e = funcs.setdefault(fn, {"group": g, "file": fl, "fp": 0, "mem": 0, "self": 0})
-        e[key] += cnt
-    for pr in per_rank:
-        if not pr:
+        return fn, funcs.setdefault(fn, {"group": g, "file": fl,
+                                         "flops": 0.0, "bytes": 0.0, "fp_samp": 0, "self": 0})
+    for chans in per_rank:
+        if not chans:
             continue
-        fpl, meml = pr
-        for path, a, cnt in fpl: add(path, a, cnt, "fp")
-        for path, a, cnt in meml: add(path, a, cnt, "mem")
+        for role, period, scale, samples in chans:
+            w = period * scale
+            for path, a, cnt in samples:
+                _, e = ent(path, a)
+                if role == "mem":
+                    e["bytes"] += cnt * w
+                else:
+                    e["flops"] += cnt * w
+                    e["fp_samp"] += cnt
     # exclusive (self) time samples per function, from the time sampler's leaf data
     if samp and samp.leaf:
         for c in samp.leaf:
             if not c:
                 continue
             for (g, fn, fl), cnt in c.items():
-                e = funcs.setdefault(fn, {"group": g, "file": fl, "fp": 0, "mem": 0, "self": 0})
+                e = funcs.setdefault(fn, {"group": g, "file": fl,
+                                          "flops": 0.0, "bytes": 0.0, "fp_samp": 0, "self": 0})
                 e["self"] += cnt
-    return {"fp_period": fp_period, "mem_period": mem_period, "bytes_per_fill": bpf,
-            "hz": samp.hz if samp else 0, "functions": funcs}
+    return {"hz": samp.hz if samp else 0, "functions": funcs}
 
 
 def load(paths):
@@ -306,6 +353,18 @@ def load(paths):
     if not ranks:
         sys.exit("upat-report: no input files matched")
     return ranks
+
+
+def cpu_ref(ranks):
+    """Per-rank-average total CPU time (summed thread utime+stime) — the denominator
+    for time%. Using CPU time (not wall) keeps a function's share bounded 0-100% and
+    comparable to Samp%: t_incl is summed across threads, so dividing by wall would
+    overstate parallel calls and could exceed 100%. Falls back to wall runtime for
+    older captures that lack cpu_time_s."""
+    tot = sum(r.get("cpu_time_s", 0.0) for r in ranks)
+    if tot > 0:
+        return tot / len(ranks)
+    return max((r.get("runtime_s", 0.0) for r in ranks), default=0.0)
 
 
 def reduce_rows(ranks, imbalance, keep_shapes=False):
@@ -379,7 +438,7 @@ def _thr_filter(rows, runtime, thr):
 
 
 def _hidden_note(hidden, thr):
-    return ("   ... %d more below %.3g%% of runtime (report --threshold 0 to show all)"
+    return ("   ... %d more below %.3g%% of CPU time (report --threshold 0 to show all)"
             % (hidden, thr)) if hidden else None
 
 
@@ -392,17 +451,20 @@ def fmt_compute(rows, sortkey, top, runtime=0.0, thr=0.0, imb=True):
     if not rows:
         return ""
     out = ["", "  Compute (BLAS / LAPACK / PBLAS / ScaLAPACK / CBLAS / LAPACKe / FFTW)",
-           "  " + "-" * 78,
-           "   %-9s %-24s %s %11s %11s" % ("group", "function", cnt_head(imb), "incl(s)", "excl(s)"),
-           "  " + "-" * 78]
+           RULE,
+           "  %6s %-8s %-21s %s %10s %10s"
+           % ("time%", "group", "function", cnt_head(imb), "incl(s)", "excl(s)"),
+           RULE]
     for r in rows:
-        out.append("   %-9s %-24s %s %11.4f %11.4f" % (
-            r["group"], r["name"][:24], cnt_cell(r["count"], r["imb_count"], imb),
+        tp = 100.0 * r["t_incl"] / runtime if runtime > 0 else 0.0
+        out.append("  %5.1f%% %-8s %-21s %s %10.4f %10.4f" % (
+            tp, r["group"], r["name"][:21], cnt_cell(r["count"], r["imb_count"], imb),
             r["t_incl"], r["t_excl"]))
     n = _hidden_note(hidden, thr)
     if n:
         out.append(n)
     out.append(foot([
+        ("time%", "inclusive time as % of total CPU time (thread-seconds) — scan to find what matters"),
         ("group", "library family: BLAS/CBLAS, LAPACK/LAPACKe, P/ScaLAPACK, FFTW"),
         ("count" + ("[imb]" if imb else ""),
          "total calls over ranks" + (" [Imb% = (max-avg)/max load imbalance]" if imb else "")),
@@ -422,20 +484,23 @@ def fmt_mpi(rows, sortkey, top, runtime=0.0, thr=0.0, imb=True):
         return ""
     total_bytes = sum(r["bytes"] for r in rows)
     out = ["", "  MPI (communication)",
-           "  " + "-" * 78,
-           "   %-18s %s %5s %10s %12s %8s" % ("function", cnt_head(imb, 8), "r/R", "incl(s)", "bytes", "GB/s"),
-           "  " + "-" * 78]
+           RULE,
+           "  %6s %-14s %s %5s %9s %11s %7s"
+           % ("time%", "function", cnt_head(imb, 8), "r/R", "incl(s)", "bytes", "GB/s"),
+           RULE]
     for r in rows:
         gbs = r["bytes"] / r["t_incl"] / 1e9 if r["t_incl"] > 0 else 0.0
-        out.append("   %-18s %s %3d/%-3d %10.4f %12d %8.2f" % (
-            r["name"][:18], cnt_cell(r["count"], r["imb_count"], imb, 8),
+        tp = 100.0 * r["t_incl"] / runtime if runtime > 0 else 0.0
+        out.append("  %5.1f%% %-14s %s %3d/%-3d %9.4f %11d %7.2f" % (
+            tp, r["name"][:14], cnt_cell(r["count"], r["imb_count"], imb, 8),
             r["active"], r["nranks"], r["t_incl"], r["bytes"], gbs))
-    out.append("  " + "-" * 78)
+    out.append(RULE)
     out.append("   total communication volume: %.3f GB  (sum over ranks)" % (total_bytes / 1e9))
     n = _hidden_note(hidden, thr)
     if n:
         out.append(n)
     out.append(foot([
+        ("time%", "inclusive MPI time as % of total CPU time"),
         ("count" + ("[imb]" if imb else ""),
          "total calls over ranks" + (" [Imb% = (max-avg)/max]" if imb else "")),
         ("r/R", "ranks that called it / total ranks"),
@@ -450,6 +515,71 @@ MPI_BINS = ["<=64B", "<=256B", "<=1KiB", "<=4KiB", "<=16KiB", "<=64KiB",
             "<=256KiB", "<=1MiB", "<=4MiB", "<=16MiB", "<=64MiB", ">64MiB"]
 COLLECTIVE = ("Bcast", "Allreduce", "Reduce", "Allgather", "Alltoall", "Gather",
               "Scatter", "Barrier", "Reduce_scatter")
+
+
+def _median(xs):
+    s = sorted(xs)
+    return s[len(s) // 2] if s else 0
+
+
+def sent_map(detail, key="sent"):
+    """{peer: bytes} for a rank, accepting both the sparse [[peer,bytes],...] format
+    and the legacy dense [bytes,...] array (peer = index)."""
+    arr = (detail or {}).get(key, [])
+    if arr and isinstance(arr[0], (list, tuple)):
+        return {int(p): b for p, b in arr if b}
+    return {i: b for i, b in enumerate(arr) if b}
+
+
+def comm_structure(sent, rank_of):
+    """Scalable communication summary for jobs too large to print an NxN matrix.
+    `sent` maps src-rank -> {peer: bytes} (sparse). Reports the per-rank fan-out
+    (degree) distribution — which distinguishes nearest-neighbor/halo from
+    all-to-all — the per-rank volume spread, and the heaviest rank->rank pairs."""
+    nr = len(rank_of)
+    # Keep only the top-K heaviest pairs in a bounded min-heap so memory stays
+    # O(K) even for a dense all-to-all (N^2 nonzero pairs would otherwise blow up).
+    TOPK = 10
+    heap, npairs = [], 0
+    degree, vol = [], []
+    for src in rank_of:
+        m = sent.get(src, {})
+        deg = len(m)
+        tot = 0
+        for dst, b in m.items():
+            tot += b
+            npairs += 1
+            if len(heap) < TOPK:
+                heapq.heappush(heap, (b, src, dst))
+            elif b > heap[0][0]:
+                heapq.heapreplace(heap, (b, src, dst))
+        degree.append(deg)
+        vol.append(tot)
+    if not npairs:
+        return ""
+    avgdeg = sum(degree) / len(degree)
+    maxdeg = max(degree)
+    avgvol = sum(vol) / len(vol)
+    maxvol = max(vol)
+    # pattern: a small, near-constant fan-out is halo/stencil; near-full is all-to-all.
+    if maxdeg <= max(8, 0.05 * nr):
+        pattern = "sparse / nearest-neighbor (halo-like)"
+    elif avgdeg >= 0.8 * (nr - 1):
+        pattern = "dense / all-to-all"
+    else:
+        pattern = "intermediate (%.0f%% of ranks reached on average)" % (100.0 * avgdeg / max(nr - 1, 1))
+    vol_imb = (maxvol - avgvol) / maxvol * 100.0 if maxvol else 0.0
+    out = ["", "  Communication structure  (%d ranks; full matrix → report --detail mpi --format html)" % nr,
+           "   peers per rank (fan-out): avg %.1f, median %d, max %d  → %s"
+           % (avgdeg, _median(degree), maxdeg, pattern),
+           "   sent volume per rank: median %.3f GB, max %.3f GB, imbalance %.0f%% (max vs avg)"
+           % (_median(vol) / 1e9, maxvol / 1e9, vol_imb),
+           "   heaviest rank → rank transfers:"]
+    for b, s, d in sorted(heap, reverse=True):
+        out.append("     rank %-6d → rank %-6d  %10.3f GB" % (s, d, b / 1e9))
+    if npairs > TOPK:
+        out.append("     ... (%d more nonzero pairs)" % (npairs - TOPK))
+    return "\n".join(out)
 
 
 def fmt_mpi_detail(ranks, rows):
@@ -481,35 +611,32 @@ def fmt_mpi_detail(ranks, rows):
             if c:
                 out.append("   %-10s %12d %6.1f%%" % (lab, c, 100.0 * c / nmsg))
 
-    # communication matrix (sent bytes, MB), rank -> peer
+    # communication matrix (sent bytes), rank -> {peer: bytes}  (sparse)
     nr = len(ranks)
     rank_of = [r.get("rank", i) for i, r in enumerate(ranks)]
     sent = {}
     for r in ranks:
         d = r.get("mpi_detail")
         if d:
-            sent[r.get("rank", 0)] = d.get("sent", [])
-    if any(sum(v) for v in sent.values()):
-        # The full NxN matrix is unreadable past a handful of ranks — render it
-        # as a heatmap figure in the HTML report (report --detail mpi --format
-        # html). In text, only print the matrix for small jobs; otherwise show
-        # the per-rank sent totals (top senders).
+            sent[r.get("rank", 0)] = sent_map(d, "sent")
+    if any(m for m in sent.values()):
+        # The full NxN matrix is unreadable (and O(N^2)) past a handful of ranks —
+        # print it only for small jobs; otherwise summarize the structure. The
+        # dense heatmap lives in the HTML report (report --detail mpi --format html).
         if nr <= 8:
             out += ["", "  Communication matrix  (sent MB, row=from rank, col=to rank)"]
-            hdr = "        " + "".join("%8d" % c for c in sorted(rank_of))
-            out.append(hdr)
-            for rk in sorted(rank_of):
-                v = sent.get(rk, [])
-                cells = "".join("%8.1f" % (v[c] / 1e6 if c < len(v) else 0.0) for c in sorted(rank_of))
+            cols = sorted(rank_of)
+            out.append("        " + "".join("%8d" % c for c in cols))
+            for rk in cols:
+                m = sent.get(rk, {})
+                cells = "".join("%8.1f" % (m.get(c, 0) / 1e6) for c in cols)
                 out.append("   %4d %s" % (rk, cells))
         else:
-            out += ["", "  Communication volume per rank  (%d ranks; full matrix → "
-                    "report --detail mpi --format html)" % nr]
-            tot = sorted(((sum(sent.get(rk, [])), rk) for rk in rank_of), reverse=True)
-            for s, rk in tot[:12]:
-                out.append("   rank %5d  sent %10.3f GB" % (rk, s / 1e9))
-            if nr > 12:
-                out.append("   ... (%d more ranks)" % (nr - 12))
+            # Too many ranks for an NxN grid: summarize structure instead of
+            # truncating to a handful of senders.
+            cs = comm_structure(sent, rank_of)
+            if cs:
+                out.append(cs)
     return "\n".join(out)
 
 
@@ -522,20 +649,23 @@ def fmt_io(rows, sortkey, top, runtime=0.0, thr=0.0, imb=True):
     if not rows:
         return ""
     total_bytes = sum(r["bytes"] for r in rows)
-    out = ["", "  I/O", "  " + "-" * 70,
-           "   %-14s %s %5s %10s %12s %8s" % ("call", cnt_head(imb, 8), "r/R", "incl(s)", "bytes", "GB/s"),
-           "  " + "-" * 70]
+    out = ["", "  I/O", RULE,
+           "  %6s %-12s %s %5s %9s %10s %7s"
+           % ("time%", "call", cnt_head(imb, 8), "r/R", "incl(s)", "bytes", "GB/s"),
+           RULE]
     for r in rows:
         gbs = r["bytes"] / r["t_incl"] / 1e9 if r["t_incl"] > 0 else 0.0
-        out.append("   %-14s %s %3d/%-3d %10.4f %12d %8.2f" % (
-            r["name"][:14], cnt_cell(r["count"], r["imb_count"], imb, 8),
+        tp = 100.0 * r["t_incl"] / runtime if runtime > 0 else 0.0
+        out.append("  %5.1f%% %-12s %s %3d/%-3d %9.4f %10d %7.2f" % (
+            tp, r["name"][:12], cnt_cell(r["count"], r["imb_count"], imb, 8),
             r["active"], r["nranks"], r["t_incl"], r["bytes"], gbs))
-    out.append("  " + "-" * 70)
+    out.append(RULE)
     out.append("   total I/O volume: %.3f GB  (sum over ranks)" % (total_bytes / 1e9))
     n = _hidden_note(hidden, thr)
     if n:
         out.append(n)
     out.append(foot([
+        ("time%", "inclusive I/O time as % of total CPU time"),
         ("call", "POSIX I/O syscall (read/write/open/...)"),
         ("count" + ("[imb]" if imb else ""),
          "total calls over ranks" + (" [Imb% = (max-avg)/max]" if imb else "")),
@@ -570,7 +700,7 @@ def fmt_flat(title, per_rank, total, nranks, top, labelfn, thr=0.0):
     if top:
         kept = kept[:top]
     imb = nranks > 1
-    out = ["", "  " + title, "  " + "-" * 78, samp_head(imb), " " + "-" * 78]
+    out = ["", "  " + title, RULE, samp_head(imb), RULE]
     for k, (tot, is_, ip) in kept:
         out.append("%s  %s" % (samp_cols(tot, total, is_, ip, imb), labelfn(k)[:54]))
     n = _hidden_note(hidden, thr)
@@ -591,14 +721,14 @@ def fmt_domgroup(s, top):
     imb = s.nranks > 1
     out = ["", "Table 1:  Profile by Function Group  (sampling @ %d Hz, %d PEs)" % (s.hz, s.nranks),
            "          time charged to the highest-level group on each sample's stack", "",
-           samp_head(imb, "Group"), " " + "-" * 70]
+           samp_head(imb, "Group"), RULE]
     pe_tot = collections.defaultdict(int)
     for g in grp:
         for pe, n in grp[g].items():
             pe_tot[pe] += n
     t = cp_imb(list(pe_tot.values()), s.nranks)
     out.append("%s  Total" % samp_cols(t[0], s.total, t[1], t[2], imb))
-    out.append(" " + "-" * 70)
+    out.append(RULE)
     for g in sorted(grp, key=lambda g: -sum(grp[g].values())):
         gt = cp_imb(list(grp[g].values()), s.nranks)
         out.append("%s  %s" % (samp_cols(gt[0], s.total, gt[1], gt[2], imb), g))
@@ -631,7 +761,7 @@ def fmt_groups(per_rank, hz, total, nranks, top, thr=0.0):
            % (hz, nranks), "",
            samp_head(imb, "Group"),
            (" " * (41 if imb else 21)) + "Function=[file:line]",
-           " " + "-" * 78]
+           RULE]
     # Total row: imbalance over the per-PE grand totals.
     pe_tot = collections.defaultdict(int)
     for g in grp_pe:
@@ -639,7 +769,7 @@ def fmt_groups(per_rank, hz, total, nranks, top, thr=0.0):
             pe_tot[pe] += n
     t_tot, t_is, t_ip = cp_imb(list(pe_tot.values()), nranks)
     out.append(line(t_tot, t_is, t_ip, "Total", ""))
-    out.append(" " + "-" * 78)
+    out.append(RULE)
 
     groups = sorted(grp_pe, key=lambda g: sum(grp_pe[g].values()), reverse=True)
     for g in groups:
@@ -662,12 +792,111 @@ def fmt_groups(per_rank, hz, total, nranks, top, thr=0.0):
         n = _hidden_note(hidden, thr)
         if n:
             out.append(n)
-        out.append(" " + "-" * 78)
+        out.append(RULE)
     out.append(foot(samp_legend(imb)))
     return "\n".join(out)
 
 
-def fmt_detail(rows, groups, title, sortkey, top):
+def collapse_to_func(per_rank):
+    """Sum leaf (group, func, file:line) samples down to (group, func) so the
+    'self' table is function-level; the per-line breakdown lives in fmt_lines."""
+    out = []
+    for c in per_rank:
+        if not c:
+            out.append(c); continue
+        fc = collections.Counter()
+        for (g, f, _fl), n in c.items():
+            fc[(g, f)] += n
+        out.append(fc)
+    return out
+
+
+def _has_line(fl):
+    """True if a symbolized location carries a real source line (file.c:123), not
+    just a module/binary name or an unresolved 'file:?' (no debug line info)."""
+    i = fl.rfind(":")
+    return i != -1 and fl[i + 1:].isdigit()
+
+
+def fmt_lines(per_rank, hz, total, nranks, top, thr=0.0):
+    """CrayPAT-style line-level hotspots: every row is a single source line
+    (function + file:line), ranked by self-sample %. The leaf samples are already
+    resolved per (group, function, file:line), so this is just a re-ranking of the
+    finest-grained key instead of the per-function collapse fmt_groups does."""
+    if total <= 0:
+        return ""
+    line_pe = collections.defaultdict(lambda: collections.defaultdict(int))  # (g,f,fl)->pe->n
+    for pe, c in enumerate(per_rank):
+        if not c:
+            continue
+        for k, n in c.items():
+            line_pe[k][pe] += n
+    imb = nranks > 1
+    rows = [(k, cp_imb(list(pe.values()), nranks)) for k, pe in line_pe.items()]
+    rows.sort(key=lambda x: -x[1][0])
+    kept = [x for x in rows if 100.0 * x[1][0] / total >= thr] if thr > 0 else rows
+    hidden = len(rows) - len(kept)
+    if top:
+        kept = kept[:top]
+    w = 36 if imb else 58           # imbalance columns eat into the label width
+    out = ["", "Table 1b:  Profile by source line  (hotspots, sampling @ %d Hz, %d PEs)"
+           % (hz, nranks),
+           "           every row is one source line, ranked by self-sample %", "",
+           samp_head(imb, "Function  [file:line]  (group)"), RULE]
+    # Track hotspots with no source-line info (built without -g, or stripped) so we
+    # can tell the user how to enable it. Unmappable regions (fl '?'/'') are a
+    # missing-map issue, not a debug-info one — exclude them.
+    noline = collections.Counter()
+    noline_user = set()
+    for (g, f, fl), (tot, is_, ip) in kept:
+        loc = f if fl in ("?", "") else "%s  [%s]" % (f, fl)
+        out.append("%s  %s" % (samp_cols(tot, total, is_, ip, imb),
+                               ("%s  (%s)" % (loc, g))[:w]))
+        if fl not in ("?", "") and not _has_line(fl):
+            mod = fl[:-2] if fl.endswith(":?") else fl   # 'n1bv_32.c:?' -> 'n1bv_32.c'
+            noline[mod] += tot
+            if g == "USER":
+                noline_user.add(mod)
+    n = _hidden_note(hidden, thr)
+    if n:
+        out.append(n)
+    noline_samp = sum(noline.values())
+    if noline_samp and total and 100.0 * noline_samp / total >= 5.0:
+        mods = ", ".join(m for m, _ in noline.most_common(6))
+        out.append("")
+        out.append("   ⚠ no source-line info for %.0f%% of the hotspots above — file:line shows a"
+                   % (100.0 * noline_samp / total))
+        out.append("     module/binary name (or 'file:?'); those objects were built without -g")
+        out.append("     or were stripped, so line-level hotspots are unavailable for them.")
+        if noline_user:
+            out.append("     this includes your own application code — rebuild it first.")
+        out.append("     affected: " + mods)
+        out.append("     → keep line tables when building (optimization is unaffected): cc -O2 -g")
+        out.append("       and do not 'strip'. For distro libraries, install the matching")
+        out.append("       -dbg / -debuginfo package (e.g. libfftw3-dbg, debuginfo-install <pkg>).")
+    out.append(foot(samp_legend(imb)))
+    return "\n".join(out)
+
+
+def line_hotspots_json(leaf, gtotal, nranks, top=200):
+    """Ranked line-level hotspots for the JSON contract (same data fmt_lines
+    renders), so the suite/HTML report can surface source-line hotspots too."""
+    line_pe = collections.defaultdict(lambda: collections.defaultdict(int))
+    for pe, c in enumerate(leaf):
+        if c:
+            for k, n in c.items():
+                line_pe[k][pe] += n
+    hot = []
+    for (g, f, fl), pe in line_pe.items():
+        tot, is_, ip = cp_imb(list(pe.values()), nranks)
+        hot.append({"group": g, "function": f, "fileline": fl, "samples": tot,
+                    "pct": 100.0 * tot / gtotal if gtotal else 0.0,
+                    "imb_samp": is_, "imb_pct": ip})
+    hot.sort(key=lambda x: -x["samples"])
+    return hot[:top] if top else hot
+
+
+def fmt_detail(rows, groups, title, sortkey, top, runtime=0.0):
     """Per-shape/size breakdown for one facility (post-recording detail)."""
     rows = [r for r in rows if r["group"] in groups]
     rows.sort(key=lambda r: r[sortkey], reverse=True)
@@ -675,13 +904,16 @@ def fmt_detail(rows, groups, title, sortkey, top):
         rows = rows[:top]
     if not rows:
         return "  (no %s calls recorded)" % title
-    out = ["", "  %s calls by shape/size" % title, "  " + "-" * 78,
-           "   %-9s %-33s %10s %11s %11s" % ("group", "function[shape]", "count", "incl(s)", "excl(s)"),
-           "  " + "-" * 78]
+    out = ["", "  %s calls by shape/size" % title, RULE,
+           "  %6s %-8s %-30s %9s %10s %10s"
+           % ("time%", "group", "function[shape]", "count", "incl(s)", "excl(s)"),
+           RULE]
     for r in rows:
-        out.append("   %-9s %-33s %10.0f %11.4f %11.4f" % (
-            r["group"], r["name"][:33], r["count"], r["t_incl"], r["t_excl"]))
+        tp = 100.0 * r["t_incl"] / runtime if runtime > 0 else 0.0
+        out.append("  %5.1f%% %-8s %-30s %9.0f %10.4f %10.4f" % (
+            tp, r["group"], r["name"][:30], r["count"], r["t_incl"], r["t_excl"]))
     out.append(foot([
+        ("time%", "inclusive time as % of total CPU time"),
         ("[shape]", "call dimensions, e.g. gemm[m,n,k], fft[nx x ny x nz]"),
         ("count", "calls of this exact shape (summed over ranks)"),
         ("incl(s)", "inclusive time: routine + callees"),
@@ -694,7 +926,7 @@ def fmt_heap(ranks):
     if not hs:
         return ""
     peaks = [h["peak"] for _, h in hs]
-    out = ["", "Heap high-water mark", " " + "-" * 60,
+    out = ["", "Heap high-water mark", RULE,
            "   peak (max over ranks): %.3f GB   mean: %.3f GB" % (
                max(peaks) / 1e9, sum(peaks) / len(peaks) / 1e9)]
     worst = max(hs, key=lambda x: x[1]["peak"])
@@ -709,7 +941,7 @@ def fmt_heap(ranks):
 def fmt_perpe(ranks):
     if len(ranks) < 2:
         return ""
-    out = ["", "Per-PE summary", " " + "-" * 60,
+    out = ["", "Per-PE summary", RULE,
            "   %-6s %12s %12s %8s" % ("PE", "runtime(s)", "lib excl(s)", "lib%")]
     info = []
     for r in ranks:
@@ -720,7 +952,7 @@ def fmt_perpe(ranks):
         out.append("   %-6d %12.3f %12.3f %7.1f%%" % (pe, rt, lib, 100 * lib / rt if rt else 0))
     rts = [x[1] for x in info]
     slow = max(info, key=lambda x: x[1])
-    out.append(" " + "-" * 60)
+    out.append(RULE)
     out.append("   slowest PE %d (%.3fs); mean %.3fs; spread %.1f%%" % (
         slow[0], slow[1], sum(rts) / len(rts),
         (max(rts) - min(rts)) / max(rts) * 100 if max(rts) else 0))
@@ -757,7 +989,7 @@ def observations(rows, ranks, hz, total, per_rank):
 
     if not obs:
         obs.append("No significant imbalance or communication bottleneck detected.")
-    return "\nObservations\n " + "-" * 60 + "\n" + "\n".join(" * " + o for o in obs)
+    return "\nObservations\n" + RULE + "\n" + "\n".join(" * " + o for o in obs)
 
 
 def main():
@@ -765,7 +997,8 @@ def main():
     ap.add_argument("files", nargs="+")
     ap.add_argument("--imbalance", choices=["active", "world"], default="active")
     ap.add_argument("--format", choices=["table", "json", "csv"], default="table")
-    ap.add_argument("--sort", choices=["t_incl", "t_excl", "count"], default="t_excl")
+    ap.add_argument("--sort", choices=["t_incl", "t_excl", "count"], default="t_incl",
+                    help="tracing-table sort key (default t_incl, matching the time%% column)")
     ap.add_argument("--top", type=int, default=0)
     ap.add_argument("--threshold", type=float, default=0.1,
                     help="hide functions below this %% of runtime (default 0.1; 0 = show all)")
@@ -791,12 +1024,13 @@ def main():
     if args.detail:
         app = ranks[0].get("application", "")
         det = reduce_rows(ranks, args.imbalance, keep_shapes=True)
-        print("\n" + "=" * 80)
+        runtime = cpu_ref(ranks)               # time% denominator (total CPU time)
+        print("\n" + "=" * 78)
         print("  UPAT detail analysis — %s" % args.detail.upper())
-        print("=" * 80)
+        print("=" * 78)
         print(" application: %s   ranks: %d" % (app, len(ranks)))
         if args.detail == "mpi":
-            mt, md = fmt_mpi(det, args.sort, args.top), fmt_mpi_detail(ranks, det)
+            mt, md = fmt_mpi(det, args.sort, args.top, runtime), fmt_mpi_detail(ranks, det)
             if mt or md:
                 print(mt)
                 print(md)
@@ -805,15 +1039,16 @@ def main():
                 print("   Fortran codes calling the mpi_*_ bindings are captured by")
                 print("   sampling only — see the function-group table in --collector upat.)")
         elif args.detail == "io":
-            print(fmt_io(det, args.sort, args.top))
+            print(fmt_io(det, args.sort, args.top, runtime))
         else:
             print(fmt_detail(det, DETAIL_GROUPS[args.detail], args.detail.upper(),
-                             args.sort, args.top))
+                             args.sort, args.top, runtime))
         print()
         return
 
     rows = reduce_rows(ranks, args.imbalance)
     runtime = max(r.get("runtime_s", 0.0) for r in ranks)
+    cpu = cpu_ref(ranks)                       # time% denominator (total CPU time)
     app = ranks[0].get("application", "")
 
     if args.format == "json":
@@ -827,8 +1062,10 @@ def main():
                     for g, n in c.items():
                         groups[g] = groups.get(g, 0) + n
         out = {"version": 1, "application": app, "runtime_s": runtime,
+               "cpu_time_s": cpu_ref(ranks),    # per-rank-avg CPU time = time% denominator
                "nranks": len(ranks), "functions": rows,
-               "groups": groups, "group_total": s.total}
+               "groups": groups, "group_total": s.total,
+               "line_hotspots": line_hotspots_json(s.leaf, s.total, len(ranks))}
         rf = symbolize_roofline(ranks, s)
         if rf:
             out["roofline_functions"] = rf
@@ -844,42 +1081,47 @@ def main():
                 gbs, r["imb_count"], r["imb_excl"], r["active"], r["nranks"]))
         return
 
-    if not args.no_header:
-        print("\n" + "=" * 80)
+    if not args.no_header:    # suppressed in the suite, which prints its own Environment header
+        print("\n" + "=" * 78)
         print("  UPAT  —  Universal Performance Analysis Tool  (deep profile)")
         print("         tracing (sci-libs / MPI / I/O) + statistical sampling")
-        print("=" * 80)
-    print(" application: %s" % app)
-    print(" ranks: %d   max runtime (s): %.3f   imbalance: %s   imb = (max-avg)/max" %
-          (len(ranks), runtime, args.imbalance))
+        print("=" * 78)
+        print(" application: %s" % app)
+        print(" ranks: %d   max runtime (s): %.3f   imbalance: %s   imb = (max-avg)/max" %
+              (len(ranks), runtime, args.imbalance))
 
     # Table 1 — sampling, grouped by function group (CrayPAT-style).
     s = symbolize_samples(ranks)
     hz, total, per_rank = s.hz, s.total, s.leaf
     if total > 0:
         if s.stacks:
+            cap = args.top or 15        # the call-tree lists are long; cap unless --top given
             print(fmt_domgroup(s, args.top))
-            print(fmt_flat("Top functions (inclusive)", s.incf, total, s.nranks, args.top,
+            print(fmt_flat("Top functions (inclusive)", s.incf, total, s.nranks, cap,
                            lambda k: "%s  [%s]" % (k[1], k[0]), args.threshold))
-            print(fmt_flat("Top functions (self)", s.leaf, total, s.nranks, args.top,
-                           lambda k: "%s  %s" % (k[1], k[2]), args.threshold))
+            print(fmt_flat("Top functions (self)", collapse_to_func(s.leaf), total,
+                           s.nranks, cap, lambda k: "%s  (%s)" % (k[1], k[0]),
+                           args.threshold))
         else:
             print(fmt_groups(s.leaf, hz, total, s.nranks, args.top, args.threshold))
+        # CrayPAT-style line-level hotspot ranking (self time), a separate section
+        # from the function-level tables above. Works in both leaf and stack modes.
+        print(fmt_lines(s.leaf, hz, total, s.nranks, args.top, args.threshold))
 
     # Tables 2-3 — exact library tracing (counts/time/imbalance, MPI volume).
     # Imbalance columns only make sense across ranks; drop them for a single rank.
     thr = args.threshold
     imb = len(ranks) > 1
-    ct = fmt_compute(rows, args.sort, args.top, runtime, thr, imb)
+    ct = fmt_compute(rows, args.sort, args.top, cpu, thr, imb)
     if ct:
         print("\nTable 2:  Library calls by group and function  (tracing)")
         print(ct)
-    mt = fmt_mpi(rows, args.sort, args.top, runtime, thr, imb)
+    mt = fmt_mpi(rows, args.sort, args.top, cpu, thr, imb)
     if mt:
         print("\nTable 3:  MPI message statistics  (tracing)")
         print(mt)
         print(fmt_mpi_detail(ranks, rows))
-    iot = fmt_io(rows, args.sort, args.top, runtime, thr, imb)
+    iot = fmt_io(rows, args.sort, args.top, cpu, thr, imb)
     if iot:
         print("\nTable 4:  I/O statistics  (tracing)")
         print(iot)

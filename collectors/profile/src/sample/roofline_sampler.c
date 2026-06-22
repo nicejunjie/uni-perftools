@@ -1,17 +1,24 @@
 /* Event-based sampling for per-FUNCTION roofline — the "characterize" pass.
  *
- * Per-thread perf_event_open on an FP-ops event and a DRAM-fill event in
+ * Per-thread perf_event_open on a set of FP-ops events and DRAM-access events in
  * SAMPLING mode. Each counter overflow delivers a realtime signal; the handler
  * reads the sampled instruction pointer from the mmap ring buffer and bumps a
- * per-thread, per-event PC histogram. Symbolization and flop/byte attribution
+ * per-thread, per-CHANNEL PC histogram. Symbolization and flop/byte attribution
  * happen in postprocess (PC -> function via the same maps the time sampler emits).
  *
  * Why sampling (not hook-and-delta): this attributes FP work and memory traffic
  * to ANY function — library, user, or system — including inlined code, with cost
  * independent of call frequency. See core/analysis docs.
  *
- * Enabled by UPAT_ROOFLINE=1. AMD core-PMU events for now; other vendors
- * degrade to "unsupported" (no roofline_sampling block emitted).
+ * Data-driven, cross-vendor event selection: the events to sample are NOT
+ * hard-coded here. The upat CLI resolves them from perf's vendored pmu-events db
+ * (via `uaps resolve-events`) for the host CPU and passes them in UPAT_ROOFLINE_SPEC
+ * as `role,type,config,period,scale` channels (role=fp|mem; type =
+ * perf_event_attr.type — RAW on x86, a dynamic PMU type on ARM; scale = flops/op
+ * for fp, bytes/sample for mem). This C side stays dumb — it just opens whatever
+ * (type,config) it's told and weights the per-PC counts by `scale` at emit. If the spec is
+ * absent (e.g. the resolver was unavailable), it falls back to the built-in AMD
+ * codes so a stock AMD run still works. Enabled by UPAT_ROOFLINE=1.
  */
 #define _GNU_SOURCE
 #include "libprof.h"
@@ -29,34 +36,78 @@
 #include <stdint.h>
 
 #define RF_SIG     (SIGRTMIN + 7)   /* distinct from the time sampler's SIGRTMIN+6 */
-#define RF_CAP     8192             /* distinct PCs per event per thread */
+#define RF_CAP     8192             /* distinct PCs per channel per thread */
 #define RING_PAGES 8                /* data pages (power of two) */
+#define MAX_CHAN   8                /* FP sub-events (≤4 widths on Intel) + DRAM events */
 
-enum { EV_FP = 0, EV_MEM = 1, EV_N = 2 };
+enum { ROLE_FP = 0, ROLE_MEM = 1 };
 
 /* per-thread histograms, reachable from tls->roof for emit */
 typedef struct {
-    uint64_t *pc[EV_N];
-    uint32_t *cnt[EV_N];
+    uint64_t *pc[MAX_CHAN];
+    uint32_t *cnt[MAX_CHAN];
     int       cap;
-    uint64_t  total[EV_N], dropped[EV_N];
+    uint64_t  total[MAX_CHAN], dropped[MAX_CHAN];
 } roof_hist_t;
 
 /* per-thread perf state — only the owning thread and its handler touch these */
-static __thread int          rf_fd[EV_N]   = { -1, -1 };
-static __thread void        *rf_ring[EV_N] = { 0, 0 };
+static __thread int          rf_fd[MAX_CHAN]   = { -1, -1, -1, -1, -1, -1, -1, -1 };
+static __thread void        *rf_ring[MAX_CHAN] = { 0 };
 static __thread roof_hist_t *rf_h;
 
+/* channel table (shared, set once at init before any thread arms) */
 static int          rf_enabled;
 static volatile int rf_active;
-static uint64_t     rf_config[EV_N];     /* raw event codes */
-static uint64_t     rf_period[EV_N];
-static int          rf_bytes_per_fill = 64;
+static int          rf_nchan;
+static int          rf_role[MAX_CHAN];     /* ROLE_FP | ROLE_MEM */
+static uint32_t     rf_type[MAX_CHAN];     /* perf_event_attr.type (RAW on x86) */
+static uint64_t     rf_config[MAX_CHAN];   /* raw perf_event_attr.config */
+static uint64_t     rf_period[MAX_CHAN];   /* sample period */
+static double       rf_scale[MAX_CHAN];    /* flops/op (FP) or bytes/sample (MEM) */
 
 int libprof_roofline_enabled(void) { return rf_enabled; }
 
-/* ---- vendor event selection ------------------------------------------------ */
-static int detect_events(void)
+/* ---- channel setup --------------------------------------------------------- */
+static void add_chan(int role, uint32_t type, uint64_t config, uint64_t period, double scale)
+{
+    if (rf_nchan >= MAX_CHAN || config == 0 || period == 0) return;
+    rf_role[rf_nchan]   = role;
+    rf_type[rf_nchan]   = type;
+    rf_config[rf_nchan] = config;
+    rf_period[rf_nchan] = period;
+    rf_scale[rf_nchan]  = scale;
+    rf_nchan++;
+}
+
+/* Parse UPAT_ROOFLINE_SPEC: ';'-separated channels, each "role,type,config,period,scale".
+ * role is "fp" or "mem"; type/config/period accept 0x-hex or decimal; scale is a
+ * double. Returns the number of channels parsed. */
+static int parse_spec(const char *spec)
+{
+    char *buf = strdup(spec);
+    if (!buf) return 0;
+    for (char *save = NULL, *tok = strtok_r(buf, ";", &save); tok;
+         tok = strtok_r(NULL, ";", &save)) {
+        char role[8] = {0};
+        char ty[32] = {0}, cfg[32] = {0}, per[32] = {0}, scl[32] = {0};
+        /* role,type,config,period,scale */
+        if (sscanf(tok, "%7[^,],%31[^,],%31[^,],%31[^,],%31s", role, ty, cfg, per, scl) != 5)
+            continue;
+        int r = (strcmp(role, "mem") == 0) ? ROLE_MEM : ROLE_FP;
+        uint32_t type   = (uint32_t)strtoul(ty, NULL, 0);
+        uint64_t config = strtoull(cfg, NULL, 0);
+        uint64_t period = strtoull(per, NULL, 0);
+        double   scale  = strtod(scl, NULL);
+        add_chan(r, type, config, period, scale);
+    }
+    free(buf);
+    return rf_nchan;
+}
+
+/* Built-in fallback when no spec is provided: AMD core-PMU FP + DRAM-fill events
+ * (the historical hard-coded path). Other vendors have no fallback — they rely on
+ * the resolver-provided spec, so without it roofline stays off (graceful). */
+static int fallback_amd(void)
 {
     char vendor[64] = {0}, line[256];
     FILE *f = fopen("/proc/cpuinfo", "r");
@@ -70,13 +121,19 @@ static int detect_events(void)
         }
         fclose(f);
     }
-    if (!strcmp(vendor, "AuthenticAMD")) {
-        rf_config[EV_FP]  = 0x0F03;   /* FpRetSseAvxOps  (matches snapshot gflops) */
-        rf_config[EV_MEM] = 0x4843;   /* ls_dmnd_fills_from_sys: DRAM (matches mem_fills_dram) */
-        return 1;
-    }
-    /* Intel needs width-weighted FP umasks + an offcore DRAM event — TODO. */
-    return 0;
+    if (strcmp(vendor, "AuthenticAMD") != 0) return 0;
+    uint64_t fp_p  = libprof_cfg.roof_fp_period  > 0 ? libprof_cfg.roof_fp_period  : 1000000;
+    uint64_t mem_p = libprof_cfg.roof_mem_period > 0 ? libprof_cfg.roof_mem_period : 10000;
+    add_chan(ROLE_FP,  PERF_TYPE_RAW, 0x0F03, fp_p, 1.0);    /* FpRetSseAvxOps (ops proxy, 1 flop/op) */
+    add_chan(ROLE_MEM, PERF_TYPE_RAW, 0x4843, mem_p, 64.0);  /* ls_dmnd_fills_from_sys.dram_io_all × line */
+    return rf_nchan;
+}
+
+static int build_channels(void)
+{
+    const char *spec = getenv("UPAT_ROOFLINE_SPEC");
+    if (spec && *spec && parse_spec(spec) > 0) return rf_nchan;
+    return fallback_amd();
 }
 
 /* ---- ring buffer drain (signal context) ------------------------------------ */
@@ -131,16 +188,16 @@ static void on_overflow(int sig, siginfo_t *si, void *uc)
     (void)sig; (void)uc;
     if (!rf_active) return;
     int fd = si->si_fd;
-    for (int e = 0; e < EV_N; e++)
+    for (int e = 0; e < rf_nchan; e++)
         if (fd == rf_fd[e]) { drain(e); return; }
 }
 
 /* ---- per-thread arm/disarm ------------------------------------------------- */
-static long perf_open(uint64_t config, uint64_t period, int tid)
+static long perf_open(uint32_t type, uint64_t config, uint64_t period, int tid)
 {
     struct perf_event_attr a;
     memset(&a, 0, sizeof a);
-    a.type = PERF_TYPE_RAW;
+    a.type = type;
     a.size = sizeof a;
     a.config = config;
     a.sample_period = period;
@@ -160,13 +217,13 @@ static long perf_open(uint64_t config, uint64_t period, int tid)
 
 void libprof_roofline_thread_start(void)
 {
-    if (!rf_enabled || rf_fd[EV_FP] != -1 || rf_fd[EV_MEM] != -1) return;
+    if (!rf_enabled || rf_fd[0] != -1) return;
     libprof_tls_t *t = libprof_tls ? libprof_tls : libprof_tls_init();
     if (!t) return;
     roof_hist_t *h = calloc(1, sizeof *h);
     if (!h) return;
     h->cap = RF_CAP;
-    for (int e = 0; e < EV_N; e++) {
+    for (int e = 0; e < rf_nchan; e++) {
         h->pc[e]  = calloc(h->cap, sizeof(uint64_t));
         h->cnt[e] = calloc(h->cap, sizeof(uint32_t));
     }
@@ -176,8 +233,8 @@ void libprof_roofline_thread_start(void)
     int tid = (int)syscall(SYS_gettid);
     long pg = sysconf(_SC_PAGESIZE);
     size_t mbytes = (size_t)(1 + RING_PAGES) * pg;
-    for (int e = 0; e < EV_N; e++) {
-        long fd = perf_open(rf_config[e], rf_period[e], tid);
+    for (int e = 0; e < rf_nchan; e++) {
+        long fd = perf_open(rf_type[e], rf_config[e], rf_period[e], tid);
         if (fd < 0) continue;
         void *m = mmap(NULL, mbytes, PROT_READ | PROT_WRITE, MAP_SHARED, fd, 0);
         if (m == MAP_FAILED) { close((int)fd); continue; }
@@ -196,7 +253,7 @@ void libprof_roofline_thread_stop(void)
 {
     long pg = sysconf(_SC_PAGESIZE);
     size_t mbytes = (size_t)(1 + RING_PAGES) * pg;
-    for (int e = 0; e < EV_N; e++) {
+    for (int e = 0; e < rf_nchan; e++) {
         if (rf_fd[e] >= 0) {
             ioctl(rf_fd[e], PERF_EVENT_IOC_DISABLE, 0);
             drain(e);
@@ -210,9 +267,7 @@ void libprof_roofline_thread_stop(void)
 void libprof_roofline_init(void)
 {
     if (!libprof_cfg.roofline) return;
-    if (!detect_events()) return;        /* unsupported vendor → silently off */
-    rf_period[EV_FP]  = libprof_cfg.roof_fp_period  > 0 ? libprof_cfg.roof_fp_period  : 1000000;
-    rf_period[EV_MEM] = libprof_cfg.roof_mem_period > 0 ? libprof_cfg.roof_mem_period : 10000;
+    if (build_channels() <= 0) return;   /* no resolvable events for this host → off */
 
     struct sigaction sa;
     memset(&sa, 0, sizeof sa);
@@ -242,7 +297,7 @@ static void emit_one(libprof_tls_t *t, void *ud)
     if (!h || !h->pc[c->ev]) return;
     for (int i = 0; i < h->cap; i++)
         if (h->cnt[c->ev][i]) {
-            fprintf(c->f, "%s\n      [%llu,%u]", c->first ? "" : ",",
+            fprintf(c->f, "%s\n        [%llu,%u]", c->first ? "" : ",",
                     (unsigned long long)h->pc[c->ev][i], h->cnt[c->ev][i]);
             c->first = 0;
         }
@@ -250,10 +305,10 @@ static void emit_one(libprof_tls_t *t, void *ud)
 
 static void sum_totals(libprof_tls_t *t, void *ud)
 {
-    uint64_t *tot = ud;                  /* tot[EV_N*2]: total, dropped per event */
+    uint64_t *tot = ud;                  /* tot[MAX_CHAN*2]: total, dropped per channel */
     roof_hist_t *h = t->roof;
     if (!h) return;
-    for (int e = 0; e < EV_N; e++) { tot[e] += h->total[e]; tot[EV_N + e] += h->dropped[e]; }
+    for (int e = 0; e < rf_nchan; e++) { tot[e] += h->total[e]; tot[MAX_CHAN + e] += h->dropped[e]; }
 }
 
 static void emit_maps(FILE *f)
@@ -280,22 +335,24 @@ void libprof_roofline_emit(void *fp)
 {
     if (!rf_enabled) return;
     FILE *f = fp;
-    uint64_t tot[EV_N * 2] = {0};
+    uint64_t tot[MAX_CHAN * 2] = {0};
     libprof_tls_foreach(sum_totals, tot);
-    fprintf(f, ",\n  \"roofline_sampling\": {\n"
-               "    \"fp_event\": \"0x%llx\", \"mem_event\": \"0x%llx\",\n"
-               "    \"fp_period\": %llu, \"mem_period\": %llu, \"bytes_per_fill\": %d,\n"
-               "    \"fp_total\": %llu, \"mem_total\": %llu,\n"
-               "    \"fp_samples\": [",
-            (unsigned long long)rf_config[EV_FP], (unsigned long long)rf_config[EV_MEM],
-            (unsigned long long)rf_period[EV_FP], (unsigned long long)rf_period[EV_MEM],
-            rf_bytes_per_fill,
-            (unsigned long long)tot[EV_FP], (unsigned long long)tot[EV_MEM]);
-    struct rfctx c = { f, 1, EV_FP };
-    libprof_tls_foreach(emit_one, &c);
-    fprintf(f, "\n    ],\n    \"mem_samples\": [");
-    c.first = 1; c.ev = EV_MEM;
-    libprof_tls_foreach(emit_one, &c);
+
+    /* One object per channel: role + raw config + period + scale + per-PC samples.
+     * Postprocess weights each PC's count by (period × scale): flops for fp, bytes
+     * for mem. Multiple fp channels (Intel's width-split umasks) sum per function. */
+    fprintf(f, ",\n  \"roofline_sampling\": {\n    \"channels\": [");
+    for (int e = 0; e < rf_nchan; e++) {
+        fprintf(f, "%s\n      {\"role\":\"%s\", \"config\":\"0x%llx\", \"period\":%llu, "
+                   "\"scale\":%g, \"total\":%llu,\n      \"samples\": [",
+                e ? "," : "",
+                rf_role[e] == ROLE_MEM ? "mem" : "fp",
+                (unsigned long long)rf_config[e], (unsigned long long)rf_period[e],
+                rf_scale[e], (unsigned long long)tot[e]);
+        struct rfctx c = { f, 1, e };
+        libprof_tls_foreach(emit_one, &c);
+        fprintf(f, "\n      ]}");
+    }
     fprintf(f, "\n    ],\n    \"maps\": [");
     emit_maps(f);
     fprintf(f, "\n    ]\n  }");

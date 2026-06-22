@@ -15,6 +15,7 @@
 #include <sys/syscall.h>
 #include <ucontext.h>
 #include <execinfo.h>
+#include <setjmp.h>
 
 #define SAMP_SIG   (SIGRTMIN + 6)
 #define LEAF_CAP   8192             /* distinct leaf PCs (leaf mode) */
@@ -24,6 +25,39 @@ static int            enabled;
 static volatile int   active;
 static clockid_t      clockid;
 static int            depth;        /* frames to record (1 = leaf only) */
+
+/* ---- fault-guarded unwind --------------------------------------------------
+ * backtrace() walks .eh_frame in the interrupted thread's context. Frames with
+ * missing/bad CFI (hand-written asm, JIT, vendor libs like cuda/cuda-openmpi)
+ * make it follow a bad return address into unmapped memory and SIGSEGV/SIGBUS —
+ * crashing the *target* (stock `perf record` is immune because the kernel
+ * unwinds). We wrap the unwind in sigsetjmp + a temporary SEGV/BUS handler: a
+ * fault during unwinding longjmps back and we keep just the leaf PC, instead of
+ * killing the program. Faults outside the unwind window chain to the target's
+ * own handler so genuine crashes still crash. */
+static __thread sigjmp_buf      s_unwind_jmp;
+static __thread volatile sig_atomic_t s_unwinding;
+static struct sigaction s_old_segv, s_old_bus;
+
+static void unwind_guard(int sig, siginfo_t *si, void *ctx)
+{
+    if (s_unwinding) {
+        s_unwinding = 0;
+        siglongjmp(s_unwind_jmp, 1);
+    }
+    /* not a sampler-induced fault → defer to whatever was installed before us */
+    struct sigaction *old = (sig == SIGBUS) ? &s_old_bus : &s_old_segv;
+    if ((old->sa_flags & SA_SIGINFO) && old->sa_sigaction) {
+        old->sa_sigaction(sig, si, ctx);
+    } else if (old->sa_handler == SIG_IGN) {
+        return;
+    } else if (old->sa_handler && old->sa_handler != SIG_DFL) {
+        old->sa_handler(sig);
+    } else {
+        signal(sig, SIG_DFL);
+        raise(sig);
+    }
+}
 
 static __thread timer_t s_timer;
 static __thread int     s_armed;
@@ -103,14 +137,19 @@ static void on_sample(int sig, siginfo_t *si, void *ctx)
     sstack_t *s = t->samp_stack;
     if (!s) return;
     void *bt[MAXD];
-    int n = backtrace(bt, depth + 2);              /* +2: handler + sigtrampoline */
+    int n = 0;
+    /* guarded: a fault inside backtrace() longjmps back with n unchanged (0),
+     * so we still record the leaf rather than crash the target. */
+    s_unwinding = 1;
+    if (sigsetjmp(s_unwind_jmp, 1) == 0)
+        n = backtrace(bt, depth + 2);              /* +2: handler + sigtrampoline */
+    s_unwinding = 0;
     int skip = 2;                                  /* drop on_sample + __restore_rt */
-    if (n <= skip) return;
     uint64_t frames[MAXD];
     int m = 0;
-    frames[m++] = pc;                              /* exact leaf from ucontext */
+    frames[m++] = pc;                              /* exact leaf from ucontext (always) */
     for (int i = skip; i < n && m < depth; i++) frames[m++] = (uint64_t)bt[i];
-    stack_record(s, frames, m);
+    stack_record(s, frames, m);                    /* leaf-only if the unwind faulted */
 }
 
 void libprof_sample_init(void)
@@ -119,7 +158,18 @@ void libprof_sample_init(void)
     depth = libprof_cfg.sample_stack;
     clockid = libprof_cfg.sample_cpu ? CLOCK_THREAD_CPUTIME_ID : CLOCK_MONOTONIC;
 
-    if (depth > 1) { void *w[4]; backtrace(w, 4); }   /* warm up libgcc unwinder off-signal */
+    if (depth > 1) {
+        void *w[4]; backtrace(w, 4);                  /* warm up libgcc unwinder off-signal */
+        /* install the unwind fault guard (SA_NODEFER so a fault re-enters cleanly
+         * for the longjmp); chain to any prior handler for non-sampler faults. */
+        struct sigaction g;
+        memset(&g, 0, sizeof(g));
+        g.sa_sigaction = unwind_guard;
+        g.sa_flags = SA_SIGINFO | SA_NODEFER;
+        sigemptyset(&g.sa_mask);
+        sigaction(SIGSEGV, &g, &s_old_segv);
+        sigaction(SIGBUS, &g, &s_old_bus);
+    }
 
     struct sigaction sa;
     memset(&sa, 0, sizeof(sa));

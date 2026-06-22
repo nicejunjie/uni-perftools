@@ -39,21 +39,25 @@ static int size_bin(unsigned long long b)
     return i;
 }
 
-static void grow(int peer)
+static int grow(int peer)                   /* returns 1 if [peer] is now valid, 0 on OOM */
 {
-    if (peer < npeer) return;
+    if (peer < npeer) return 1;
     int nn = peer + 1;
-    sent = realloc(sent, nn * sizeof(*sent));
-    recvd = realloc(recvd, nn * sizeof(*recvd));
+    unsigned long long *ns = realloc(sent, nn * sizeof(*sent));
+    unsigned long long *nr = realloc(recvd, nn * sizeof(*recvd));
+    if (ns) sent = ns;                      /* commit whichever grew so we don't leak */
+    if (nr) recvd = nr;
+    if (!ns || !nr) return 0;               /* OOM: drop this update rather than write OOB */
     for (int i = npeer; i < nn; i++) { sent[i] = 0; recvd[i] = 0; }
     npeer = nn;
+    return 1;
 }
 
 static void record(unsigned long long bytes, int dir, int peer)
 {
     pthread_mutex_lock(&L);
     bins[size_bin(bytes)]++;
-    if (dir && peer >= 0) { grow(peer); (dir > 0 ? sent : recvd)[peer] += bytes; }
+    if (dir && peer >= 0 && grow(peer)) (dir > 0 ? sent : recvd)[peer] += bytes;
     pthread_mutex_unlock(&L);
 }
 
@@ -116,12 +120,18 @@ static int fan_scatterv(libprof_key_t *k, libprof_delta_t *md, const libprof_des
 static void emit(void *fp)
 {
     FILE *f = fp;
+    /* Sparse [peer, bytes] pairs — only peers we actually exchanged with. This
+     * keeps each rank's file O(degree) instead of O(nranks): a halo/stencil code
+     * at thousands of ranks writes a handful of pairs, not an N-long mostly-zero
+     * row. The postprocess tool reads this (and the legacy dense array). */
     fprintf(f, ",\n  \"mpi_detail\": {\n    \"bins\": [");
     for (int i = 0; i < NBIN; i++) fprintf(f, "%s%llu", i ? "," : "", bins[i]);
-    fprintf(f, "],\n    \"sent\": [");
-    for (int i = 0; i < npeer; i++) fprintf(f, "%s%llu", i ? "," : "", sent[i]);
+    fprintf(f, "],\n    \"npeer\": %d,\n    \"sent\": [", npeer);
+    for (int i = 0, first = 1; i < npeer; i++)
+        if (sent[i]) { fprintf(f, "%s[%d,%llu]", first ? "" : ",", i, sent[i]); first = 0; }
     fprintf(f, "],\n    \"recv\": [");
-    for (int i = 0; i < npeer; i++) fprintf(f, "%s%llu", i ? "," : "", recvd[i]);
+    for (int i = 0, first = 1; i < npeer; i++)
+        if (recvd[i]) { fprintf(f, "%s[%d,%llu]", first ? "" : ",", i, recvd[i]); first = 0; }
     fprintf(f, "]\n  }");
 }
 

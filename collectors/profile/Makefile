@@ -42,7 +42,13 @@ WRAP_FRI := $(patsubst %,$(OBJ)/frida/%_wrap.o,$(WRAP_GRP))
 TARGET_PRE := libupat-preload.so
 TARGET_FRI := libupat-frida.so
 
-all: $(TARGET_PRE) $(TARGET_FRI)
+# preload is the default backend and is always built; the Frida DBI backend is
+# optional — it needs an arch-matching frida-gum devkit (fetched on demand), so on
+# non-x86 or offline nodes it may be unavailable. Build it best-effort and never
+# fail the whole build over it: `upat` uses preload unless `--dbi` is given.
+all: $(TARGET_PRE)
+	@$(MAKE) --no-print-directory $(TARGET_FRI) || \
+	  echo "WARNING: skipping $(TARGET_FRI) — Frida devkit unavailable for $(CPUARCH); preload built OK ('upat --dbi' disabled)"
 preload: $(TARGET_PRE)
 frida:   $(TARGET_FRI)
 

@@ -11,6 +11,7 @@
 #include <dlfcn.h>
 #include <stdio.h>
 #include <stdint.h>
+#include <string.h>
 
 static void *(*r_malloc)(size_t);
 static void *(*r_calloc)(size_t, size_t);
@@ -58,6 +59,7 @@ void *malloc(size_t n)
 void *calloc(size_t n, size_t s)
 {
     if (!r_calloc) {                       /* bootstrap: dlsym may call us */
+        if (s != 0 && n > sizeof(bootbuf) / s) return NULL;  /* overflow / too big for bootbuf */
         size_t t = n * s, a = (t + 15) & ~(size_t)15;
         if (bootoff + a > sizeof(bootbuf)) return NULL;
         void *p = bootbuf + bootoff; bootoff += a;
@@ -71,7 +73,14 @@ void *calloc(size_t n, size_t s)
 void *realloc(void *old, size_t n)
 {
     if (!r_realloc) resolve();
-    if (in_boot(old)) { void *p = malloc(n); return p; }   /* migrate off bootbuf */
+    if (in_boot(old)) {                    /* migrate off bootbuf: copy old contents over */
+        void *p = malloc(n);
+        if (p) {
+            size_t avail = (size_t)(bootbuf + sizeof(bootbuf) - (char *)old);
+            memcpy(p, old, n < avail ? n : avail);
+        }
+        return p;
+    }
     long before = (on() && old) ? (long)r_usable(old) : 0;
     void *p = r_realloc(old, n);
     if (on() && p) add((long)r_usable(p) - before);

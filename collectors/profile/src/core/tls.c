@@ -35,7 +35,10 @@ libprof_frame_t *libprof_grow_stack(libprof_tls_t *t)
 {
     int newcap = t->cap * 2;
     libprof_frame_t *s = realloc(t->stack, newcap * sizeof(libprof_frame_t));
-    if (!s) return &t->stack[t->cap - 1];   /* degrade: reuse last frame */
+    if (!s) {                               /* degrade: reuse last frame, keep depth in-bounds */
+        t->depth = t->cap - 1;              /* caller does depth++, landing back at cap-1 on exit */
+        return &t->stack[t->cap - 1];
+    }
     t->stack = s;
     t->cap = newcap;
     return &t->stack[t->depth];

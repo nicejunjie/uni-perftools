@@ -8,6 +8,7 @@
 #include "util.h"
 #include <stdio.h>
 #include <stdlib.h>
+#include <sys/resource.h>
 
 __attribute__((weak)) void libprof_sample_emit(void *file);
 __attribute__((weak)) void libprof_roofline_emit(void *file);
@@ -47,10 +48,21 @@ void libprof_write_raw(libprof_row_t *rows, int n, double apptime)
     char *exe = NULL;
     get_exe_path(&exe);
 
+    /* Total CPU time across all threads (utime+stime). The report uses this as
+     * the denominator for time% so a function's share is bounded 0-100% and
+     * comparable to Samp% — unlike dividing summed-thread time by wall, which
+     * overstates parallel calls and can exceed 100%. */
+    double cpu_s = 0.0;
+    struct rusage ru;
+    if (getrusage(RUSAGE_SELF, &ru) == 0) {
+        cpu_s = (double)ru.ru_utime.tv_sec + ru.ru_utime.tv_usec * 1e-6
+              + (double)ru.ru_stime.tv_sec + ru.ru_stime.tv_usec * 1e-6;
+    }
+
     fprintf(f, "{\n  \"rank\": %d,\n  \"application\": ", rank);
     json_str(f, exe ? exe : "");
-    fprintf(f, ",\n  \"runtime_s\": %.6f,\n  \"nthreads\": %d,\n  \"functions\": [\n",
-            apptime, libprof_tls_nthreads());
+    fprintf(f, ",\n  \"runtime_s\": %.6f,\n  \"cpu_time_s\": %.6f,\n  \"nthreads\": %d,\n  \"functions\": [\n",
+            apptime, cpu_s, libprof_tls_nthreads());
     free(exe);
 
     for (int i = 0; i < n; i++) {
