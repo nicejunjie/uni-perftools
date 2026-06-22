@@ -1,5 +1,5 @@
 #!/bin/bash
-# Universal Performance Tools — end-to-end tests for the two commands:
+# Universal Performance Tool Suite — end-to-end tests for the two commands:
 #   uaps  (snapshot, Rust)         and   upat  (deep profile, core/cli/upat).
 # They are cost tiers, run independently and reported independently — there is no
 # combined report, even when both tiers' data sit in one dir. Assumes `make` has

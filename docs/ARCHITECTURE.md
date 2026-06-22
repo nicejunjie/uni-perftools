@@ -51,7 +51,7 @@ rebalance / see comm matrix". Time-by-category uses the sampling dominant-group
 breakdown (charges `read()`-under-MPI to MPI via the stack).
 
 ## Two commands, no driver
-Universal Performance Tools ships **two cost-tier commands**, run independently:
+The Universal Performance Tool Suite ships **two cost-tier commands**, run independently:
 `uaps` (snapshot) and `upat` (deep profile + report, `core/cli/upat`). There is
 no umbrella/driver — `upat report` folds in a `snap.json` if a `uaps` run left
 one in the result dir. See `../core/contract/SCHEMA.md` for the on-disk format.

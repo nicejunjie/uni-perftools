@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""upat — the deep-tier command of Universal Performance Tools (uni-perftools).
+"""upat — the deep-tier command of the Universal Performance Tool Suite (uni-perftools).
 
 Universal Performance Analysis Tool (← CrayPAT): library tracing (BLAS/LAPACK/
 FFTW/MPI/IO), call-stack sampling, per-function roofline, I/O, heap. Injected

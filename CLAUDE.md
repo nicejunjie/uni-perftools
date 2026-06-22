@@ -4,7 +4,7 @@ Guidance for Claude Code working in this repository.
 
 ## What this is
 
-**Universal Performance Tools** (uni-perftools) — two independent **cost-tier**
+**Universal Performance Tool Suite** (uni-perftools) — two independent **cost-tier**
 commands over a shared analysis core, branded after the vendor tools they descend
 from (made portable). There is **no umbrella/driver command** — run one tier:
 

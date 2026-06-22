@@ -36,7 +36,7 @@ clean:
 	$(MAKE) -C $(PROFILE) clean
 	cd $(SNAPSHOT) && cargo clean
 
-# Universal Performance Tools: two commands — uaps (snapshot) + upat (deep tier).
+# Universal Performance Tool Suite: two commands — uaps (snapshot) + upat (deep tier).
 # Stage the tree under $(PREFIX)/lib/uni-perftools; bin/uaps + bin/upat wrappers.
 DEST := $(DESTDIR)$(PREFIX)/lib/uni-perftools
 install: profile

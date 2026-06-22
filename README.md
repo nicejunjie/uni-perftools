@@ -1,4 +1,4 @@
-# Universal Performance Tools (uni-perftools)
+# Universal Performance Tool Suite (uni-perftools)
 
 A portable HPC performance suite — two independent **cost-tier** commands over a
 shared analysis core. They descend from the vendor tools they emulate, made
