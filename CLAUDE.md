@@ -42,6 +42,20 @@ e.g. `tests/qe/`). Concretely:
 The goal: anyone can clone this repo and reproduce every check from within it,
 without depending on machine-global state.
 
+### Remote test hosts (cross-arch validation) — hygiene
+
+Validation runs on remote machines (AMD Zen 3/4/5; ARM Grace via TACC Vista) live
+under `~/scilib-prof-rearch/` on those hosts (shared `$HOME` on the cluster). Two
+rules, both learned the hard way:
+
+- **Keep scratch under the project dir, never the remote `$HOME` root.** Don't
+  scp helper scripts / dump `o`/`e` output files into `~/` — stage them under the
+  synced project tree (e.g. `tests/`).
+- **Never rsync host-specific build artifacts between machines.** Exclude
+  `build/`, `target/`, `*.so`, `*.a`, and `frida/` from deploys — a roofline cache
+  calibrated on another CPU, an x86 Frida archive on aarch64, or a stale `build/`
+  silently produced wrong results. Rebuild and recalibrate on the run host.
+
 ## Build / test
 
 ```sh

@@ -50,16 +50,17 @@ export OMP_PLACES=cores OMP_PROC_BIND=close   # physical-core placement, no SMT 
 # A) deep profile (upat), serial — 16 threads on 16 physical cores
 OMP_NUM_THREADS=16 OPENBLAS_NUM_THREADS=16 \
   $UPAT run -o out/run_serial -- ./pw -in si.scf.in > out/qe.serial.out
-$UPAT report  out/run_serial                        > out/report.serial.txt
-# optional: add the snapshot tier into the same dir → combined report
+$UPAT report  out/run_serial --collector upat       > out/upat.serial.txt
+# the snapshot tier is a SEPARATE single-tier report — cost tiers are never combined
 OMP_NUM_THREADS=16 OPENBLAS_NUM_THREADS=16 \
   $UAPS run --format json -o out/run_serial/snap.json -- ./pw -in si.scf.in
+$UPAT report  out/run_serial --collector uaps       > out/uaps.serial.txt
 
 # B) MPI, 2 ranks × 8 threads = 16 physical cores (conda openmpi, bound to cores)
 OMP_NUM_THREADS=8 OPENBLAS_NUM_THREADS=8 \
   $UPAT run -o out/run_mpi -- qenv/bin/mpirun -np 2 --bind-to core --map-by socket:PE=8 \
     ./pw -in si.scf.in > out/qe.mpi.out
-$UPAT report  out/run_mpi                                            > out/report.mpi.txt
+$UPAT report  out/run_mpi --collector upat                          > out/upat.mpi.txt
 
 # C) per-function roofline (event sampling), single-threaded for clean hotspots
 OMP_NUM_THREADS=1 OPENBLAS_NUM_THREADS=1 \
@@ -80,9 +81,10 @@ Reporting options (calls aggregate over input sizes by default):
 $UPAT report out/run_serial --detail blas      # per-shape BLAS breakdown (post analysis)
 $UPAT report out/run_mpi    --detail mpi        # MPI volume + size histogram (text)
 
-# HTML reports (self-contained; comm matrix as a heatmap figure, like Intel APS)
-$UPAT report out/run_serial --format html -o out            # → out/report.html
-$UPAT report out/run_mpi --detail mpi --format html -o out  # → out/report.mpi.html
+# HTML reports (self-contained; APS-style dashboard, comm matrix as a heatmap figure)
+$UPAT report out/run_mpi --collector uaps --format html > out/uaps.mpi.html  # snapshot dashboard
+$UPAT report out/run_mpi --collector upat --format html > out/upat.mpi.html  # deep profile (top MPI fns + matrix)
+$UPAT report out/run_mpi --detail mpi    --format html -o out                # → out/detail.mpi.html
 ```
 
 The text MPI report shows the full rank×rank matrix only for small jobs (≤8
@@ -94,13 +96,14 @@ scale.
 
 | file | what |
 |------|------|
-| `report.serial.txt` / `report.mpi.txt` | `upat report` (deep tier; combined if snap.json present) |
+| `upat.serial.txt` / `upat.mpi.txt` / `upat.big.txt` | `upat report` — deep profile tier (tracing + sampling) |
+| `uaps.serial.txt` / `uaps.mpi.txt` / `uaps.big.txt` | `uaps` snapshot tier (APS-style bird's-eye; MPI section on MPI runs) |
 | `roofline_func.txt`                     | per-function roofline (single-threaded) |
 | `detail.blas.txt`                       | `--detail blas` per-shape breakdown |
 | `detail.mpi.txt`                        | `--detail mpi` comm matrix + size histogram (text) |
-| `snapshot.serial.txt` / `snapshot.mpi.txt` | `uaps` snapshots (APS-style; MPI section on the MPI run) |
-| `report.html`                           | HTML report (SVG roofline + styled tables) |
-| `report.mpi.html`                       | HTML MPI analysis (comm-matrix heatmap + histogram) |
+| `uaps.{serial,mpi,big}.html`            | snapshot HTML dashboard (hero tiles, pipeline bar, SVG roofline, top MPI calls) |
+| `upat.{serial,mpi,big}.html`            | deep-profile HTML (sci-lib tables; top MPI functions + comm matrix on MPI runs) |
+| `detail.mpi.html`                       | HTML MPI analysis (comm-matrix heatmap + histogram) |
 | `qe.*.out`                              | QE's own stdout for each run |
 
 ## What it validated
