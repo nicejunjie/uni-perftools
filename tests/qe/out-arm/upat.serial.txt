@@ -1,0 +1,219 @@
+──────────────────────────────────────────────────────────────────────────────
+  UPAT  —  Universal Performance Analysis Tool   (deep profile: tracing + sampling)
+──────────────────────────────────────────────────────────────────────────────
+
+══ Run ══
+    application    pw.x
+    command        ./pw -in si.scf.in
+    ranks          1
+    threads/rank   3
+    elapsed        3.1 s
+    CPU time       56 s
+    date           2026-06-21 23:25
+
+══ Machine ══
+    CPU            Neoverse V2 (Grace / Graviton4)
+    microarch      Neoverse V2 (Grace / Graviton4)
+    cores          1 socket × 144 physical (144 logical)
+    SMT            off
+    memory         237.6 GiB
+    host           i614-004.vista.tacc.utexas.edu
+
+══ Software ══
+    OS             Rocky Linux 9.7 (Blue Onyx)
+    kernel         5.14.0-611.16.1.el9_7.aarch64+64k
+    OpenBLAS       libopenblasp-r0.3.29.so
+    Open MPI       libmpi.so.40.40.5
+    compiler       GCC: (GNU) 11.5.0 20240719 (Red Hat 11.5.0-11)
+
+══ Measurement ══
+    method         statistical call-stack sampling
+    sampling       1000 Hz
+    paranoid       0
+
+── INSIGHTS ──────────────────────────────────────────────────────────────────
+  ▶ MPI is 72% of time — communication-heavy; enlarge messages / overlap comm with compute.
+
+══ Time breakdown (sampled, by dominant group) ══
+    MPI             72.5%  █████████████████████████████
+    user code       24.8%  ██████████
+    math-libs        2.1%  █
+    system/other     0.6%  
+
+
+Table 1:  Profile by Function Group  (sampling @ 1000 Hz, 1 PEs)
+          time charged to the highest-level group on each sample's stack
+
+   Samp%      Samp  Group
+  ──────────────────────────────────────────────────────────────────────────────
+ 100.0%      8768  Total
+  ──────────────────────────────────────────────────────────────────────────────
+  72.5%      6356  MPI
+  24.8%      2171  USER
+   2.1%       187  BLAS
+   0.6%        54  ETC
+  ──────────────────────────────────────────────────────────────────────────────
+  legend:
+    Samp%        percent of samples here (~ percent of wall time)
+    Samp         sample count (wall time ~ Samp / sampling-Hz)
+    groups       USER=your code, ETC=other/system; MPI/BLAS/LAPACK/FFTW/IO as named
+
+  Top functions (inclusive)
+  ──────────────────────────────────────────────────────────────────────────────
+   Samp%      Samp  Function
+  ──────────────────────────────────────────────────────────────────────────────
+  70.5%      6178  thread_start  [ETC]
+  70.4%      6177  __GI_epoll_pwait  [ETC]
+  34.8%      3049  ucs_event_set_wait  [MPI]
+  34.8%      3049  ucs_async_thread_func  [MPI]
+  26.9%      2356  MAIN_  [USER]
+  26.9%      2356  main  [USER]
+  26.9%      2356  __libc_start_main_alias_2  [ETC]
+  24.9%      2185  run_pwscf_  [USER]
+  22.5%      1976  electrons_scf_  [USER]
+  22.5%      1976  electrons_  [USER]
+  19.3%      1690  c_bands_  [USER]
+  19.2%      1683  h_psi_  [USER]
+  19.1%      1675  h_psi__  [USER]
+  18.8%      1648  diag_bands_  [USER]
+  18.8%      1647  diag_bands_diag_bands_k  [USER]
+   ... 492 more below 0.1% of CPU time (report --threshold 0 to show all)
+  ──────────────────────────────────────────────────────────────────────────────
+  legend:
+    Samp%        percent of samples here (~ percent of wall time)
+    Samp         sample count (wall time ~ Samp / sampling-Hz)
+    groups       USER=your code, ETC=other/system; MPI/BLAS/LAPACK/FFTW/IO as named
+
+  Top functions (self)
+  ──────────────────────────────────────────────────────────────────────────────
+   Samp%      Samp  Function
+  ──────────────────────────────────────────────────────────────────────────────
+  70.4%      6177  __GI_epoll_pwait  (ETC)
+   9.6%       838  fftwi_no_twiddle_32  (USER)
+   7.6%       668  fftw_no_twiddle_32  (USER)
+   2.4%       212  __getrusage  (ETC)
+   1.0%        86  fft_scalar_fftw_cfft3ds_  (USER)
+   0.8%        69  __GI___ioctl  (ETC)
+   0.7%        60  __GI___openat  (ETC)
+   0.6%        54  vloc_psi_k_  (USER)
+   0.5%        43  zgemm_kernel_n_NEOVERSEV1  (BLAS)
+   0.5%        40  fftw  (USER)
+   0.4%        37  zgemm_kernel_l_NEOVERSEV1  (BLAS)
+   0.4%        33  __c_mset8  (ETC)
+   0.3%        28  __fz_div_1_neon  (ETC)
+   0.2%        21  zgemm_incopy_NEOVERSEV1  (BLAS)
+   0.2%        18  __fd_sincos_1_neon  (ETC)
+   ... 145 more below 0.1% of CPU time (report --threshold 0 to show all)
+  ──────────────────────────────────────────────────────────────────────────────
+  legend:
+    Samp%        percent of samples here (~ percent of wall time)
+    Samp         sample count (wall time ~ Samp / sampling-Hz)
+    groups       USER=your code, ETC=other/system; MPI/BLAS/LAPACK/FFTW/IO as named
+
+Table 1b:  Profile by source line  (hotspots, sampling @ 1000 Hz, 1 PEs)
+           every row is one source line, ranked by self-sample %
+
+   Samp%      Samp  Function  [file:line]  (group)
+  ──────────────────────────────────────────────────────────────────────────────
+  70.4%      6177  __GI_epoll_pwait  [libc.so.6:?]  (ETC)
+   2.4%       212  __getrusage  [libc.so.6:?]  (ETC)
+   0.8%        69  __GI___ioctl  [libc.so.6:?]  (ETC)
+   0.7%        60  __GI___openat  [libc.so.6:?]  (ETC)
+   0.7%        57  fft_scalar_fftw_cfft3ds_  [fft_scalar.FFTW.f90:681]  (USER
+   0.6%        53  fftwi_no_twiddle_32  [fftw_dp.c:8297]  (USER)
+   0.6%        50  vloc_psi_k_  [vloc_psi.f90:266]  (USER)
+   0.5%        44  fftw_no_twiddle_32  [fftw_dp.c:2861]  (USER)
+   0.5%        43  zgemm_kernel_n_NEOVERSEV1  [libopenblasp-r0.3.29.so]  (BLA
+   0.4%        37  zgemm_kernel_l_NEOVERSEV1  [libopenblasp-r0.3.29.so]  (BLA
+   0.4%        36  fftwi_no_twiddle_32  [fftw_dp.c:8703]  (USER)
+   0.4%        33  __c_mset8  [libnvc.so]  (ETC)
+   0.4%        33  fftwi_no_twiddle_32  [fftw_dp.c:7866]  (USER)
+   0.3%        29  fftw_no_twiddle_32  [fftw_dp.c:3267]  (USER)
+   0.3%        28  __fz_div_1_neon  [libnvcpumath.so]  (ETC)
+   0.3%        25  fftwi_no_twiddle_32  [fftw_dp.c:8155]  (USER)
+   0.3%        24  fftw_no_twiddle_32  [fftw_dp.c:2489]  (USER)
+   0.3%        24  fftw_no_twiddle_32  [fftw_dp.c:2521]  (USER)
+   0.3%        24  fftwi_no_twiddle_32  [fftw_dp.c:8567]  (USER)
+   0.2%        21  fftw_no_twiddle_32  [fftw_dp.c:2719]  (USER)
+   0.2%        21  fftw_no_twiddle_32  [fftw_dp.c:2430]  (USER)
+   0.2%        21  fftwi_no_twiddle_32  [fftw_dp.c:8139]  (USER)
+   0.2%        21  zgemm_incopy_NEOVERSEV1  [libopenblasp-r0.3.29.so]  (BLAS)
+   0.2%        20  fftwi_no_twiddle_32  [fftw_dp.c:8049]  (USER)
+   0.2%        20  fftwi_no_twiddle_32  [fftw_dp.c:7957]  (USER)
+   0.2%        18  __fd_sincos_1_neon  [libnvcpumath.so]  (ETC)
+   0.2%        17  fftwi_no_twiddle_32  [fftw_dp.c:7971]  (USER)
+   0.2%        15  fftwi_no_twiddle_32  [fftw_dp.c:8107]  (USER)
+   0.2%        14  __libc_read  [libc.so.6:?]  (ETC)
+   0.2%        14  fftwi_no_twiddle_32  [fftw_dp.c:8200]  (USER)
+   0.2%        14  zgemm_itcopy_NEOVERSEV1  [libopenblasp-r0.3.29.so]  (BLAS)
+   0.2%        14  sum_band_get_rho  [sum_band.f90:789]  (USER)
+   0.2%        14  0x4000267404e0  (ETC)
+   0.1%        13  fftwi_no_twiddle_32  [fftw_dp.c:8592]  (USER)
+   0.1%        12  __libc_close  [libc.so.6:?]  (ETC)
+   0.1%        12  fftwi_no_twiddle_32  [fftw_dp.c:7784]  (USER)
+   0.1%        12  fftwi_no_twiddle_32  [fftw_dp.c:8374]  (USER)
+   0.1%        12  fftw_no_twiddle_32  [fftw_dp.c:2535]  (USER)
+   0.1%        11  fftw  [fftw_dp.c:24089]  (USER)
+   0.1%        11  usnldiag_  [usnldiag.f90:60]  (USER)
+   0.1%        10  fftwi_no_twiddle_32  [fftw_dp.c:8001]  (USER)
+   0.1%        10  fftw_no_twiddle_32  [fftw_dp.c:3172]  (USER)
+   0.1%        10  blas_memory_alloc  [libopenblasp-r0.3.29.so]  (BLAS)
+   0.1%         9  fftwi_no_twiddle_32  [fftw_dp.c:8095]  (USER)
+   0.1%         9  fftwi_no_twiddle_32  [fftw_dp.c:8109]  (USER)
+   0.1%         9  fftwi_no_twiddle_32  [fftw_dp.c:7924]  (USER)
+   0.1%         9  fftwi_no_twiddle_32  [fftw_dp.c:8003]  (USER)
+   0.1%         9  fftwi_no_twiddle_32  [fftw_dp.c:8017]  (USER)
+   0.1%         9  fftw_no_twiddle_32  [fftw_dp.c:3264]  (USER)
+   ... 621 more below 0.1% of CPU time (report --threshold 0 to show all)
+
+   ⚠ no source-line info for 77% of the hotspots above — file:line shows a
+     module/binary name (or 'file:?'); those objects were built without -g
+     or were stripped, so line-level hotspots are unavailable for them.
+     affected: libc.so.6, libopenblasp-r0.3.29.so, libnvcpumath.so, libnvc.so
+     → keep line tables when building (optimization is unaffected): cc -O2 -g
+       and do not 'strip'. For distro libraries, install the matching
+       -dbg / -debuginfo package (e.g. libfftw3-dbg, debuginfo-install <pkg>).
+  ──────────────────────────────────────────────────────────────────────────────
+  legend:
+    Samp%        percent of samples here (~ percent of wall time)
+    Samp         sample count (wall time ~ Samp / sampling-Hz)
+    groups       USER=your code, ETC=other/system; MPI/BLAS/LAPACK/FFTW/IO as named
+
+Table 2:  Library calls by group and function  (tracing)
+
+  Compute (BLAS / LAPACK / PBLAS / ScaLAPACK / CBLAS / LAPACKe / FFTW)
+  ──────────────────────────────────────────────────────────────────────────────
+   time% group    function                  count    incl(s)    excl(s)
+  ──────────────────────────────────────────────────────────────────────────────
+    0.3% BLAS     zgemm_                    12513     0.1756     0.1515
+    0.1% LAPACK   zhegvx_                    1072     0.0654     0.0027
+   ... 65 more below 0.1% of CPU time (report --threshold 0 to show all)
+  ──────────────────────────────────────────────────────────────────────────────
+  legend:
+    time%        inclusive time as % of total CPU time (thread-seconds) — scan to find what matters
+    group        library family: BLAS/CBLAS, LAPACK/LAPACKe, P/ScaLAPACK, FFTW
+    count        total calls over ranks
+    incl(s)      inclusive time: this routine + everything it calls
+    excl(s)      exclusive time: this routine only (callees excluded)
+    note         calls aggregated over input sizes; per-shape: report --detail blas|lapack|fftw
+
+Table 4:  I/O statistics  (tracing)
+
+  I/O
+  ──────────────────────────────────────────────────────────────────────────────
+   time% call            count   r/R   incl(s)      bytes    GB/s
+  ──────────────────────────────────────────────────────────────────────────────
+    0.1% openat          14290   1/1      0.0625          0    0.00
+  ──────────────────────────────────────────────────────────────────────────────
+   total I/O volume: 0.000 GB  (sum over ranks)
+   ... 7 more below 0.1% of CPU time (report --threshold 0 to show all)
+  ──────────────────────────────────────────────────────────────────────────────
+  legend:
+    time%        inclusive I/O time as % of total CPU time
+    call         POSIX I/O syscall (read/write/open/...)
+    count        total calls over ranks
+    r/R          ranks that called it / total ranks
+    bytes,GB/s   bytes transferred and bytes / inclusive-time
+
+
+

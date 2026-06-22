@@ -1,0 +1,137 @@
+──────────────────────────────────────────────────────────────────────────────
+  UAPS  —  Universal Application Performance Snapshot   (bird's-eye: HW counters)
+──────────────────────────────────────────────────────────────────────────────
+
+══ Run ══
+    application    pw.x
+    command        qenv/bin/mpirun -np 144 --bind-to core ./pw -in si_big.scf.in
+    ranks          144
+    threads/rank   3
+    elapsed        7.8 s
+    CPU time       561 s
+    date           2026-06-21 23:26
+
+══ Machine ══
+    CPU            Neoverse V2 (Grace / Graviton4)
+    microarch      Neoverse V2 (Grace / Graviton4)
+    cores          1 socket × 144 physical (144 logical)
+    SMT            off
+    memory         237.6 GiB
+    host           i614-004.vista.tacc.utexas.edu
+
+══ Software ══
+    OS             Rocky Linux 9.7 (Blue Onyx)
+    kernel         5.14.0-611.16.1.el9_7.aarch64+64k
+    OpenBLAS       libopenblasp-r0.3.29.so
+    Open MPI       libmpi.so.40.40.5
+    compiler       GCC: (GNU) 11.5.0 20240719 (Red Hat 11.5.0-11)
+
+══ Measurement ══
+    method         hardware performance counters
+    HWPC scope     node-level (system-wide)
+    paranoid       0
+
+── INSIGHTS ──────────────────────────────────────────────────────────────────
+  ▶ Memory-bound (100% of slots) — improve data locality / working-set size.
+
+
+══ Performance ══
+    Elapsed time               7.802 s
+    FP throughput              366.27 GFLOP/s (49% of FP64 peak)
+    Avg CPU frequency          3.03 GHz
+    Physical core utilization  50.0% (72.0 cores busy)
+    IPC (instructions/cycle)   3.41
+    CPI (cycles/instruction)   0.29
+    Node memory used (peak)    82.8 GiB
+
+══ I/O ══
+    disk read                  0 B
+    disk write                 2.8 MiB
+
+══ Roofline (whole program) ══
+  Roofline (empirical peaks for this host):
+    peak compute FP64    744 GFLOP/s
+    peak compute FP32    2295 GFLOP/s
+    peak DRAM bandwidth  1214 GB/s
+    ridge AI FP64        0.61 FLOP/byte
+    ridge AI FP32        1.89 FLOP/byte
+    # AI = arithmetic intensity: FLOPs performed per byte read from DRAM
+    # FP64/FP32 = double/single precision floating point
+    # ridge AI = AI where the compute roof meets the bandwidth roof; below it a
+    #   kernel is memory-bandwidth-bound, above it compute-bound — the minimum AI
+    #   at which this machine's peak GFLOP/s is reachable
+
+    GFLOP/s
+            │                       ‾‾‾‾‾‾‾‾‾‾‾‾‾‾‾‾‾‾‾‾‾‾‾‾‾‾‾‾‾
+            │                    ///                             
+            │                ////                ●               
+            │             ///                                    
+        100 │          ///                                       
+            │       ///                                          
+            │    ///                                             
+            │ ///                                                
+         10 │/                                                   
+            │                                                    
+            │                                                    
+            │                                                    
+          1 │                                                    
+            │                                                    
+            └────────────────────────────────────────────────────
+             0.01        0.1           1          10          100  AI (FLOP/byte)
+             ● measured   / bandwidth roof   ‾ compute ceiling
+
+    point                      prec       AI    GFLOP/s    ceiling    %peak  bound
+    ──────────────────────────────────────────────────────────────────────────────
+    whole-program (measured)     DP     7.08      366.3      744.1      49%  compute
+    ──────────────────────────────────────────────────────────────────────────────
+    whole program is compute-bound at 49% of the DP ceiling.
+
+══ Microarchitecture (top-down pipeline slots) ══
+    branch mispredict  0.2%   (of branches — main cause of bad speculation)
+    # retiring — pipeline slots doing useful work — instructions that completed and committed
+    # frontend-bound — slots stalled fetching/decoding instructions (instruction-cache, branch, decode)
+    # backend-bound — slots stalled in execution — waiting on data from cache/DRAM or on busy execution units
+    # bad speculation — slots wasted on instructions from mispredicted branches (work later thrown away)
+    # SMT contention — slots lost to the sibling hyperthread sharing this physical core (SMT = simultaneous multithreading)
+    # branch mispredict — fraction of branches predicted wrong — the main cause of 'bad speculation' slots
+
+══ Memory access ══
+    DRAM bandwidth         51.7 GB/s (4% of peak)
+    cache-miss rate          1.0%
+    last-level cache misses  3.09 per 1000 instructions
+    data-TLB misses          0.17 per 1000 instructions
+    instruction-TLB misses   0.01 per 1000 instructions
+    DRAM fills               1.08 per 1000 instructions
+    memory-bound (slots)     100.0%
+    # DRAM bandwidth — rate of data moved to/from main memory (DRAM = dynamic RAM, the off-chip main memory)
+    # cache-miss rate — fraction of last-level-cache accesses that missed and had to go to DRAM
+    # last-level cache misses — LLC (last-level cache) misses per 1000 instructions — the largest/slowest on-die cache before DRAM
+    # data-TLB misses — data TLB misses per 1000 instructions (TLB = translation-lookaside buffer; a miss triggers a page-table walk)
+    # instruction-TLB misses — instruction TLB misses per 1000 instructions — page-walk pressure from a large code footprint
+    # NUMA remote access — share of memory accesses served by another socket's memory (NUMA = non-uniform memory access; remote is slower)
+    # memory-bound (slots) — estimated share of pipeline slots stalled waiting on the memory hierarchy
+
+══ Vectorization ══
+    FP efficiency 49.2% of vector peak (366 / 744 GFLOP/s)
+    # FP efficiency — achieved floating-point throughput vs. the CPU's vector (SIMD) peak — low means scalar/under-vectorized code
+    confirm SIMD per loop with a compiler vec report (gcc -fopt-info-vec / icc -qopt-report=5) and build -O3 -march=native.
+
+══ MPI ══
+    MPI time                 1.47 s
+    MPI % of runtime         44.9%
+    MPI imbalance            15.9%
+    ranks                    144
+    top calls (time):
+      MPI_Alltoall  (44% of MPI)         92.88 s
+      MPI_Bcast  (29% of MPI)            62.18 s
+      MPI_Barrier  (24% of MPI)          50.03 s
+      MPI_Allreduce  (3% of MPI)         5.62 s
+      MPI_Alltoallv  (1% of MPI)         1.17 s
+    # MPI time — time in MPI calls (MPI = Message-Passing Interface, the inter-rank communication library)
+    # MPI imbalance — (max-avg)/max of per-rank MPI time — the recoverable fraction if ranks were balanced
+
+══ Scheduling / OS ══
+    context switches       1283414   (164490/s)
+    CPU migrations         2706
+    page faults            1129512
+    major page faults      11167   (disk-backed)

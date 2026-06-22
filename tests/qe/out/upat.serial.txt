@@ -1,0 +1,202 @@
+──────────────────────────────────────────────────────────────────────────────
+  UPAT  —  Universal Performance Analysis Tool   (deep profile: tracing + sampling)
+──────────────────────────────────────────────────────────────────────────────
+
+══ Run ══
+    application    pw.x
+    command        ./pw -in si.scf.in
+    ranks          1
+    threads/rank   19
+    elapsed        2.0 s
+    CPU time       29 s
+    date           2026-06-21 13:51
+
+══ Machine ══
+    CPU            AMD Ryzen 9 9950X 16-Core Processor
+    microarch      Zen 5 (Granite Ridge)
+    cores          1 socket × 16 physical (32 logical)
+    SMT            on
+    memory         60.4 GiB
+    host           z20
+
+══ Software ══
+    OS             Ubuntu 24.04.4 LTS
+    kernel         6.17.0-29-generic
+    Open MPI       libmpi.so.40.40.7
+    OpenBLAS       libopenblasp-r0.3.33.so
+    FFTW           libfftw3.so.3.7.11
+    ScaLAPACK      libscalapack.so
+    compiler       GCC: (GNU) 4.8.5 20150623 (Red Hat 4.8.5-39) | GCC: (conda-forge gcc 14.3.0-16) 14.3.0
+
+══ Measurement ══
+    method         statistical call-stack sampling
+    sampling       1000 Hz
+    paranoid       1
+
+── INSIGHTS ──────────────────────────────────────────────────────────────────
+  ▶ No dominant bottleneck detected; the run looks reasonably balanced and efficient.
+
+══ Time breakdown (sampled, by dominant group) ══
+    idle/wait       80.9%  ████████████████████████████████
+    math-libs        9.2%  ████
+    MPI              6.1%  ██
+    user code        2.8%  █
+    system/other     1.0%  
+
+
+Table 1:  Profile by Function Group  (sampling @ 1000 Hz, 1 PEs)
+          time charged to the highest-level group on each sample's stack
+
+   Samp%      Samp  Group
+  ──────────────────────────────────────────────────────────────────────────────
+ 100.0%     32809  Total
+  ──────────────────────────────────────────────────────────────────────────────
+  80.9%     26538  WAIT
+   8.9%      2917  FFTW
+   6.1%      2005  MPI
+   2.8%       906  USER
+   1.0%       341  ETC
+   0.3%       102  BLAS
+  ──────────────────────────────────────────────────────────────────────────────
+  legend:
+    Samp%        percent of samples here (~ percent of wall time)
+    Samp         sample count (wall time ~ Samp / sampling-Hz)
+    groups       USER=your code, ETC=other/system; MPI/BLAS/LAPACK/FFTW/IO as named
+
+  Top functions (inclusive)
+  ──────────────────────────────────────────────────────────────────────────────
+   Samp%      Samp  Function
+  ──────────────────────────────────────────────────────────────────────────────
+  72.3%     23705  gomp_thread_start  [ETC]
+  65.5%     21483  do_spin  [WAIT]
+  10.3%      3390  gomp_finish_task  [ETC]
+   7.7%      2535  apply  [FFTW]
+   6.3%      2052  __futex_wait  [WAIT]
+   6.2%      2043  fftw_spawn_loop._omp_fn.0  [FFTW]
+   5.7%      1885  __GI___poll  [WAIT]
+   5.7%      1858  spawn_apply  [FFTW]
+   5.7%      1856  MAIN__  [USER]
+   5.7%      1855  main  [USER]
+   5.5%      1816  run_pwscf_  [USER]
+   4.3%      1413  electrons_scf_  [USER]
+   4.3%      1413  electrons_  [USER]
+   3.8%      1245  h_psi__  [USER]
+   3.8%      1245  h_psi_  [USER]
+   ... 463 more below 0.1% of CPU time (report --threshold 0 to show all)
+  ──────────────────────────────────────────────────────────────────────────────
+  legend:
+    Samp%        percent of samples here (~ percent of wall time)
+    Samp         sample count (wall time ~ Samp / sampling-Hz)
+    groups       USER=your code, ETC=other/system; MPI/BLAS/LAPACK/FFTW/IO as named
+
+  Top functions (self)
+  ──────────────────────────────────────────────────────────────────────────────
+   Samp%      Samp  Function
+  ──────────────────────────────────────────────────────────────────────────────
+  65.5%     21483  do_spin  (WAIT)
+   6.3%      2052  __futex_wait  (WAIT)
+   6.0%      1958  epoll_wait  (WAIT)
+   5.7%      1885  __GI___poll  (WAIT)
+   2.8%       929  n1bv_32  (FFTW)
+   2.4%       791  n1fv_32  (FFTW)
+   2.3%       765  gomp_barrier_wait_final_start  (WAIT)
+   1.8%       606  gomp_barrier_wait_start  (WAIT)
+   0.5%       178  gomp_thread_start  (ETC)
+   0.5%       163  gomp_finish_task  (ETC)
+   0.5%       162  gomp_team_start  (ETC)
+   0.5%       148  __pthread_rwlock_rdunlock  (ETC)
+   0.4%       125  spawn_apply  (FFTW)
+   0.3%       110  fftw_spawn_loop._omp_fn.0  (FFTW)
+   0.3%        93  vloc_psi_k_acc_  (USER)
+   ... 187 more below 0.1% of CPU time (report --threshold 0 to show all)
+  ──────────────────────────────────────────────────────────────────────────────
+  legend:
+    Samp%        percent of samples here (~ percent of wall time)
+    Samp         sample count (wall time ~ Samp / sampling-Hz)
+    groups       USER=your code, ETC=other/system; MPI/BLAS/LAPACK/FFTW/IO as named
+
+Table 1b:  Profile by source line  (hotspots, sampling @ 1000 Hz, 1 PEs)
+           every row is one source line, ranked by self-sample %
+
+   Samp%      Samp  Function  [file:line]  (group)
+  ──────────────────────────────────────────────────────────────────────────────
+  58.9%     19331  do_spin  [wait.h:56]  (WAIT)
+   6.6%      2152  do_spin  [wait.h:57]  (WAIT)
+   6.3%      2052  __futex_wait  [futex.h:39]  (WAIT)
+   6.0%      1958  epoll_wait  [epoll_wait.c:30]  (WAIT)
+   5.7%      1885  __GI___poll  [poll.c:29]  (WAIT)
+   2.8%       929  n1bv_32  [n1bv_32.c:?]  (FFTW)
+   2.4%       791  n1fv_32  [n1fv_32.c:?]  (FFTW)
+   2.2%       717  gomp_barrier_wait_final_start  [bar.h:118]  (WAIT)
+   1.8%       590  gomp_barrier_wait_start  [bar.h:98]  (WAIT)
+   0.5%       172  gomp_thread_start  [team.c:136]  (ETC)
+   0.5%       163  gomp_finish_task  [libgomp.h:1117]  (ETC)
+   0.4%       147  __pthread_rwlock_rdunlock  [pthread_rwlock_common.c:254]  
+   0.4%       145  gomp_team_start  [team.c:570]  (ETC)
+   0.4%       125  spawn_apply  [dft-vrank-geq1.c:?]  (FFTW)
+   0.3%       110  fftw_spawn_loop._omp_fn.0  [openmp.c:?]  (FFTW)
+   0.3%        93  vloc_psi_k_acc_  [pw.x]  (USER)
+   0.3%        86  __fft_scalar_fftw3_MOD_cfft3ds  [pw.x]  (USER)
+   0.2%        80  futex_wake  [futex.h:111]  (WAIT)
+   0.2%        70  0x7e5b04622c4b  (ETC)
+   0.2%        68  omp_get_num_threads  [parallel.c:281]  (ETC)
+   0.2%        66  __fft_helper_subroutines_MOD_fftx_c2psi_k._omp_fn.0  [fft_
+   0.2%        55  n2fv_32  [n2fv_32.c:?]  (FFTW)
+   0.1%        41  gomp_barrier_wait_final_start  [bar.h:116]  (WAIT)
+   0.1%        41  n2bv_32  [n2bv_32.c:?]  (FFTW)
+   0.1%        36  __fft_helper_subroutines_MOD_fftx_c2psi_k  [pw.x]  (USER)
+   ... 262 more below 0.1% of CPU time (report --threshold 0 to show all)
+
+   ⚠ no source-line info for 7% of the hotspots above — file:line shows a
+     module/binary name (or 'file:?'); those objects were built without -g
+     or were stripped, so line-level hotspots are unavailable for them.
+     this includes your own application code — rebuild it first.
+     affected: n1bv_32.c, n1fv_32.c, pw.x, dft-vrank-geq1.c, openmp.c, fft_helper_subroutines.f90
+     → keep line tables when building (optimization is unaffected): cc -O2 -g
+       and do not 'strip'. For distro libraries, install the matching
+       -dbg / -debuginfo package (e.g. libfftw3-dbg, debuginfo-install <pkg>).
+  ──────────────────────────────────────────────────────────────────────────────
+  legend:
+    Samp%        percent of samples here (~ percent of wall time)
+    Samp         sample count (wall time ~ Samp / sampling-Hz)
+    groups       USER=your code, ETC=other/system; MPI/BLAS/LAPACK/FFTW/IO as named
+
+Table 2:  Library calls by group and function  (tracing)
+
+  Compute (BLAS / LAPACK / PBLAS / ScaLAPACK / CBLAS / LAPACKe / FFTW)
+  ──────────────────────────────────────────────────────────────────────────────
+   time% group    function                  count    incl(s)    excl(s)
+  ──────────────────────────────────────────────────────────────────────────────
+    2.7% FFTW     fftw_execute_dft        2549003     0.7908     0.7908
+    0.3% FFTW     fftw_plan_dft_3d              2     0.0958     0.0958
+    0.2% BLAS     zgemm_                    13233     0.0550     0.0550
+   ... 66 more below 0.1% of CPU time (report --threshold 0 to show all)
+  ──────────────────────────────────────────────────────────────────────────────
+  legend:
+    time%        inclusive time as % of total CPU time (thread-seconds) — scan to find what matters
+    group        library family: BLAS/CBLAS, LAPACK/LAPACKe, P/ScaLAPACK, FFTW
+    count        total calls over ranks
+    incl(s)      inclusive time: this routine + everything it calls
+    excl(s)      exclusive time: this routine only (callees excluded)
+    note         calls aggregated over input sizes; per-shape: report --detail blas|lapack|fftw
+
+Table 4:  I/O statistics  (tracing)
+
+  I/O
+  ──────────────────────────────────────────────────────────────────────────────
+   time% call            count   r/R   incl(s)      bytes    GB/s
+  ──────────────────────────────────────────────────────────────────────────────
+    0.4% read             2099   1/1      0.1104     253839    0.00
+  ──────────────────────────────────────────────────────────────────────────────
+   total I/O volume: 0.000 GB  (sum over ranks)
+   ... 9 more below 0.1% of CPU time (report --threshold 0 to show all)
+  ──────────────────────────────────────────────────────────────────────────────
+  legend:
+    time%        inclusive I/O time as % of total CPU time
+    call         POSIX I/O syscall (read/write/open/...)
+    count        total calls over ranks
+    r/R          ranks that called it / total ranks
+    bytes,GB/s   bytes transferred and bytes / inclusive-time
+
+
+

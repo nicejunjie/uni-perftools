@@ -1,0 +1,347 @@
+──────────────────────────────────────────────────────────────────────────────
+  UPAT  —  Universal Performance Analysis Tool   (deep profile: tracing + sampling)
+──────────────────────────────────────────────────────────────────────────────
+
+══ Run ══
+    application    pw.x
+    command        qenv/bin/mpirun -np 16 --bind-to core ./pw -in si_big.scf.in
+    ranks          16
+    threads/rank   4
+    elapsed        9.2 s
+    CPU time       151 s
+    date           2026-06-21 13:52
+
+══ Machine ══
+    CPU            AMD Ryzen 9 9950X 16-Core Processor
+    microarch      Zen 5 (Granite Ridge)
+    cores          1 socket × 16 physical (32 logical)
+    SMT            on
+    memory         60.4 GiB
+    host           z20
+
+══ Software ══
+    OS             Ubuntu 24.04.4 LTS
+    kernel         6.17.0-29-generic
+    Open MPI       libmpi.so.40.40.7
+    OpenBLAS       libopenblasp-r0.3.33.so
+    FFTW           libfftw3.so.3.7.11
+    ScaLAPACK      libscalapack.so
+    compiler       GCC: (GNU) 4.8.5 20150623 (Red Hat 4.8.5-39) | GCC: (conda-forge gcc 14.3.0-16) 14.3.0
+
+══ Measurement ══
+    method         statistical call-stack sampling
+    sampling       1000 Hz
+    paranoid       1
+
+── INSIGHTS ──────────────────────────────────────────────────────────────────
+  ▶ MPI is 44% of time with 50% imbalance — rebalance work or check rank placement; see the communication matrix.
+
+══ Time breakdown (sampled, by dominant group) ══
+    MPI             44.4%  ██████████████████
+    idle/wait       38.4%  ███████████████
+    math-libs        8.7%  ███
+    user code        8.5%  ███
+    system/other     0.0%  
+
+
+══ MPI summary ══
+    MPI time 1.9277s  (20.9% of runtime, 16 ranks)
+    function                time(s)    %MPI      calls   imb%
+    ─────────────────────────────────────────────────────────
+    mpi_alltoall_            1.0708   55.5%      14821     9%
+    mpi_bcast_               0.6110   31.7%        939     9%
+    mpi_barrier_             0.1842    9.6%       1359    50%
+    mpi_allreduce_           0.0553    2.9%        599     1%
+    mpi_alltoallv_           0.0063    0.3%         31    10%
+    ─────────────────────────────────────────────────────────
+
+══ MPI wait-state (call-type heuristic) ══
+    synchronization/wait 1.9277s (100%) | transfer/initiation 0.0000s ( 0%)
+    call                   time%    excl(s)   class   imb%
+    ──────────────────────────────────────────────────────
+    mpi_alltoall_          11.4%    1.07080    wait     9%
+    mpi_bcast_              6.5%    0.61102    wait     9%
+    mpi_barrier_            2.0%    0.18417    wait    50%
+    mpi_allreduce_          0.6%    0.05533    wait     1%
+    mpi_alltoallv_          0.1%    0.00625    wait    10%
+    mpi_gatherv_            0.0%    0.00011    wait    24%
+    ──────────────────────────────────────────────────────
+    → wait-dominated MPI with imbalanced collectives/receives (50% imb): likely late-sender / load imbalance — rebalance work across ranks before tuning communication.
+    overlap: all communication is blocking — no comm/compute overlap possible. Consider nonblocking calls (Isend/Irecv or Iallreduce-style collectives) + compute + Wait.
+
+══ Load imbalance (across 16 ranks, ranked by recoverable time) ══
+    function                   imb%   time% avg excl(s)  recover(s)
+    ───────────────────────────────────────────────────────────────
+    mpi_barrier_                50%    2.0%      0.1842      0.1808
+    mpi_alltoall_                9%   11.4%      1.0708      0.1122
+    mpi_bcast_                   9%    6.5%      0.6110      0.0599
+    zgemv_                      49%    0.2%      0.0211      0.0205
+    dcopy_                      11%    0.1%      0.0063      0.0008
+    mpi_alltoallv_              10%    0.1%      0.0063      0.0007
+    ───────────────────────────────────────────────────────────────
+
+══ Anomaly / variance (across 16 ranks) ══
+    per-rank busy time: min 6.3232s  max 6.5621s  median 6.4468s  spread 4%
+    → no outlier rank (all within the pack).
+    most variable call: disnan_ (CV 383%, 0.0000..0.0049s across ranks)
+
+Table 1:  Profile by Function Group  (sampling @ 1000 Hz, 16 PEs)
+          time charged to the highest-level group on each sample's stack
+
+   Samp%      Samp  Imb.Samp  Imb.Samp%  Group
+  ──────────────────────────────────────────────────────────────────────────────
+ 100.0%    381466     134.4      0.6%  Total
+  ──────────────────────────────────────────────────────────────────────────────
+  44.4%    169367     171.6      1.6%  MPI
+  38.4%    146465      28.9      0.3%  WAIT
+   8.5%     32299     144.3      6.7%  USER
+   5.1%     19410     102.9      7.8%  BLAS
+   3.6%     13923      61.8      6.6%  FFTW
+   0.0%         2       0.9     87.5%  ETC
+  ──────────────────────────────────────────────────────────────────────────────
+  legend:
+    Samp%        percent of samples here (~ percent of wall time)
+    Samp         sample count (wall time ~ Samp / sampling-Hz)
+    Imb.Samp     max-rank samples minus average across ranks (recoverable)
+    Imb.Samp%    Imb.Samp / max = (max-avg)/max
+    groups       USER=your code, ETC=other/system; MPI/BLAS/LAPACK/FFTW/IO as named
+
+  Top functions (inclusive)
+  ──────────────────────────────────────────────────────────────────────────────
+   Samp%      Samp  Imb.Samp  Imb.Samp%  Function
+  ──────────────────────────────────────────────────────────────────────────────
+  38.4%    146464      29.0      0.3%  __GI___poll  [WAIT]
+  22.3%     85000     172.5      3.1%  MAIN__  [USER]
+  22.3%     84964     173.8      3.2%  main  [USER]
+  22.0%     83978     169.4      3.1%  run_pwscf_  [USER]
+  18.6%     70825     169.4      3.7%  electrons_scf_  [USER]
+  18.6%     70825     169.4      3.7%  electrons_  [USER]
+  16.5%     63014     148.6      3.6%  c_bands_  [USER]
+  15.4%     58692     135.8      3.6%  diag_bands_  [USER]
+  15.1%     57785     119.4      3.2%  cegterg_  [USER]
+  10.9%     41601     110.9      4.1%  h_psi_  [USER]
+  10.9%     41600     111.0      4.1%  h_psi__  [USER]
+   9.5%     36384      84.0      3.6%  __fft_parallel_2d_MOD_tg_cft3s  [USER]
+   8.5%     32287      76.1      3.6%  vloc_psi_k_acc_  [USER]
+   5.5%     21167     119.1      8.3%  __fft_scatter_2d_MOD_fft_scatter  [USER]
+   5.5%     20859      54.3      4.0%  invfft_y_  [USER]
+   ... 1171 more below 0.1% of CPU time (report --threshold 0 to show all)
+  ──────────────────────────────────────────────────────────────────────────────
+  legend:
+    Samp%        percent of samples here (~ percent of wall time)
+    Samp         sample count (wall time ~ Samp / sampling-Hz)
+    Imb.Samp     max-rank samples minus average across ranks (recoverable)
+    Imb.Samp%    Imb.Samp / max = (max-avg)/max
+    groups       USER=your code, ETC=other/system; MPI/BLAS/LAPACK/FFTW/IO as named
+
+  Top functions (self)
+  ──────────────────────────────────────────────────────────────────────────────
+   Samp%      Samp  Imb.Samp  Imb.Samp%  Function
+  ──────────────────────────────────────────────────────────────────────────────
+  38.4%    146665      29.4      0.3%  epoll_wait  (WAIT)
+  38.4%    146464      29.0      0.3%  __GI___poll  (WAIT)
+   2.1%      8026      73.4     12.8%  __fft_scatter_2d_MOD_fft_scatter  (USER)
+   2.1%      7994     127.4     20.3%  process_vm_readv  (ETC)
+   1.8%      6764      50.2     10.6%  zgemm_itcopy_COOPERLAKE  (BLAS)
+   1.5%      5819      83.3     18.6%  mca_btl_sm_component_progress  (MPI)
+   1.3%      4987      22.3      6.7%  init_us_2_acc_  (USER)
+   0.9%      3396      61.8     22.5%  zgemm_kernel_n_COOPERLAKE  (BLAS)
+   0.9%      3344      26.0     11.1%  dp_dev_memcpy_c2d_  (USER)
+   0.8%      3175      38.6     16.3%  zgemm_beta_COOPERLAKE  (BLAS)
+   0.8%      3129      29.4     13.1%  zgemm_kernel_l_COOPERLAKE  (BLAS)
+   0.7%      2561      21.9     12.1%  fftw_cpy2d  (FFTW)
+   0.7%      2538      17.4      9.9%  h_psi__._omp_fn.0  (USER)
+   0.6%      2275       5.8      3.9%  __buiol_MOD_buiol_read_record  (USER)
+   0.5%      2069      50.7     28.2%  mca_part_persist_progress  (MPI)
+   ... 599 more below 0.1% of CPU time (report --threshold 0 to show all)
+  ──────────────────────────────────────────────────────────────────────────────
+  legend:
+    Samp%        percent of samples here (~ percent of wall time)
+    Samp         sample count (wall time ~ Samp / sampling-Hz)
+    Imb.Samp     max-rank samples minus average across ranks (recoverable)
+    Imb.Samp%    Imb.Samp / max = (max-avg)/max
+    groups       USER=your code, ETC=other/system; MPI/BLAS/LAPACK/FFTW/IO as named
+
+Table 1b:  Profile by source line  (hotspots, sampling @ 1000 Hz, 16 PEs)
+           every row is one source line, ranked by self-sample %
+
+   Samp%      Samp  Imb.Samp  Imb.Samp%  Function  [file:line]  (group)
+  ──────────────────────────────────────────────────────────────────────────────
+  38.4%    146665      29.4      0.3%  epoll_wait  [epoll_wait.c:30]  (WAIT
+  38.4%    146464      29.0      0.3%  __GI___poll  [poll.c:29]  (WAIT)
+   2.1%      8026      73.4     12.8%  __fft_scatter_2d_MOD_fft_scatter  [p
+   2.1%      7994     127.4     20.3%  process_vm_readv  [process_vm_readv.
+   1.8%      6764      50.2     10.6%  zgemm_itcopy_COOPERLAKE  [libopenbla
+   1.5%      5819      83.3     18.6%  mca_btl_sm_component_progress  [btl_
+   1.3%      4987      22.3      6.7%  init_us_2_acc_  [pw.x]  (USER)
+   0.9%      3396      61.8     22.5%  zgemm_kernel_n_COOPERLAKE  [libopenb
+   0.9%      3344      26.0     11.1%  dp_dev_memcpy_c2d_  [pw.x]  (USER)
+   0.8%      3175      38.6     16.3%  zgemm_beta_COOPERLAKE  [libopenblasp
+   0.8%      3129      29.4     13.1%  zgemm_kernel_l_COOPERLAKE  [libopenb
+   0.7%      2561      21.9     12.1%  fftw_cpy2d  [libfftw3.so.3.7.11]  (F
+   0.7%      2538      17.4      9.9%  h_psi__._omp_fn.0  [h_psi.f90:?]  (U
+   0.6%      2275       5.8      3.9%  __buiol_MOD_buiol_read_record  [pw.x
+   0.5%      2069      50.7     28.2%  mca_part_persist_progress  [part_per
+   0.5%      2047      33.1     20.5%  vloc_psi_k_acc_  [pw.x]  (USER)
+   0.5%      1804      40.2     26.3%  lll_mutex_unlock_optimized  [pthread
+   0.5%      1784      43.5     28.1%  lll_mutex_lock_optimized  [pthread_m
+   0.4%      1454      32.1     26.1%  zgemm_incopy_COOPERLAKE  [libopenbla
+   0.3%      1261      18.2     18.8%  __fft_helper_subroutines_MOD_fftx_c2
+   0.3%      1242      62.4     44.6%  t2bv_8  [t2bv_8.c:?]  (FFTW)
+   0.3%      1194      54.4     42.2%  t2fv_8  [t2fv_8.c:?]  (FFTW)
+   0.3%      1177      33.4     31.2%  zgemm_oncopy_COOPERLAKE  [libopenbla
+   0.3%      1169      14.9     17.0%  __symme_MOD_sym_rho_init_shells  [sy
+   0.3%      1121      20.9     23.0%  __fft_scalar_fftw3_MOD_cft_2xy  [pw.
+   0.2%       871      18.6     25.4%  usnldiag_  [pw.x]  (USER)
+   0.2%       842      51.4     49.4%  n1bv_6  [n1bv_6.c:?]  (FFTW)
+   0.2%       824      45.5     46.9%  n2fv_12  [n2fv_12.c:?]  (FFTW)
+   0.2%       812      57.2     53.0%  n2bv_12  [n2bv_12.c:?]  (FFTW)
+   0.2%       677      43.7     50.8%  n1fv_12  [n1fv_12.c:?]  (FFTW)
+   0.2%       623      58.1     59.9%  t2bv_16  [t2bv_16.c:?]  (FFTW)
+   0.2%       584      13.5     27.0%  __buiol_MOD_buiol_write_record  [pw.
+   0.1%       559      60.1     63.2%  n1bv_12  [n1bv_12.c:?]  (FFTW)
+   0.1%       505      15.4     32.8%  opal_timer_linux_get_cycles_sys_time
+   0.1%       501       0.7      2.1%  hpsort_eps_  [pw.x]  (USER)
+   0.1%       501      54.7     63.6%  n1fv_6  [n1fv_6.c:?]  (FFTW)
+   0.1%       488       5.5     15.3%  g_psi_  [pw.x]  (USER)
+   0.1%       474       6.4     17.7%  cegterg_._omp_fn.0  [cegterg.f90:?] 
+   ... 825 more below 0.1% of CPU time (report --threshold 0 to show all)
+
+   ⚠ no source-line info for 18% of the hotspots above — file:line shows a
+     module/binary name (or 'file:?'); those objects were built without -g
+     or were stripped, so line-level hotspots are unavailable for them.
+     this includes your own application code — rebuild it first.
+     affected: pw.x, libopenblasp-r0.3.33.so, btl_sm_component.c, libfftw3.so.3.7.11, h_psi.f90, part_persist.c
+     → keep line tables when building (optimization is unaffected): cc -O2 -g
+       and do not 'strip'. For distro libraries, install the matching
+       -dbg / -debuginfo package (e.g. libfftw3-dbg, debuginfo-install <pkg>).
+  ──────────────────────────────────────────────────────────────────────────────
+  legend:
+    Samp%        percent of samples here (~ percent of wall time)
+    Samp         sample count (wall time ~ Samp / sampling-Hz)
+    Imb.Samp     max-rank samples minus average across ranks (recoverable)
+    Imb.Samp%    Imb.Samp / max = (max-avg)/max
+    groups       USER=your code, ETC=other/system; MPI/BLAS/LAPACK/FFTW/IO as named
+
+Table 2:  Library calls by group and function  (tracing)
+
+  Compute (BLAS / LAPACK / PBLAS / ScaLAPACK / CBLAS / LAPACKe / FFTW)
+  ──────────────────────────────────────────────────────────────────────────────
+   time% group    function                  count [imb]    incl(s)    excl(s)
+  ──────────────────────────────────────────────────────────────────────────────
+   27.3% BLAS     zgemm_                     5709 63.1%     2.5706     2.5706
+   19.1% FFTW     fftw_execute_dft          29640  0.0%     1.7982     1.7982
+    5.8% LAPACK   zhegvx_                      64  0.0%     0.5445     0.0002
+    5.0% LAPACK   zheevx_                      64  0.0%     0.4668     0.0004
+    2.0% LAPACK   dstebz_                      64  0.0%     0.1869     0.0002
+    2.0% LAPACK   dlaebz_                     192  0.0%     0.1867     0.1867
+    1.1% LAPACK   zhetrd_                      80  0.0%     0.1074     0.0002
+    1.0% LAPACK   zlatrd_                     367  0.0%     0.0951     0.0171
+    0.8% LAPACK   zlanhe_                      80  0.0%     0.0720     0.0671
+    0.7% LAPACK   zstein_                      64  0.0%     0.0707     0.0143
+    0.7% LAPACK   zhegv_                       16  0.0%     0.0704     0.0000
+    0.7% LAPACK   zheev_                       16  0.0%     0.0631     0.0000
+    0.5% LAPACK   zhegst_                      80  0.0%     0.0513     0.0003
+    0.5% BLAS     zhemv_                    13144  0.0%     0.0507     0.0507
+    0.5% LAPACK   zsteqr_                      16  0.0%     0.0449     0.0090
+    0.5% LAPACK   zunmtr_                      64  0.0%     0.0437     0.0001
+    0.5% LAPACK   zunmql_                      64  0.0%     0.0436     0.0002
+    0.4% LAPACK   dlagts_                   20736  0.0%     0.0352     0.0352
+    0.4% LAPACK   zlasr_                     3097  0.0%     0.0344     0.0344
+    0.3% BLAS     ztrsm_                      408  0.0%     0.0329     0.0329
+    0.3% LAPACK   zlarfb_                     679  0.0%     0.0273     0.0020
+    0.2% BLAS     zgemv_                     4479 93.7%     0.0211     0.0211
+    0.2% LAPACK   zhegs2_                     244  0.0%     0.0206     0.0058
+    0.2% BLAS     zher2k_                     531  0.0%     0.0184     0.0184
+    0.2% LAPACK   zpotrf_                      80  0.0%     0.0143     0.0143
+    0.1% LAPACK   zlarft_                     679  0.0%     0.0115     0.0041
+    0.1% LAPACK   dlarnv_                    6912  0.0%     0.0096     0.0014
+   ... 48 more below 0.1% of CPU time (report --threshold 0 to show all)
+  ──────────────────────────────────────────────────────────────────────────────
+  legend:
+    time%        inclusive time as % of total CPU time (thread-seconds) — scan to find what matters
+    group        library family: BLAS/CBLAS, LAPACK/LAPACKe, P/ScaLAPACK, FFTW
+    count[imb]   total calls over ranks [Imb% = (max-avg)/max load imbalance]
+    incl(s)      inclusive time: this routine + everything it calls
+    excl(s)      exclusive time: this routine only (callees excluded)
+    note         calls aggregated over input sizes; per-shape: report --detail blas|lapack|fftw
+
+Table 3:  MPI message statistics  (tracing)
+
+  MPI (communication)
+  ──────────────────────────────────────────────────────────────────────────────
+   time% function          count [imb]   r/R   incl(s)       bytes    GB/s
+  ──────────────────────────────────────────────────────────────────────────────
+   11.4% mpi_alltoall_     14821  0.0%  16/16     1.0708  2202009664    2.06
+    6.5% mpi_bcast_          939  0.0%  16/16     0.6110   634736992    1.04
+    2.0% mpi_barrier_       1359  0.0%  16/16     0.1842           0    0.00
+    0.6% mpi_allreduce_      599  0.0%  16/16     0.0553   913628160   16.51
+  ──────────────────────────────────────────────────────────────────────────────
+   total communication volume: 3.750 GB  (sum over ranks)
+   ... 2 more below 0.1% of CPU time (report --threshold 0 to show all)
+  ──────────────────────────────────────────────────────────────────────────────
+  legend:
+    time%        inclusive MPI time as % of total CPU time
+    count[imb]   total calls over ranks [Imb% = (max-avg)/max]
+    r/R          ranks that called it / total ranks
+    incl(s)      inclusive wall time spent in the call
+    bytes        message bytes moved (summed over ranks)
+    GB/s         bytes / inclusive-time
+    note         comm matrix + size histogram: report --detail mpi
+
+  MPI point-to-point vs collective (bytes)
+   point-to-point:      3.750 GB  (100.0%)
+   collective:          0.000 GB  ( 0.0%)
+
+  MPI message-size distribution
+   size              count       %
+   <=64B             16624    6.3%
+   <=256B              768    0.3%
+   <=1KiB             2976    1.1%
+   <=4KiB             1440    0.5%
+   <=16KiB          236832   89.6%
+   <=64KiB            1232    0.5%
+   <=256KiB            992    0.4%
+   <=1MiB             3504    1.3%
+
+Table 4:  I/O statistics  (tracing)
+
+  I/O
+  ──────────────────────────────────────────────────────────────────────────────
+   time% call            count [imb]   r/R   incl(s)      bytes    GB/s
+  ──────────────────────────────────────────────────────────────────────────────
+    0.7% read              390  9.5%  16/16     0.0633    3534246    0.06
+  ──────────────────────────────────────────────────────────────────────────────
+   total I/O volume: 0.004 GB  (sum over ranks)
+   ... 7 more below 0.1% of CPU time (report --threshold 0 to show all)
+  ──────────────────────────────────────────────────────────────────────────────
+  legend:
+    time%        inclusive I/O time as % of total CPU time
+    call         POSIX I/O syscall (read/write/open/...)
+    count[imb]   total calls over ranks [Imb% = (max-avg)/max]
+    r/R          ranks that called it / total ranks
+    bytes,GB/s   bytes transferred and bytes / inclusive-time
+
+
+Per-PE summary
+  ──────────────────────────────────────────────────────────────────────────────
+   PE       runtime(s)  lib excl(s)     lib%
+   0             9.222        6.562    71.2%
+   1             9.223        6.480    70.3%
+   2             9.222        6.546    71.0%
+   3             9.222        6.482    70.3%
+   4             9.222        6.501    70.5%
+   5             9.222        6.538    70.9%
+   6             9.221        6.510    70.6%
+   7             9.220        6.488    70.4%
+   8             9.216        6.414    69.6%
+   9             9.217        6.337    68.8%
+   10            9.216        6.370    69.1%
+   11            9.217        6.323    68.6%
+   12            9.216        6.364    69.0%
+   13            9.216        6.325    68.6%
+   14            9.215        6.329    68.7%
+   15            9.216        6.325    68.6%
+  ──────────────────────────────────────────────────────────────────────────────
+   slowest PE 1 (9.223s); mean 9.219s; spread 0.1%
+

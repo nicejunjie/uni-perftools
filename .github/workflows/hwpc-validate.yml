@@ -2,10 +2,15 @@
 #
 # The engine derives every counter from perf's vendored pmu-events data, so its
 # correctness for CPUs we don't have (Intel SPR/EMR/GNR, NVIDIA Grace, AMD Zen)
-# can be checked structurally: for each vendored model, the canonical top-down
-# metrics must resolve fully (candidate metric present, formula uses only
-# supported constructs, every referenced event resolvable) — or be an explicit
-# gap. A regression that silently drops an event or formula construct fails here.
+# can be checked structurally, two ways:
+#  * per model, the canonical top-down metrics must resolve fully (candidate
+#    metric present, formula uses only supported constructs, every referenced
+#    event resolvable) — or be an explicit gap; and
+#  * the evaluator is swept over the ENTIRE metric corpus of every vendored model
+#    (the full Intel TMA tree, ARM/Grace recommended metrics, AMD) — it must never
+#    panic and never yield a non-finite value; anything it can't handle must gap.
+# A regression that silently drops an event/construct, mis-evaluates a vendor's
+# formula dialect, or loses the vendored data fails here.
 name: hwpc-validate
 
 on:

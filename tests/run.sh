@@ -1,8 +1,9 @@
 #!/bin/bash
 # Universal Performance Tools — end-to-end tests for the two commands:
 #   uaps  (snapshot, Rust)         and   upat  (deep profile, core/cli/upat).
-# They are cost tiers, run independently; `upat report` merges a snap.json if one
-# happens to be in the result dir. Assumes `make` has built both collectors.
+# They are cost tiers, run independently and reported independently — there is no
+# combined report, even when both tiers' data sit in one dir. Assumes `make` has
+# built both collectors.
 set -u
 cd "$(dirname "$0")/.."
 ROOT=$(pwd)
@@ -43,24 +44,31 @@ ok "roofline: FP64 & FP32 ceilings" "echo \"$ROUT\" | grep -q 'FP64' && echo \"$
 ok "agg: zgemm/zgemv not per-shape" "! echo \"$OUT\" | grep -qE 'gemm_\[m='"
 ok "detail: per-shape on request"  "$UPAT report $TMP/r1 --detail blas 2>/dev/null | grep -qE 'gemm_\[m=|calls by shape'"
 ok "footnote: legend present"      "echo \"$OUT\" | grep -q 'legend:'"
-$UPAT report "$TMP/r1" -o "$TMP/o" >/dev/null 2>&1
-ok "report -o: single report.txt"  "[ -s $TMP/o/report.txt ]"
-ok "report.txt has sci-lib table"  "grep -q 'Library calls by group' $TMP/o/report.txt"
+$UPAT report "$TMP/r1" -o "$TMP/o" >/dev/null 2>&1   # auto-detect: prof present -> upat
+ok "report -o: single upat.txt"    "[ -s $TMP/o/upat.txt ]"
+ok "upat.txt has sci-lib table"    "grep -q 'Library calls by group' $TMP/o/upat.txt"
 $UPAT report "$TMP/r1" --format html -o "$TMP/o" >/dev/null 2>&1
-ok "html: report.html written"     "[ -s $TMP/o/report.html ]"
-ok "html: svg roofline figure"     "grep -q '<svg' $TMP/o/report.html"
+ok "html: upat.html written"       "[ -s $TMP/o/upat.html ]"
+ok "html: upat tier title"         "grep -q 'UPAT' $TMP/o/upat.html"
 
-# --- merge: snapshot tier (uaps) into the same dir, then upat report combines ---
+# --- tiers stay separate: a uaps snap.json in the same dir is its OWN report,
+#     never folded into the upat report (no combined report) ---
 if [ -n "$UAPS" ]; then
   "$UAPS" run --format json -o "$TMP/r1/snap.json" -- "$TMP/s" >/dev/null 2>&1
   if [ -f "$TMP/r1/snap.json" ]; then
-    MOUT=$("$UPAT" report "$TMP/r1" 2>/dev/null)
-    ok "merge: UAPS section appears"  "echo \"$MOUT\" | grep -q 'UAPS'"
+    UOUT=$("$UPAT" report "$TMP/r1" --collector uaps 2>/dev/null)
+    POUT=$("$UPAT" report "$TMP/r1" --collector upat 2>/dev/null)
+    ok "uaps tier: UAPS report"       "echo \"$UOUT\" | grep -q 'UAPS'"
+    ok "uaps tier: no upat tables"    "! echo \"$UOUT\" | grep -q 'Library calls by group'"
+    ok "upat tier: no uaps roofline"  "! echo \"$POUT\" | grep -q 'Roofline (whole program)'"
+    ok "both tiers: shared Machine"   "echo \"$UOUT\" | grep -q 'Machine' && echo \"$POUT\" | grep -q 'Machine'"
+    $UPAT report "$TMP/r1" --collector uaps --format html -o "$TMP/o" >/dev/null 2>&1
+    ok "html: uaps.html svg roofline" "grep -q '<svg' $TMP/o/uaps.html"
   else
-    echo "  SKIP: merge (uaps produced no snap.json — perf blocked?)"
+    echo "  SKIP: uaps tier (uaps produced no snap.json — perf blocked?)"
   fi
 else
-  echo "  SKIP: merge (uaps binary not built)"
+  echo "  SKIP: uaps tier (uaps binary not built)"
 fi
 
 # per-function roofline (B): needs perf_event sampling access; skip if blocked
@@ -94,9 +102,9 @@ if [ "$HAVE_MPI" = 1 ]; then
   ok "mpi: 4 prof files"            "[ \$(ls $TMP/r2/prof.*.json | wc -l) -eq 4 ]"
   OUT0=$("$UPAT" report "$TMP/r2" --threshold 0 2>/dev/null)   # show all (tiny MPI in a compute-heavy app)
   ok "mpi: MPI table in profile"    "echo \"$OUT0\" | grep -q 'MPI (communication)'"
-  ok "mpi: unified imb header"      "echo \"$OUT\" | grep -q 'imb = (max-avg)/max'"
+  ok "mpi: unified imb header"      "echo \"$OUT\" | grep -q '(max-avg)/max'"
   ok "mpi: dgemm imbalance insight" "echo \"$OUT\" | grep -qiE 'imbalanc'"
-  ok "mpi: threshold hides tiny calls" "echo \"$OUT\" | grep -qE 'more below .*% of runtime'"
+  ok "mpi: threshold hides tiny calls" "echo \"$OUT\" | grep -qE 'more below .*% of (CPU time|runtime)'"
   ok "mpi: APS-style top-5 summary"  "echo \"$OUT\" | grep -q 'MPI summary'"
   MOUT=$(OMPI_MCA_rmaps_base_oversubscribe=1 "$UPAT" report "$TMP/r2" --view mpi 2>/dev/null)
   ok "mpi: wait-state view"         "echo \"$MOUT\" | grep -q 'MPI wait-state'"
@@ -106,8 +114,8 @@ if [ "$HAVE_MPI" = 1 ]; then
   ok "anomaly: variance view"       "echo \"$AOUT\" | grep -q 'Anomaly / variance'"
   ok "anomaly: per-call variance"   "echo \"$AOUT\" | grep -q 'most variable call:'"
   "$UPAT" report "$TMP/r2" --detail mpi --format html -o "$TMP/o" >/dev/null 2>&1
-  ok "html mpi: comm-matrix heatmap" "grep -qE \"class=.hm.\" $TMP/o/report.mpi.html"
-  ok "html mpi: size histogram bars" "grep -qE \"class=.bar.\" $TMP/o/report.mpi.html"
+  ok "html mpi: comm-matrix heatmap" "grep -qE \"class=.hm.\" $TMP/o/detail.mpi.html"
+  ok "html mpi: size histogram bars" "grep -qE \"class=.bar.\" $TMP/o/detail.mpi.html"
 
   # uaps snapshot tier: APS-style MPI (auto-detected launcher, mpi.h-free shim)
   if [ -n "$UAPS" ]; then

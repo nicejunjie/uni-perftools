@@ -1,19 +1,19 @@
 
 ══ Roofline (per function — measured, event-based sampling) ══
   flops = FP-op samples x period (ops-based proxy); bytes = DRAM-fill samples x line.
-    function                    self(s)      AI   GFLOP/s   ceiling   %peak  bound
-    ──────────────────────────────────────────────────────────────────────────────
-    epoll_wait                    1.508     inf       0.0      1112      0%  compute
-    __GI___poll                   1.444     inf       0.0      1112      0%  compute
-    n1bv_32                       0.252     inf      21.5      1112      2%  compute
-    n1fv_32                       0.185     inf      22.4      1112      2%  compute
-    __pthread_rwlock_rdunlock     0.122     inf       1.2      1112      0%  compute
-    0x7c9d7d1b6c4b                0.080     inf       4.3      1112      0%  compute
-    n1_32                         0.070     inf       5.2      1112      0%  compute
-    __fft_scalar_fftw3_MOD_cff    0.040     inf      26.6      1112      2%  compute
-    libc_feholdsetround_sse_ct    0.037     inf       3.1      1112      0%  compute
-    vloc_psi_k_acc_               0.035     inf      30.9      1112      3%  compute
-    __fft_helper_subroutines_M    0.025     inf       0.0      1112      0%  compute
-    n1fv_8                        0.024     inf       3.4      1112      0%  compute
-    ──────────────────────────────────────────────────────────────────────────────
+    function                 self(s)   time%     AI   GFLOP/s  %peak  bound
+    ───────────────────────────────────────────────────────────────────────
+    epoll_wait                 1.497  102.2%    inf       0.0     0%  compute
+    __GI___poll                1.429   97.6%    inf       0.0     0%  compute
+    n1bv_32                    0.215   14.7%    inf      24.9     2%  compute
+    n1fv_32                    0.209   14.3%    inf      19.8     2%  compute
+    __pthread_rwlock_rdunloc   0.124    8.5%    inf       2.1     0%  compute
+    n1_32                      0.102    7.0%    inf       6.0     1%  compute
+    0x765f88233c4b             0.082    5.6%    inf       2.2     0%  compute
+    vloc_psi_k_acc_            0.056    3.8%    inf      19.5     2%  compute
+    __fft_scalar_fftw3_MOD_c   0.047    3.2%    inf      22.7     2%  compute
+    libc_feholdsetround_sse_   0.038    2.6%    inf       3.5     0%  compute
+    libprof_now                0.023    1.6%    inf       4.8     0%  compute
+    apply                      0.023    1.6%    inf       9.1     1%  compute
+    ───────────────────────────────────────────────────────────────────────
     (AI=inf → no DRAM traffic sampled = cache-resident/compute-bound; precision assumed DP)

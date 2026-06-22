@@ -1,0 +1,479 @@
+──────────────────────────────────────────────────────────────────────────────
+  UPAT  —  Universal Performance Analysis Tool   (deep profile: tracing + sampling)
+──────────────────────────────────────────────────────────────────────────────
+
+══ Run ══
+    application    pw.x
+    command        qenv/bin/mpirun -np 144 --bind-to core ./pw -in si_big.scf.in
+    ranks          144
+    threads/rank   3
+    elapsed        8.0 s
+    CPU time       606 s
+    date           2026-06-21 23:26
+
+══ Machine ══
+    CPU            Neoverse V2 (Grace / Graviton4)
+    microarch      Neoverse V2 (Grace / Graviton4)
+    cores          1 socket × 144 physical (144 logical)
+    SMT            off
+    memory         237.6 GiB
+    host           i614-004.vista.tacc.utexas.edu
+
+══ Software ══
+    OS             Rocky Linux 9.7 (Blue Onyx)
+    kernel         5.14.0-611.16.1.el9_7.aarch64+64k
+    OpenBLAS       libopenblasp-r0.3.29.so
+    Open MPI       libmpi.so.40.40.5
+    compiler       GCC: (GNU) 11.5.0 20240719 (Red Hat 11.5.0-11)
+
+══ Measurement ══
+    method         statistical call-stack sampling
+    sampling       1000 Hz
+    paranoid       0
+
+── INSIGHTS ──────────────────────────────────────────────────────────────────
+  ▶ MPI is 95% of time with 55% imbalance — rebalance work or check rank placement; see the communication matrix.
+  ▶ open is 55% load-imbalanced across ranks — uneven work distribution.
+
+══ Time breakdown (sampled, by dominant group) ══
+    MPI             94.9%  ██████████████████████████████████████
+    user code        2.9%  █
+    math-libs        2.1%  █
+    system/other     0.1%  
+
+
+══ MPI summary ══
+    MPI time 1.6651s  (20.9% of runtime, 144 ranks)
+    function                time(s)    %MPI      calls   imb%
+    ─────────────────────────────────────────────────────────
+    mpi_alltoall_            0.7416   44.5%       7473    18%
+    mpi_bcast_               0.5258   31.6%        974     5%
+    mpi_barrier_             0.3242   19.5%       1292    33%
+    mpi_allreduce_           0.0490    2.9%        524     4%
+    mpi_alltoallv_           0.0235    1.4%         31     4%
+    ─────────────────────────────────────────────────────────
+
+══ MPI wait-state (call-type heuristic) ══
+    synchronization/wait 1.6647s (100%) | transfer/initiation 0.0004s ( 0%)
+    call                   time%    excl(s)   class   imb%
+    ──────────────────────────────────────────────────────
+    mpi_alltoall_          17.6%    0.74164    wait    18%
+    mpi_bcast_             12.5%    0.52580    wait     5%
+    mpi_barrier_            7.7%    0.32415    wait    33%
+    mpi_allreduce_          1.2%    0.04901    wait     4%
+    mpi_alltoallv_          0.6%    0.02355    wait     4%
+    mpi_recv_               0.0%    0.00045    wait     0%
+    mpi_send_               0.0%    0.00038 transfer     0%
+    mpi_gatherv_            0.0%    0.00009    wait    55%
+    ──────────────────────────────────────────────────────
+    → wait-dominated MPI with imbalanced collectives/receives (55% imb): likely late-sender / load imbalance — rebalance work across ranks before tuning communication.
+    overlap: all communication is blocking — no comm/compute overlap possible. Consider nonblocking calls (Isend/Irecv or Iallreduce-style collectives) + compute + Wait.
+
+══ Load imbalance (across 144 ranks, ranked by recoverable time) ══
+    function                   imb%   time% avg excl(s)  recover(s)
+    ───────────────────────────────────────────────────────────────
+    mpi_alltoall_               18%   17.6%      0.7416      0.1679
+    mpi_barrier_                33%    7.7%      0.3242      0.1604
+    open                        55%    1.5%      0.0647      0.0783
+    zgemm_                       8%   13.8%      0.5821      0.0508
+    read                        18%    3.3%      0.1391      0.0310
+    mpi_bcast_                   5%   12.5%      0.5258      0.0304
+    close                       30%    0.9%      0.0372      0.0160
+    dlaebz_                      7%    3.0%      0.1272      0.0094
+    zhemv_                       7%    1.3%      0.0539      0.0043
+    zlasr_                       8%    0.4%      0.0177      0.0016
+    ───────────────────────────────────────────────────────────────
+
+══ Anomaly / variance (across 144 ranks) ══
+    per-rank busy time: min 2.0578s  max 2.8144s  median 2.5811s  spread 27%
+    → no outlier rank (all within the pack).
+    most variable call: openat (CV 234%, 0.0002..0.0094s across ranks)
+
+Table 1:  Profile by Function Group  (sampling @ 1000 Hz, 144 PEs)
+          time charged to the highest-level group on each sample's stack
+
+   Samp%      Samp  Imb.Samp  Imb.Samp%  Group
+  ──────────────────────────────────────────────────────────────────────────────
+ 100.0%   2650823     569.5      3.0%  Total
+  ──────────────────────────────────────────────────────────────────────────────
+  94.9%   2516269     692.9      3.8%  MPI
+   2.9%     76654     396.7     42.7%  USER
+   2.1%     55627     294.7     43.3%  BLAS
+   0.1%      2273      68.2     81.2%  ETC
+  ──────────────────────────────────────────────────────────────────────────────
+  legend:
+    Samp%        percent of samples here (~ percent of wall time)
+    Samp         sample count (wall time ~ Samp / sampling-Hz)
+    Imb.Samp     max-rank samples minus average across ranks (recoverable)
+    Imb.Samp%    Imb.Samp / max = (max-avg)/max
+    groups       USER=your code, ETC=other/system; MPI/BLAS/LAPACK/FFTW/IO as named
+
+  Top functions (inclusive)
+  ──────────────────────────────────────────────────────────────────────────────
+   Samp%      Samp  Imb.Samp  Imb.Samp%  Function
+  ──────────────────────────────────────────────────────────────────────────────
+  80.2%   2126155     407.0      2.7%  thread_start  [ETC]
+  80.1%   2122691     407.1      2.7%  __GI_epoll_pwait  [ETC]
+  41.3%   1094863     286.8      3.6%  ucs_async_thread_func  [MPI]
+  41.3%   1094214     288.3      3.7%  ucs_event_set_wait  [MPI]
+  17.4%    461588     255.5      7.4%  MAIN_  [USER]
+  17.4%    461588     255.5      7.4%  main  [USER]
+  17.4%    461588     255.5      7.4%  __libc_start_main_alias_2  [ETC]
+   9.1%    240116     265.5     13.7%  run_pwscf_  [USER]
+   8.2%    216168     226.8     13.1%  mp_global_mp_startup_  [USER]
+   8.1%    215805     226.4     13.1%  mp_world_mp_world_start_  [USER]
+   8.1%    215529     226.3     13.1%  ompi_mpi_init  [MPI]
+   8.1%    215529     226.3     13.1%  PMPI_Init  [MPI]
+   8.1%    215529     226.3     13.1%  mpi_init__  [MPI]
+   7.8%    207702     261.6     15.4%  electrons_  [USER]
+   7.8%    207701     261.6     15.4%  electrons_scf_  [USER]
+   ... 26124 more below 0.1% of CPU time (report --threshold 0 to show all)
+  ──────────────────────────────────────────────────────────────────────────────
+  legend:
+    Samp%        percent of samples here (~ percent of wall time)
+    Samp         sample count (wall time ~ Samp / sampling-Hz)
+    Imb.Samp     max-rank samples minus average across ranks (recoverable)
+    Imb.Samp%    Imb.Samp / max = (max-avg)/max
+    groups       USER=your code, ETC=other/system; MPI/BLAS/LAPACK/FFTW/IO as named
+
+  Top functions (self)
+  ──────────────────────────────────────────────────────────────────────────────
+   Samp%      Samp  Imb.Samp  Imb.Samp%  Function
+  ──────────────────────────────────────────────────────────────────────────────
+  80.1%   2122643     407.4      2.7%  __GI_epoll_pwait  (ETC)
+   2.5%     67004      40.7      8.0%  __GI___ioctl  (ETC)
+   2.3%     61226     140.8     24.9%  __GI___futex_abstimed_wait_cancelable64  (WAIT)
+   1.3%     35677      25.2      9.2%  __libc_open64  (ETC)
+   1.0%     27584     229.4     54.5%  uct_dc_mlx5_iface_progress_ll  (MPI)
+   0.9%     24816      36.7     17.5%  zgemm_kernel_l_NEOVERSEV1  (BLAS)
+   0.9%     24255      38.6     18.6%  zgemm_kernel_n_NEOVERSEV1  (BLAS)
+   0.7%     19281     108.1     44.7%  uct_mm_iface_progress  (MPI)
+   0.6%     16966      30.2     20.4%  __GI___getdents64  (ETC)
+   0.4%     11139      83.6     52.0%  fftwi_no_twiddle_32  (USER)
+   0.4%      9706     114.6     63.0%  __memcpy_generic  (ETC)
+   0.3%      8142      74.5     56.8%  fftw_no_twiddle_32  (USER)
+   0.3%      8138      51.5     47.7%  ucp_worker_progress  (MPI)
+   0.3%      7538       3.7      6.5%  hpsort_eps_  (USER)
+   0.3%      6843      69.5     59.4%  fftwi_twiddle_3  (USER)
+   ... 12870 more below 0.1% of CPU time (report --threshold 0 to show all)
+  ──────────────────────────────────────────────────────────────────────────────
+  legend:
+    Samp%        percent of samples here (~ percent of wall time)
+    Samp         sample count (wall time ~ Samp / sampling-Hz)
+    Imb.Samp     max-rank samples minus average across ranks (recoverable)
+    Imb.Samp%    Imb.Samp / max = (max-avg)/max
+    groups       USER=your code, ETC=other/system; MPI/BLAS/LAPACK/FFTW/IO as named
+
+Table 1b:  Profile by source line  (hotspots, sampling @ 1000 Hz, 144 PEs)
+           every row is one source line, ranked by self-sample %
+
+   Samp%      Samp  Imb.Samp  Imb.Samp%  Function  [file:line]  (group)
+  ──────────────────────────────────────────────────────────────────────────────
+  80.1%   2122643     407.4      2.7%  __GI_epoll_pwait  [libc.so.6:?]  (ET
+   2.5%     67004      40.7      8.0%  __GI___ioctl  [libc.so.6:?]  (ETC)
+   2.3%     61226     140.8     24.9%  __GI___futex_abstimed_wait_cancelabl
+   1.3%     35677      25.2      9.2%  __libc_open64  [libc.so.6:?]  (ETC)
+   1.0%     27584     229.4     54.5%  uct_dc_mlx5_iface_progress_ll  [libu
+   0.9%     24816      36.7     17.5%  zgemm_kernel_l_NEOVERSEV1  [libopenb
+   0.9%     24255      38.6     18.6%  zgemm_kernel_n_NEOVERSEV1  [libopenb
+   0.7%     19281     108.1     44.7%  uct_mm_iface_progress  [libuct.so.0.
+   0.6%     16966      30.2     20.4%  __GI___getdents64  [libc.so.6:?]  (E
+   0.4%      9706     114.6     63.0%  __memcpy_generic  [libc.so.6:?]  (ET
+   0.3%      8138      51.5     47.7%  ucp_worker_progress  [libucp.so.0.0.
+   0.1%      3693       9.4     26.7%  hpsort_eps_  [sort.f90:97]  (USER)
+   0.1%      3514      82.6     77.2%  __clock_nanosleep  [libc.so.6:?]  (W
+   0.1%      3184     223.9     91.0%  mca_part_persist_progress  [libmpi.s
+   0.1%      3136      62.2     74.1%  __c_mset8  [libnvc.so]  (ETC)
+   0.1%      3109      93.4     81.2%  vloc_psi_k_  [vloc_psi.f90:266]  (US
+   0.1%      2981      11.3     35.3%  syscall  [libc.so.6]  (ETC)
+   0.1%      2675      23.4     55.8%  zgemm_itcopy_NEOVERSEV1  [libopenbla
+   0.1%      2663       9.5     34.0%  __libc_read  [libc.so.6:?]  (ETC)
+   ... 14464 more below 0.1% of CPU time (report --threshold 0 to show all)
+
+   ⚠ no source-line info for 92% of the hotspots above — file:line shows a
+     module/binary name (or 'file:?'); those objects were built without -g
+     or were stripped, so line-level hotspots are unavailable for them.
+     affected: libc.so.6, libopenblasp-r0.3.29.so, libuct_ib.so.0.0.0, libuct.so.0.0.0, libucp.so.0.0.0, libmpi.so.40.40.5
+     → keep line tables when building (optimization is unaffected): cc -O2 -g
+       and do not 'strip'. For distro libraries, install the matching
+       -dbg / -debuginfo package (e.g. libfftw3-dbg, debuginfo-install <pkg>).
+  ──────────────────────────────────────────────────────────────────────────────
+  legend:
+    Samp%        percent of samples here (~ percent of wall time)
+    Samp         sample count (wall time ~ Samp / sampling-Hz)
+    Imb.Samp     max-rank samples minus average across ranks (recoverable)
+    Imb.Samp%    Imb.Samp / max = (max-avg)/max
+    groups       USER=your code, ETC=other/system; MPI/BLAS/LAPACK/FFTW/IO as named
+
+Table 2:  Library calls by group and function  (tracing)
+
+  Compute (BLAS / LAPACK / PBLAS / ScaLAPACK / CBLAS / LAPACKe / FFTW)
+  ──────────────────────────────────────────────────────────────────────────────
+   time% group    function                  count [imb]    incl(s)    excl(s)
+  ──────────────────────────────────────────────────────────────────────────────
+   13.8% BLAS     zgemm_                     2603 66.8%     0.5821     0.5821
+   11.2% LAPACK   zhegvx_                      32  5.9%     0.4727     0.0002
+    9.3% LAPACK   zheevx_                      32  5.9%     0.3917     0.0003
+    3.0% LAPACK   dstebz_                      32  5.9%     0.1274     0.0002
+    3.0% LAPACK   dlaebz_                      96  5.9%     0.1272     0.1272
+    3.0% LAPACK   zhetrd_                      40  4.8%     0.1263     0.0002
+    2.6% LAPACK   zlatrd_                     184  2.9%     0.1087     0.0124
+    1.3% LAPACK   zunmtr_                      32  5.9%     0.0545     0.0001
+    1.3% LAPACK   zunmql_                      32  5.9%     0.0544     0.0001
+    1.3% LAPACK   zhegst_                      40  4.8%     0.0540     0.0005
+    1.3% BLAS     zhemv_                     6610  3.1%     0.0539     0.0539
+    1.2% LAPACK   zstein_                      32  5.9%     0.0492     0.0110
+    1.1% LAPACK   zhegv_                        8  0.0%     0.0478     0.0001
+    1.1% LAPACK   zlanhe_                      40  4.8%     0.0459     0.0439
+    1.0% LAPACK   zheev_                        8  0.0%     0.0412     0.0001
+    0.9% LAPACK   zlarfb_                     331 16.2%     0.0389     0.0017
+    0.7% BLAS     ztrsm_                      204  1.9%     0.0303     0.0303
+    0.7% BLAS     zher2k_                     266  2.4%     0.0283     0.0283
+    0.6% LAPACK   zsteqr_                       8  0.0%     0.0247     0.0064
+    0.5% LAPACK   dlagts_                   10368  5.9%     0.0217     0.0217
+    0.4% LAPACK   zlasr_                     1541  2.7%     0.0177     0.0177
+    0.4% LAPACK   zpotrf_                      40  4.8%     0.0150     0.0150
+    0.4% LAPACK   zhegs2_                     122  2.4%     0.0150     0.0046
+    0.3% BLAS     zhemm_                      164  1.2%     0.0144     0.0144
+    0.3% LAPACK   zlarf_                     1662 17.7%     0.0112     0.0009
+    0.2% BLAS     ztrmm_                    14844  2.8%     0.0095     0.0095
+    0.2% LAPACK   zlarfg_                    6610  3.1%     0.0093     0.0021
+    0.2% LAPACK   dlarnv_                    3456  5.9%     0.0089     0.0010
+    0.2% LAPACK   zlarft_                     331 16.2%     0.0085     0.0029
+    0.2% LAPACK   dlaruv_                   11448  2.8%     0.0079     0.0079
+    0.2% LAPACK   zunm2l_                       7 30.0%     0.0068     0.0001
+    0.1% BLAS     zgerc_                     1662 17.7%     0.0054     0.0054
+    0.1% LAPACK   zladiv_                    6610  3.1%     0.0054     0.0005
+    0.1% BLAS     zher2_                     7233  3.4%     0.0051     0.0051
+    0.1% LAPACK   dladiv_                    6610  3.1%     0.0049     0.0048
+    0.1% LAPACK   dlagtf_                    3456  5.9%     0.0048     0.0048
+    0.1% LAPACK   zungtr_                       8  0.0%     0.0047     0.0000
+    0.1% LAPACK   zungql_                       8  0.0%     0.0046     0.0000
+    0.1% BLAS     ztrsv_                     6528  3.2%     0.0046     0.0046
+    0.1% LAPACK   zung2l_                       8  0.0%     0.0046     0.0001
+   ... 34 more below 0.1% of CPU time (report --threshold 0 to show all)
+  ──────────────────────────────────────────────────────────────────────────────
+  legend:
+    time%        inclusive time as % of total CPU time (thread-seconds) — scan to find what matters
+    group        library family: BLAS/CBLAS, LAPACK/LAPACKe, P/ScaLAPACK, FFTW
+    count[imb]   total calls over ranks [Imb% = (max-avg)/max load imbalance]
+    incl(s)      inclusive time: this routine + everything it calls
+    excl(s)      exclusive time: this routine only (callees excluded)
+    note         calls aggregated over input sizes; per-shape: report --detail blas|lapack|fftw
+
+Table 3:  MPI message statistics  (tracing)
+
+  MPI (communication)
+  ──────────────────────────────────────────────────────────────────────────────
+   time% function          count [imb]   r/R   incl(s)       bytes    GB/s
+  ──────────────────────────────────────────────────────────────────────────────
+   17.6% mpi_alltoall_      7473  0.1% 144/144    0.7416   767435328    1.03
+   12.5% mpi_bcast_          974  0.4% 144/144    0.5258  2802016896    5.33
+    7.7% mpi_barrier_       1292  5.1% 144/144    0.3242           0    0.00
+    1.2% mpi_allreduce_      524 11.6% 144/144    0.0490  4378118976   89.34
+    0.6% mpi_alltoallv_       31  0.0% 144/144    0.0235           0    0.00
+  ──────────────────────────────────────────────────────────────────────────────
+   total communication volume: 7.948 GB  (sum over ranks)
+   ... 3 more below 0.1% of CPU time (report --threshold 0 to show all)
+  ──────────────────────────────────────────────────────────────────────────────
+  legend:
+    time%        inclusive MPI time as % of total CPU time
+    count[imb]   total calls over ranks [Imb% = (max-avg)/max]
+    r/R          ranks that called it / total ranks
+    incl(s)      inclusive wall time spent in the call
+    bytes        message bytes moved (summed over ranks)
+    GB/s         bytes / inclusive-time
+    note         comm matrix + size histogram: report --detail mpi
+
+  MPI point-to-point vs collective (bytes)
+   point-to-point:      7.948 GB  (100.0%)
+   collective:          0.000 GB  ( 0.0%)
+
+  MPI message-size distribution
+   size              count       %
+   <=64B            145442   11.2%
+   <=256B            24624    1.9%
+   <=1KiB          1092640   83.8%
+   <=4KiB            12600    1.0%
+   <=16KiB            2232    0.2%
+   <=64KiB            2808    0.2%
+   <=256KiB           8784    0.7%
+   <=1MiB            14544    1.1%
+
+  Communication structure  (144 ranks; full matrix → report --detail mpi --format html)
+   peers per rank (fan-out): avg 0.0, median 0, max 1  → sparse / nearest-neighbor (halo-like)
+   sent volume per rank: median 0.000 GB, max 0.000 GB, imbalance 99% (max vs avg)
+   heaviest rank → rank transfers:
+     rank 72     → rank 0            0.000 GB
+
+Table 4:  I/O statistics  (tracing)
+
+  I/O
+  ──────────────────────────────────────────────────────────────────────────────
+   time% call            count [imb]   r/R   incl(s)      bytes    GB/s
+  ──────────────────────────────────────────────────────────────────────────────
+    3.3% read            12410  3.6% 144/144    0.1391 1588177595   11.42
+    1.5% open             2108  0.2% 144/144    0.0647          0    0.00
+    0.9% close            2589  0.2% 144/144    0.0372          0    0.00
+  ──────────────────────────────────────────────────────────────────────────────
+   total I/O volume: 1.588 GB  (sum over ranks)
+   ... 5 more below 0.1% of CPU time (report --threshold 0 to show all)
+  ──────────────────────────────────────────────────────────────────────────────
+  legend:
+    time%        inclusive I/O time as % of total CPU time
+    call         POSIX I/O syscall (read/write/open/...)
+    count[imb]   total calls over ranks [Imb% = (max-avg)/max]
+    r/R          ranks that called it / total ranks
+    bytes,GB/s   bytes transferred and bytes / inclusive-time
+
+
+Per-PE summary
+  ──────────────────────────────────────────────────────────────────────────────
+   PE       runtime(s)  lib excl(s)     lib%
+   0             7.457        2.106    28.2%
+   1             7.946        2.251    28.3%
+   2             7.950        2.257    28.4%
+   3             7.917        2.380    30.1%
+   4             7.950        2.143    27.0%
+   5             7.951        2.340    29.4%
+   6             7.951        2.176    27.4%
+   7             7.952        2.273    28.6%
+   8             7.814        2.393    30.6%
+   9             7.951        2.307    29.0%
+   10            7.580        2.217    29.2%
+   11            7.801        2.181    28.0%
+   12            7.949        2.265    28.5%
+   13            7.948        2.229    28.0%
+   14            7.944        2.201    27.7%
+   15            7.944        2.379    29.9%
+   16            7.941        2.204    27.8%
+   17            7.949        2.227    28.0%
+   18            7.948        2.295    28.9%
+   19            7.946        2.340    29.5%
+   20            7.945        2.245    28.3%
+   21            7.945        2.246    28.3%
+   22            7.948        2.169    27.3%
+   23            7.940        2.290    28.8%
+   24            7.940        2.569    32.4%
+   25            7.943        2.694    33.9%
+   26            7.933        2.761    34.8%
+   27            7.937        2.657    33.5%
+   28            7.947        2.687    33.8%
+   29            7.932        2.797    35.3%
+   30            7.937        2.583    32.5%
+   31            7.796        2.774    35.6%
+   32            7.932        2.756    34.7%
+   33            7.943        2.580    32.5%
+   34            7.940        2.780    35.0%
+   35            7.942        2.595    32.7%
+   36            7.934        2.626    33.1%
+   37            7.937        2.667    33.6%
+   38            7.938        2.814    35.5%
+   39            7.931        2.661    33.5%
+   40            7.931        2.562    32.3%
+   41            7.940        2.590    32.6%
+   42            7.928        2.584    32.6%
+   43            7.839        2.782    35.5%
+   44            7.934        2.722    34.3%
+   45            7.927        2.634    33.2%
+   46            7.929        2.767    34.9%
+   47            7.927        2.602    32.8%
+   48            7.927        2.576    32.5%
+   49            7.639        2.578    33.8%
+   50            7.933        2.750    34.7%
+   51            7.933        2.744    34.6%
+   52            7.927        2.648    33.4%
+   53            7.928        2.554    32.2%
+   54            7.812        2.776    35.5%
+   55            7.812        2.662    34.1%
+   56            7.810        2.641    33.8%
+   57            7.808        2.594    33.2%
+   58            7.801        2.748    35.2%
+   59            7.811        2.603    33.3%
+   60            7.811        2.767    35.4%
+   61            7.810        2.573    32.9%
+   62            7.778        2.625    33.7%
+   63            7.807        2.725    34.9%
+   64            7.809        2.651    33.9%
+   65            7.503        2.688    35.8%
+   66            7.807        2.736    35.0%
+   67            7.808        2.604    33.4%
+   68            7.793        2.775    35.6%
+   69            7.784        2.737    35.2%
+   70            7.521        2.597    34.5%
+   71            7.801        2.740    35.1%
+   72            7.236        2.141    29.6%
+   73            7.794        2.198    28.2%
+   74            7.799        2.189    28.1%
+   75            7.798        2.240    28.7%
+   76            7.789        2.096    26.9%
+   77            7.789        2.231    28.6%
+   78            7.797        2.281    29.3%
+   79            7.796        2.280    29.3%
+   80            7.785        2.190    28.1%
+   81            7.793        2.260    29.0%
+   82            7.791        2.146    27.5%
+   83            7.288        2.164    29.7%
+   84            7.785        2.281    29.3%
+   85            7.216        2.153    29.8%
+   86            7.590        2.157    28.4%
+   87            7.791        2.164    27.8%
+   88            7.786        2.236    28.7%
+   89            7.264        2.281    31.4%
+   90            7.789        2.105    27.0%
+   91            7.776        2.289    29.4%
+   92            7.793        2.095    26.9%
+   93            7.781        2.058    26.4%
+   94            7.784        2.096    26.9%
+   95            7.791        2.059    26.4%
+   96            7.779        2.726    35.0%
+   97            7.785        2.551    32.8%
+   98            7.788        2.608    33.5%
+   99            7.209        2.599    36.0%
+   100           7.207        2.606    36.2%
+   101           7.787        2.556    32.8%
+   102           7.677        2.722    35.5%
+   103           7.784        2.643    34.0%
+   104           7.776        2.679    34.5%
+   105           7.776        2.585    33.2%
+   106           7.776        2.647    34.0%
+   107           7.781        2.529    32.5%
+   108           7.189        2.543    35.4%
+   109           7.767        2.693    34.7%
+   110           7.769        2.571    33.1%
+   111           7.200        2.534    35.2%
+   112           7.753        2.646    34.1%
+   113           7.758        2.548    32.8%
+   114           7.781        2.661    34.2%
+   115           7.780        2.620    33.7%
+   116           7.769        2.721    35.0%
+   117           7.756        2.699    34.8%
+   118           7.247        2.540    35.1%
+   119           7.199        2.582    35.9%
+   120           7.185        2.602    36.2%
+   121           7.760        2.627    33.8%
+   122           7.774        2.489    32.0%
+   123           7.189        2.441    34.0%
+   124           7.766        2.574    33.1%
+   125           7.757        2.495    32.2%
+   126           7.761        2.624    33.8%
+   127           7.435        2.640    35.5%
+   128           7.760        2.590    33.4%
+   129           7.775        2.594    33.4%
+   130           7.264        2.687    37.0%
+   131           7.773        2.692    34.6%
+   132           7.751        2.674    34.5%
+   133           7.763        2.556    32.9%
+   134           7.688        2.563    33.3%
+   135           7.764        2.582    33.3%
+   136           7.757        2.554    32.9%
+   137           7.761        2.598    33.5%
+   138           7.228        2.613    36.1%
+   139           7.673        2.548    33.2%
+   140           7.587        2.643    34.8%
+   141           7.229        2.514    34.8%
+   142           7.750        2.602    33.6%
+   143           7.756        2.592    33.4%
+  ──────────────────────────────────────────────────────────────────────────────
+   slowest PE 7 (7.952s); mean 7.761s; spread 9.6%
+

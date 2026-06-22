@@ -1,0 +1,47 @@
+
+══ Roofline (per function — measured, event-based sampling) ══
+  flops = FP-event samples x period x width; bytes = DRAM-access samples x line.
+
+    GFLOP/s
+            │                       ‾‾‾‾‾‾‾‾‾‾‾‾‾‾‾‾‾‾‾‾‾‾‾‾‾‾‾‾‾
+            │                   ////                             
+            │                ///                                 
+            │             ///                                    
+        100 │          ///                                       
+            │       ///                                          
+            │    ///                                            F
+            │ ///                                               E
+         10 │/                                                  H
+            │                                                   G
+            │                                                    
+            │                                                    
+          1 │                                                    
+            │                                                    
+            └────────────────────────────────────────────────────
+             0.01        0.1           1          10          100  AI (FLOP/byte)
+             / bandwidth roof   ‾ compute ceiling
+      A fftwi_no_twiddle_32
+      B fftw_no_twiddle_32
+      C vloc_psi_k_
+      D fft_scalar_fftw_cfft3ds_
+      E zgemm_kernel_n_NEOVERSEV1
+      F zgemm_kernel_l_NEOVERSEV1
+      G ylmr2_
+      H __fz_div_1_neon
+
+      function                 self(s)   time%     AI   GFLOP/s  %peak  bound
+    ─────────────────────────────────────────────────────────────────────────
+      __GI_epoll_pwait           5.764   67.8%    inf       0.0     0%  compute
+    A fftwi_no_twiddle_32        0.828    9.7% 2194.5       6.8     1%  latency
+    B fftw_no_twiddle_32         0.686    8.1% 1344.7       6.3     1%  latency
+      __GI___ioctl               0.089    1.0%    inf       0.0     0%  compute
+    C vloc_psi_k_                0.085    1.0%  110.6       4.2     1%  latency
+    D fft_scalar_fftw_cfft3ds_   0.073    0.9%  742.2       6.5     1%  latency
+      __GI___close_nocancel      0.065    0.8%    inf       0.0     0%  compute
+      __ftruncate64              0.063    0.7%    inf       0.0     0%  compute
+    E zgemm_kernel_n_NEOVERSEV   0.062    0.7%  604.2      18.7     3%  latency
+      __GI___openat              0.045    0.5%    inf       0.0     0%  compute
+      __c_mset8                  0.041    0.5%    inf       0.1     0%  compute
+    F zgemm_kernel_l_NEOVERSEV   0.040    0.5%  537.0      25.8     3%  latency
+    ─────────────────────────────────────────────────────────────────────────
+    (AI=inf → no DRAM traffic sampled = cache-resident/compute-bound; precision assumed DP)

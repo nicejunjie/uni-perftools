@@ -1,0 +1,148 @@
+──────────────────────────────────────────────────────────────────────────────
+  UAPS  —  Universal Application Performance Snapshot   (bird's-eye: HW counters)
+──────────────────────────────────────────────────────────────────────────────
+
+══ Run ══
+    application    pw.x
+    command        qenv/bin/mpirun -np 2 --bind-to core --map-by socket:PE=8 ./pw -in si.scf.in
+    ranks          2
+    threads/rank   11
+    elapsed        1.8 s
+    CPU time       11 s
+    date           2026-06-21 13:51
+
+══ Machine ══
+    CPU            AMD Ryzen 9 9950X 16-Core Processor
+    microarch      Zen 5 (Granite Ridge)
+    cores          1 socket × 16 physical (32 logical)
+    SMT            on
+    memory         60.4 GiB
+    host           z20
+
+══ Software ══
+    OS             Ubuntu 24.04.4 LTS
+    kernel         6.17.0-29-generic
+    Open MPI       libmpi.so.40.40.7
+    OpenBLAS       libopenblasp-r0.3.33.so
+    FFTW           libfftw3.so.3.7.11
+    ScaLAPACK      libscalapack.so
+    compiler       GCC: (GNU) 4.8.5 20150623 (Red Hat 4.8.5-39) | GCC: (conda-forge gcc 14.3.0-16) 14.3.0
+
+══ Measurement ══
+    method         hardware performance counters
+    HWPC scope     node-level (system-wide)
+    paranoid       1
+
+── INSIGHTS ──────────────────────────────────────────────────────────────────
+  ▶ CPU utilization is low (18% of cores) with no single dominant hotspot — the run is latency- or idle-bound; look at thread activity and synchronization rather than per-function tuning.
+
+
+══ Performance ══
+    Elapsed time               1.814 s
+    FP throughput              11.95 GFLOP/s (1% of FP64 peak)
+    Avg CPU frequency          5.66 GHz
+    Physical core utilization  18.4% (5.9 cores busy)
+    IPC (instructions/cycle)   0.61
+    CPI (cycles/instruction)   1.63
+    Node memory used (peak)    12.2 GiB
+
+══ I/O ══
+    disk read                  0 B
+    disk write                 6.7 MiB
+
+══ Roofline (whole program) ══
+  Roofline (empirical peaks for AMD Ryzen 9 9950X 16-Core Processor):
+    peak compute FP64    1112 GFLOP/s
+    peak compute FP32    2261 GFLOP/s
+    peak DRAM bandwidth  53 GB/s
+    ridge AI FP64        20.85 FLOP/byte
+    ridge AI FP32        42.41 FLOP/byte
+    # AI = arithmetic intensity: FLOPs performed per byte read from DRAM
+    # FP64/FP32 = double/single precision floating point
+    # ridge AI = AI where the compute roof meets the bandwidth roof; below it a
+    #   kernel is memory-bandwidth-bound, above it compute-bound — the minimum AI
+    #   at which this machine's peak GFLOP/s is reachable
+
+    GFLOP/s
+            │                              ‾‾‾‾‾‾‾‾‾‾‾‾‾‾‾‾‾‾‾‾‾‾
+       1000 │                          ////                      
+            │                       ///                          
+            │                    ///                             
+            │                 ///                                
+        100 │              ///                                   
+            │           ///                                      
+            │        ///                                         
+            │    ////                       ●                    
+         10 │ ///                                                
+            │/                                                   
+            │                                                    
+            │                                                    
+          1 │                                                    
+            └────────────────────────────────────────────────────
+             0.1          1           10          100        1000  AI (FLOP/byte)
+             ● measured   / bandwidth roof   ‾ compute ceiling
+
+    point                      prec       AI    GFLOP/s    ceiling    %peak  bound
+    ──────────────────────────────────────────────────────────────────────────────
+    whole-program (measured)     DP    26.83       11.9     1111.5       1%  latency
+    ──────────────────────────────────────────────────────────────────────────────
+    whole program sits at 1% of the DP ceiling — far below the roofline: latency/overhead/idle-bound, not compute- or bandwidth-bound.
+
+══ Microarchitecture (top-down pipeline slots) ══
+    retiring (useful)    9.5%
+    frontend-bound      37.0%
+    backend-bound       46.6%
+    bad speculation      0.3%
+    SMT contention       6.5%
+      (retiring + frontend + backend + bad-spec + SMT = 100% of slots)
+    branch mispredict  0.5%   (of branches — main cause of bad speculation)
+    # retiring — pipeline slots doing useful work — instructions that completed and committed
+    # frontend-bound — slots stalled fetching/decoding instructions (instruction-cache, branch, decode)
+    # backend-bound — slots stalled in execution — waiting on data from cache/DRAM or on busy execution units
+    # bad speculation — slots wasted on instructions from mispredicted branches (work later thrown away)
+    # SMT contention — slots lost to the sibling hyperthread sharing this physical core (SMT = simultaneous multithreading)
+    # branch mispredict — fraction of branches predicted wrong — the main cause of 'bad speculation' slots
+
+══ Memory access ══
+    DRAM bandwidth         0.4 GB/s (1% of peak)
+    cache-miss rate          9.1%
+    last-level cache misses  4.89 per 1000 instructions
+    data-TLB misses          0.08 per 1000 instructions
+    instruction-TLB misses   0.01 per 1000 instructions
+    DRAM fills               0.34 per 1000 instructions
+    DRAM-bound               2.2%
+    NUMA remote access       0.0%
+    memory-bound (slots)     6.3%
+    # DRAM bandwidth — rate of data moved to/from main memory (DRAM = dynamic RAM, the off-chip main memory)
+    # cache-miss rate — fraction of last-level-cache accesses that missed and had to go to DRAM
+    # last-level cache misses — LLC (last-level cache) misses per 1000 instructions — the largest/slowest on-die cache before DRAM
+    # data-TLB misses — data TLB misses per 1000 instructions (TLB = translation-lookaside buffer; a miss triggers a page-table walk)
+    # instruction-TLB misses — instruction TLB misses per 1000 instructions — page-walk pressure from a large code footprint
+    # NUMA remote access — share of memory accesses served by another socket's memory (NUMA = non-uniform memory access; remote is slower)
+    # memory-bound (slots) — estimated share of pipeline slots stalled waiting on the memory hierarchy
+
+══ Vectorization ══
+    FP efficiency 1.1% of vector peak (12 / 1112 GFLOP/s)
+    → FP throughput far below vector peak in compute-bound code: likely scalar / under-vectorized (or a reference library).
+    # FP efficiency — achieved floating-point throughput vs. the CPU's vector (SIMD) peak — low means scalar/under-vectorized code
+    confirm SIMD per loop with a compiler vec report (gcc -fopt-info-vec / icc -qopt-report=5) and build -O3 -march=native.
+
+══ MPI ══
+    MPI time                 0.11 s
+    MPI % of runtime         18.1%
+    MPI imbalance            15.6%
+    ranks                    2
+    top calls (time):
+      MPI_Alltoall  (66% of MPI)         0.15 s
+      MPI_Barrier  (17% of MPI)          0.04 s
+      MPI_Allreduce  (9% of MPI)         0.02 s
+      MPI_Bcast  (7% of MPI)             0.02 s
+      MPI_Send  (0% of MPI)              0.00 s
+    # MPI time — time in MPI calls (MPI = Message-Passing Interface, the inter-rank communication library)
+    # MPI imbalance — (max-avg)/max of per-rank MPI time — the recoverable fraction if ranks were balanced
+
+══ Scheduling / OS ══
+    context switches       29765   (16411/s)
+    CPU migrations         283
+    page faults            54107
+    major page faults      26   (disk-backed)

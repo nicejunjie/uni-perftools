@@ -5,6 +5,7 @@ pkg/
 *.deb
 # QE scratch + raw per-run result dirs (regenerable); rendered reports are kept
 scratch/
+scratch_big/
 out/run_*/
 out/collect.*.log
-out/qe.snap_serial.out
+out/qe*snap*.out
