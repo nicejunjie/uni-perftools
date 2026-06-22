@@ -10,7 +10,7 @@
 use anyhow::Result;
 use uaps_core::{Collector, Metric, MetricValue, Target};
 
-use crate::pmu::{EventCfg, ThreadGroups, TYPE_HARDWARE};
+use crate::pmu::{EventCfg, ThreadGroups, TYPE_HARDWARE, TYPE_HW_CACHE};
 
 // PERF_COUNT_HW_* config values (stable kernel ABI).
 const HW_CPU_CYCLES: u64 = 0;
@@ -20,6 +20,12 @@ const HW_CACHE_MISSES: u64 = 3;
 const HW_BRANCH_INSTRUCTIONS: u64 = 4;
 const HW_BRANCH_MISSES: u64 = 5;
 
+// PERF_TYPE_HW_CACHE encoding: cache_id | (op << 8) | (result << 16).
+// DTLB(3) / ITLB(4), op READ(0), result ACCESS(0) / MISS(1).
+const DTLB_ACCESS: u64 = 3;
+const DTLB_MISS: u64 = 3 | (1 << 16);
+const ITLB_MISS: u64 = 4 | (1 << 16);
+
 /// Emitted metrics, in the flattened order of the group spec below.
 const OUTPUTS: &[(&str, &str)] = &[
     ("hw_instructions", "Instructions"),
@@ -28,6 +34,9 @@ const OUTPUTS: &[(&str, &str)] = &[
     ("hw_cache_misses", "Cache misses (LLC)"),
     ("hw_branch_instructions", "Branch instructions"),
     ("hw_branch_misses", "Branch misses"),
+    ("dtlb_accesses", "dTLB load accesses"),
+    ("dtlb_misses", "dTLB load misses"),
+    ("itlb_misses", "iTLB misses"),
 ];
 
 pub struct PerfCollector {
@@ -37,8 +46,11 @@ pub struct PerfCollector {
 impl PerfCollector {
     pub fn new() -> Self {
         let hw = |config| EventCfg { etype: TYPE_HARDWARE, config };
+        let cache = |config| EventCfg { etype: TYPE_HW_CACHE, config };
         // Group A keeps instructions+cycles (IPC/CPI) and refs+misses
-        // (miss rate, MPKI) together; group B keeps the branch pair together.
+        // (miss rate, MPKI) together; group B the branch pair; group C the dTLB
+        // access+miss pair (TLB miss rate). A group that can't schedule (e.g. dTLB
+        // events unsupported) just yields no metrics for those keys.
         let groups = vec![
             vec![
                 hw(HW_INSTRUCTIONS),
@@ -47,6 +59,7 @@ impl PerfCollector {
                 hw(HW_CACHE_MISSES),
             ],
             vec![hw(HW_BRANCH_INSTRUCTIONS), hw(HW_BRANCH_MISSES)],
+            vec![cache(DTLB_ACCESS), cache(DTLB_MISS), cache(ITLB_MISS)],
         ];
         Self { groups: ThreadGroups::new(groups) }
     }

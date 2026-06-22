@@ -64,12 +64,12 @@ struct ThreadGroup {
 
 /// Open a grouped event set on thread `tid`: a leader plus members sharing its
 /// group. Returns the leader and members, or `None` if any event fails.
-fn open_grouped(tid: libc::pid_t, leader_cfg: u64, member_cfgs: &[u64]) -> Option<(File, Vec<File>)> {
-    let leader = pmu::open_event(TYPE_RAW, leader_cfg, tid, -1, true)?;
+fn open_grouped(pid: libc::pid_t, cpu: i32, leader_cfg: u64, member_cfgs: &[u64]) -> Option<(File, Vec<File>)> {
+    let leader = pmu::open_event(TYPE_RAW, leader_cfg, pid, cpu, -1, true)?;
     let lfd = leader.as_raw_fd();
     let mut members = Vec::new();
     for &cfg in member_cfgs {
-        members.push(pmu::open_event(TYPE_RAW, cfg, tid, lfd, false)?);
+        members.push(pmu::open_event(TYPE_RAW, cfg, pid, cpu, lfd, false)?);
     }
     // SAFETY: enabling the leader with the GROUP flag starts the group atomically.
     unsafe {
@@ -78,13 +78,13 @@ fn open_grouped(tid: libc::pid_t, leader_cfg: u64, member_cfgs: &[u64]) -> Optio
     Some((leader, members))
 }
 
-/// Open both top-down groups on a thread. The L1 group is required; the
-/// backend-split group is best-effort.
-fn open_group(tid: libc::pid_t) -> Option<ThreadGroup> {
+/// Open both top-down groups on one scope (a thread, or a CPU when system-wide).
+/// The L1 group is required; the backend-split group is best-effort.
+fn open_group(pid: libc::pid_t, cpu: i32) -> Option<ThreadGroup> {
     let (main_leader, main_members) =
-        open_grouped(tid, CFG_CYCLES, &[CFG_FRONTEND, CFG_BACKEND, CFG_DISPATCHED, CFG_RETIRED])?;
+        open_grouped(pid, cpu, CFG_CYCLES, &[CFG_FRONTEND, CFG_BACKEND, CFG_DISPATCHED, CFG_RETIRED])?;
     let (split_leader, split_member) =
-        match open_grouped(tid, CFG_NOT_COMPLETE, &[CFG_LOAD_NOT_COMPLETE]) {
+        match open_grouped(pid, cpu, CFG_NOT_COMPLETE, &[CFG_LOAD_NOT_COMPLETE]) {
             Some((l, mut m)) => (Some(l), m.pop()),
             None => (None, None),
         };
@@ -116,6 +116,17 @@ impl TopdownCollector {
     /// one. Called at start and on every sample, so threads created after
     /// launch (OpenMP pools, pthreads) are picked up while they run.
     fn scan_threads(&mut self) {
+        if pmu::system_wide() {
+            for cpu in pmu::online_cpus() {
+                if !self.seen.insert(cpu) {
+                    continue;
+                }
+                if let Some(group) = open_group(-1, cpu) {
+                    self.groups.push(group);
+                }
+            }
+            return;
+        }
         let dir = format!("/proc/{}/task", self.pid);
         let Ok(entries) = std::fs::read_dir(&dir) else { return };
         for entry in entries.flatten() {
@@ -125,7 +136,7 @@ impl TopdownCollector {
             if !self.seen.insert(tid) {
                 continue; // already handled (success or failure)
             }
-            if let Some(group) = open_group(tid) {
+            if let Some(group) = open_group(tid, -1) {
                 self.groups.push(group);
             }
         }
@@ -175,11 +186,15 @@ impl Collector for TopdownCollector {
                 dispatched += v[3];
                 retired += v[4];
                 threads += 1;
-            }
-            if let Some(leader) = group.split_leader.as_mut() {
-                if let Some(v) = pmu::read_values(leader, 2) {
-                    not_complete += v[0];
-                    load_not_complete += v[1];
+
+                // Only fold in this thread's L2 split when its main group also
+                // read — otherwise the mem/core ratio is summed over a different
+                // set of threads than `backend`, skewing the split.
+                if let Some(leader) = group.split_leader.as_mut() {
+                    if let Some(v) = pmu::read_values(leader, 2) {
+                        not_complete += v[0];
+                        load_not_complete += v[1];
+                    }
                 }
             }
         }

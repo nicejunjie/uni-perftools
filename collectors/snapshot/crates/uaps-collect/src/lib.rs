@@ -23,14 +23,20 @@ mod proc;
 #[cfg(target_os = "linux")]
 mod raw_pmu;
 #[cfg(target_os = "linux")]
+mod sw;
+#[cfg(target_os = "linux")]
 mod threads;
 #[cfg(target_os = "linux")]
 mod topdown;
 #[cfg(target_os = "linux")]
 pub use {
-    perf::PerfCollector, pmudb::HwpcCollector, proc::ProcCollector, raw_pmu::RawPmuCollector,
-    threads::ThreadCollector, topdown::TopdownCollector,
+    perf::PerfCollector, pmu::set_system_wide, pmudb::HwpcCollector, proc::ProcCollector,
+    raw_pmu::RawPmuCollector, sw::SwCollector, threads::ThreadCollector, topdown::TopdownCollector,
 };
+
+/// Enable node-level (system-wide, per-CPU) HW counting. No-op off Linux.
+#[cfg(not(target_os = "linux"))]
+pub fn set_system_wide(_on: bool) {}
 
 // Compiled on every platform so Linux builds keep it valid, but only used as
 // the public collectors off Linux.
@@ -38,5 +44,5 @@ pub use {
 mod fallback;
 #[cfg(not(target_os = "linux"))]
 pub use fallback::{
-    PerfCollector, ProcCollector, RawPmuCollector, ThreadCollector, TopdownCollector,
+    PerfCollector, ProcCollector, RawPmuCollector, SwCollector, ThreadCollector, TopdownCollector,
 };

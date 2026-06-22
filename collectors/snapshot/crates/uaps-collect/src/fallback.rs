@@ -58,6 +58,10 @@ stub_collector!(
     /// Placeholder for the top-down pipeline-slot collector.
     TopdownCollector => "topdown"
 );
+stub_collector!(
+    /// Placeholder for the kernel software-event collector (ctx switches, faults).
+    SwCollector => "sw"
+);
 
 #[cfg(test)]
 mod tests {

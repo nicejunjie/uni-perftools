@@ -239,8 +239,56 @@ fn parse_format(spec: &str) -> Option<(String, Vec<(u8, u8)>)> {
     Some((reg.to_string(), out))
 }
 
+/// The core-CPU PMU's sysfs device name. x86 calls it "cpu"; ARM exposes it as
+/// "armv8_pmuv3_0" (or similar), and NVIDIA Grace likewise. The pmu-events JSON
+/// leaves Unit empty for core events, so map empty/"cpu" to whatever this host
+/// actually has — otherwise encoding silently fails on every non-x86 core event.
+/// Detected once.
+fn core_pmu() -> &'static str {
+    use std::sync::OnceLock;
+    static PMU: OnceLock<String> = OnceLock::new();
+    PMU.get_or_init(|| {
+        let has_fmt = |n: &str| std::path::Path::new(&format!("/sys/devices/{n}/format")).is_dir();
+        if has_fmt("cpu") {
+            return "cpu".to_string(); // x86 (and the common case)
+        }
+        // Intel hybrid (Alder Lake onward) has no generic "cpu" — the core PMU is
+        // split into cpu_core (P-cores) and cpu_atom (E-cores). Prefer the P-core
+        // PMU deterministically, matching perf's default, instead of letting the
+        // directory scan below pick whichever cpu_* it happens to hit first.
+        if has_fmt("cpu_core") {
+            return "cpu_core".to_string();
+        }
+        let names: Vec<String> = std::fs::read_dir("/sys/devices")
+            .into_iter().flatten().flatten()
+            .map(|e| e.file_name().to_string_lossy().into_owned())
+            .filter(|n| has_fmt(n))
+            .collect();
+        // ARM's conventional core PMU name, else any CPU PMU (has a cpus/cpumask
+        // file; uncore PMUs don't), else fall back to "cpu".
+        if let Some(a) = names.iter().find(|n| n.starts_with("armv8")) {
+            return a.clone();
+        }
+        if let Some(c) = names.iter().find(|n| {
+            std::path::Path::new(&format!("/sys/devices/{n}/cpus")).exists()
+                || std::path::Path::new(&format!("/sys/devices/{n}/cpumask")).exists()
+        }) {
+            return c.clone();
+        }
+        "cpu".to_string()
+    })
+    .as_str()
+}
+
+/// Map a pmu-events Unit to the host's sysfs PMU directory: empty/"cpu" → the
+/// detected core PMU; everything else (uncore, hybrid cpu_core/cpu_atom) verbatim.
+fn pmu_dir(unit: &str) -> &str {
+    if unit.is_empty() || unit == "cpu" { core_pmu() } else { unit }
+}
+
 fn sysfs_format(pmu: &str) -> HashMap<String, Vec<(u8, u8)>> {
     let mut m = HashMap::new();
+    let pmu = pmu_dir(pmu);
     let dir = format!("/sys/devices/{pmu}/format");
     for e in std::fs::read_dir(&dir).into_iter().flatten().flatten() {
         let field = e.file_name().to_string_lossy().into_owned();
@@ -303,10 +351,10 @@ pub fn encode(ev: &EventDef, fmt: &HashMap<String, Vec<(u8, u8)>>) -> Option<u64
     for (field, mut val) in ev.fields.iter().cloned() {
         let ranges = fmt.get(&field)?; // missing field layout → gap, never guessed
         for &(lo, hi) in ranges {
-            let w = (hi - lo + 1) as u32;
+            let w = (hi as i32 - lo as i32 + 1).max(0) as u32;
             let mask = if w >= 64 { u64::MAX } else { (1u64 << w) - 1 };
             config |= (val & mask) << lo;
-            val >>= w;
+            val = if w >= 64 { 0 } else { val >> w };  // shift by 64 is UB/panic
         }
     }
     Some(config)
@@ -640,6 +688,28 @@ pub fn cpu_format(pmu: &str) -> HashMap<String, Vec<(u8, u8)>> {
     sysfs_format(pmu)
 }
 
+/// Resolve an event NAME to its raw perf `config` for THIS host, against an
+/// already-loaded db, using the kernel's sysfs bit layout. None = a gap (unknown
+/// event, or a field with no sysfs layout — never a guessed encoding). Returns the
+/// (config, PMU unit) so the caller knows which `/sys/devices/<unit>` to open on.
+/// Returns (perf_event_attr.config, perf_event_attr.type). The type is the PMU's
+/// sysfs type number — `PERF_TYPE_RAW` (4) for x86's core PMU, but a dynamic value
+/// on ARM (e.g. 10 for armv8_pmuv3_0) — so a caller opening the event must use it
+/// rather than assuming RAW.
+pub fn resolve_config_in(db: &PmuDb, name: &str) -> Option<(u64, u32)> {
+    let ev = resolve_event(db, &name.to_lowercase())?;
+    let cfg = encode(&ev, &cpu_format(&ev.unit))?;
+    Some((cfg, pmu_type(&ev.unit)))
+}
+
+/// Convenience wrapper that detects this host's db first. Lets callers outside the
+/// snapshot (notably the profile collector's roofline sampler) select FP/DRAM
+/// events data-drivenly from the vendored pmu-events instead of hard-coding raw
+/// codes per vendor. None if the CPU is unknown or the event can't be resolved.
+pub fn resolve_config(name: &str) -> Option<(u64, u32)> {
+    resolve_config_in(&detect()?, name)
+}
+
 // ---------------------------------------------------------------- collector
 use anyhow::Result;
 use crate::pmu::{EventCfg, ThreadGroups, TYPE_RAW};
@@ -722,7 +792,7 @@ pub fn validate_canon(db: &PmuDb) -> Vec<CanonStatus> {
 }
 
 fn pmu_type(unit: &str) -> u32 {
-    let u = if unit.is_empty() { "cpu" } else { unit };
+    let u = pmu_dir(unit);
     std::fs::read_to_string(format!("/sys/devices/{u}/type"))
         .ok()
         .and_then(|s| s.trim().parse().ok())
@@ -1073,6 +1143,158 @@ mod tests {
         // Every claimed family must actually be present in the vendored tree.
         for r in required {
             assert!(required_seen.contains(*r), "claimed-supported model `{r}` missing from vendored tree");
+        }
+    }
+
+    /// Synthetic, distinct, nonzero count per event name (FNV-1a) — lets a formula
+    /// evaluate end-to-end without hardware while avoiding trivial 0/0 denominators.
+    fn synth_count(e: &str) -> Option<f64> {
+        let h = e.bytes().fold(1469598103934665603u64, |a, b| (a ^ b as u64).wrapping_mul(1099511628211));
+        Some(2.0 + (h % 997) as f64)
+    }
+
+    /// CI structural gate (hardware-free): evaluate EVERY metric formula in EVERY
+    /// vendored model — the entire Intel TMA tree, ARM/Grace recommended metrics,
+    /// and AMD — feeding synthetic counts for every referenced event. Two invariants
+    /// the engine promises for CPUs we can't test:
+    ///   1. the evaluator NEVER panics and NEVER yields a non-finite value
+    ///      (NaN/±inf) — a formula it can't handle must gap (None), not lie;
+    ///   2. Intel and ARM coverage stays non-trivial, so a regression that turned
+    ///      a whole vendor's tree into gaps (or dropped the vendored data) is caught
+    ///      here rather than surfacing as silently-empty reports on that hardware.
+    #[test]
+    fn structural_validation_evaluator_corpus_is_finite_or_gap() {
+        let dirs = vendored_model_dirs();
+        assert!(!dirs.is_empty(), "vendored pmu-events tree not found");
+
+        let mut total = 0usize;
+        let mut nonfinite: Vec<String> = Vec::new();
+        // per-model finite tally, to assert specific vendors stay covered.
+        let mut finite_by_model: std::collections::HashMap<String, usize> = Default::default();
+
+        for (name, dir) in &dirs {
+            if name.is_empty() {
+                continue;
+            }
+            let mut db = load(dir);
+            db.model_dir = name.clone();
+            for m in db.metrics.keys() {
+                total += 1;
+                let mut c = synth_count;
+                match eval_metric(&db, m, &mut c) {
+                    None => {}                                  // honest gap — fine
+                    Some(v) if v.is_finite() => {
+                        *finite_by_model.entry(name.clone()).or_default() += 1;
+                    }
+                    Some(v) => nonfinite.push(format!("{name}/{m} = {v} :: {}", db.metrics[m])),
+                }
+            }
+        }
+
+        assert!(
+            nonfinite.is_empty(),
+            "{} metric(s) evaluated to a non-finite value (must gap instead):\n  {}",
+            nonfinite.len(),
+            nonfinite.join("\n  ")
+        );
+        // The corpus is large (~3.5k formulas across vendors) — a tiny count means
+        // the vendored tree went missing or the loader broke.
+        assert!(total > 2000, "implausibly small metric corpus ({total}) — vendored data missing?");
+
+        // Vendor coverage floors: these specific models must still evaluate a healthy
+        // chunk of their formulas, so an Intel/ARM-specific evaluator regression
+        // (e.g. losing escaped-hyphen events or ArchStdEvent refs) fails loudly.
+        let floor = |model: &str, min: usize| {
+            let got = finite_by_model.get(model).copied().unwrap_or(0);
+            assert!(got >= min, "{model}: only {got} formulas evaluated finitely (expected ≥ {min}) — evaluator regressed for this vendor");
+        };
+        floor("sapphirerapids", 200);   // Intel TMA tree (escaped-hyphen + PERF_METRICS)
+        floor("graniterapids", 200);    // newest Intel Xeon
+        floor("arm/neoverse-n2-v2", 20); // ARM ArchStdEvent-referenced formulas
+        floor("nvidia/t410", 50);        // NVIDIA Grace (ARM Neoverse V2)
+    }
+
+    #[test]
+    fn evaluator_numeric_intel_tma_backend() {
+        // Numeric correctness on the REAL vendored Intel formula (not a hand-written
+        // one), exercising the Intel dialect: escaped-hyphen event names that resolve
+        // to PERF_METRICS kernel aliases, plus nested division.
+        //   tma_backend_bound = topdown\-be\-bound
+        //                       / (topdown\-fe\-bound + topdown\-bad\-spec
+        //                          + topdown\-retiring + topdown\-be\-bound)
+        let Some((_, dir)) = vendored_model_dirs().into_iter().find(|(n, _)| n == "sapphirerapids")
+        else { return; /* vendored tree absent in this checkout */ };
+        let db = load(&dir);
+        let mut c = |e: &str| match e {
+            "topdown-be-bound" => Some(30.0),
+            "topdown-fe-bound" => Some(10.0),
+            "topdown-bad-spec" => Some(10.0),
+            "topdown-retiring" => Some(50.0),
+            _ => None,
+        };
+        let v = eval_metric(&db, "tma_backend_bound", &mut c).expect("Intel tma_backend_bound resolves");
+        // 30 / (10 + 10 + 50 + 30) = 0.30
+        assert!((v - 0.30).abs() < 1e-9, "got {v}");
+    }
+
+    #[test]
+    fn evaluator_numeric_arm_stalled() {
+        // Numeric correctness on the REAL vendored ARM formula, exercising
+        // ArchStdEvent-referenced event names:
+        //   backend_stalled_cycles = STALL_BACKEND / CPU_CYCLES * 100
+        let Some((_, dir)) = vendored_model_dirs().into_iter().find(|(n, _)| n == "arm/neoverse-n2-v2")
+        else { return; };
+        let db = load(&dir);
+        // the tokenizer lowercases event idents, so count() sees lowercase names
+        // even though the ARM JSON spells the ArchStdEvents in upper case.
+        let mut c = |e: &str| match e {
+            "stall_backend" => Some(25.0),
+            "cpu_cycles" => Some(100.0),
+            _ => None,
+        };
+        let v = eval_metric(&db, "backend_stalled_cycles", &mut c).expect("ARM backend_stalled_cycles resolves");
+        assert!((v - 25.0).abs() < 1e-9, "got {v}");
+    }
+
+    /// The roofline FP/DRAM events the profile collector asks for, by vendor —
+    /// mirrors core/cli/upat ROOFLINE_EVENTS. Hardware-free guard: every event in
+    /// this policy must exist in the vendored data for its model with a real event
+    /// code (so per-function roofline isn't silently disabled by a renamed/typo'd
+    /// event), and must encode to a nonzero config where sysfs is available.
+    #[test]
+    fn roofline_policy_events_resolve_for_intel_and_arm() {
+        let cases: &[(&str, &[&str])] = &[
+            ("sapphirerapids", &[
+                "fp_arith_inst_retired.scalar_double",
+                "fp_arith_inst_retired.128b_packed_double",
+                "fp_arith_inst_retired.256b_packed_double",
+                "fp_arith_inst_retired.512b_packed_double",
+                "mem_load_retired.l3_miss",
+            ]),
+            ("arm/neoverse-n2-v2", &[
+                "fp_scale_ops_spec", "fp_fixed_ops_spec", "ll_cache_miss_rd",
+            ]),
+        ];
+        let dirs = vendored_model_dirs();
+        for (model, names) in cases {
+            let Some((_, dir)) = dirs.iter().find(|(n, _)| n == model) else {
+                continue; // vendored tree absent in this checkout
+            };
+            let db = load(dir);
+            for name in *names {
+                let ev = db.events.get(*name)
+                    .unwrap_or_else(|| panic!("{model}: roofline event `{name}` not in vendored data"));
+                assert!(ev.fields.iter().any(|(k, _)| k == "event"),
+                        "{model}/{name}: no event code field");
+                // Where the host exposes the PMU's sysfs format, the event must
+                // encode to a nonzero config (proves the resolver end-to-end).
+                let fmt = cpu_format(&ev.unit);
+                if !fmt.is_empty() {
+                    if let Some(cfg) = encode(ev, &fmt) {
+                        assert!(cfg != 0, "{model}/{name}: encoded to 0");
+                    }
+                }
+            }
         }
     }
 

@@ -16,12 +16,56 @@ use std::collections::HashSet;
 use std::fs::File;
 use std::io::Read;
 use std::os::fd::{AsRawFd, FromRawFd};
+use std::sync::atomic::{AtomicBool, Ordering};
 
 use perf_event_open_sys as sys;
 
 /// perf_event ABI event types (stable kernel constants).
 pub const TYPE_HARDWARE: u32 = 0; // PERF_TYPE_HARDWARE
+pub const TYPE_SOFTWARE: u32 = 1; // PERF_TYPE_SOFTWARE (kernel counters: ctx-switch, faults)
+pub const TYPE_HW_CACHE: u32 = 3; // PERF_TYPE_HW_CACHE (portable cache/TLB encoding)
 pub const TYPE_RAW: u32 = 4; // PERF_TYPE_RAW (CPU-specific raw encoding)
+
+/// Counting scope. Off (default) = per-thread of the target process. On =
+/// node-level: one group per online CPU (pid=-1), summed over CPUs — this counts
+/// EVERY process on the node, so an `mpirun` launch is measured via its ranks (not
+/// the idle launcher), matching Intel APS's per-node metrics and `perf stat -a`.
+/// Requires `perf_event_paranoid <= 0` (or CAP_PERFMON); otherwise groups fail to
+/// open and the affected metrics are reported as gaps.
+static SYSTEM_WIDE: AtomicBool = AtomicBool::new(false);
+
+pub fn set_system_wide(on: bool) {
+    SYSTEM_WIDE.store(on, Ordering::Relaxed);
+}
+pub fn system_wide() -> bool {
+    SYSTEM_WIDE.load(Ordering::Relaxed)
+}
+
+/// Online CPU ids from /sys/devices/system/cpu/online ("0-31" / "0,2-4"), else 0..nproc.
+pub fn online_cpus() -> Vec<i32> {
+    if let Ok(s) = std::fs::read_to_string("/sys/devices/system/cpu/online") {
+        let mut v = Vec::new();
+        for part in s.trim().split(',') {
+            match part.split_once('-') {
+                Some((a, b)) => {
+                    if let (Ok(a), Ok(b)) = (a.parse::<i32>(), b.parse::<i32>()) {
+                        v.extend(a..=b);
+                    }
+                }
+                None => {
+                    if let Ok(a) = part.parse::<i32>() {
+                        v.push(a);
+                    }
+                }
+            }
+        }
+        if !v.is_empty() {
+            return v;
+        }
+    }
+    let n = unsafe { libc::sysconf(libc::_SC_NPROCESSORS_ONLN) }.max(1) as i32;
+    (0..n).collect()
+}
 
 /// One event: its perf type and config (HW enum value or raw encoding).
 #[derive(Clone, Copy)]
@@ -32,7 +76,7 @@ pub struct EventCfg {
 
 /// Open a single perf event on thread `tid`. `group_fd` = -1 for a leader,
 /// or the leader's fd for a member. Returns an owned File (auto-closes).
-pub fn open_event(etype: u32, config: u64, tid: libc::pid_t, group_fd: i32, leader: bool) -> Option<File> {
+pub fn open_event(etype: u32, config: u64, pid: libc::pid_t, cpu: i32, group_fd: i32, leader: bool) -> Option<File> {
     let mut attr: sys::bindings::perf_event_attr = unsafe { std::mem::zeroed() };
     attr.type_ = etype;
     attr.size = std::mem::size_of::<sys::bindings::perf_event_attr>() as u32;
@@ -44,8 +88,9 @@ pub fn open_event(etype: u32, config: u64, tid: libc::pid_t, group_fd: i32, lead
             | sys::bindings::PERF_FORMAT_TOTAL_TIME_RUNNING
             | sys::bindings::PERF_FORMAT_GROUP) as u64;
     }
-    // SAFETY: attr is initialised; cpu = -1 (any), group_fd links to leader.
-    let fd = unsafe { sys::perf_event_open(&mut attr, tid, -1, group_fd, 0) };
+    // SAFETY: attr is initialised; (pid,cpu) selects the scope — (tid,-1) per-thread
+    // or (-1,cpu) system-wide; group_fd links members to their leader.
+    let fd = unsafe { sys::perf_event_open(&mut attr, pid, cpu, group_fd, 0) };
     if fd < 0 {
         None
     } else {
@@ -75,13 +120,13 @@ struct Group {
     _members: Vec<File>,
 }
 
-fn open_group(spec: &[EventCfg], tid: libc::pid_t) -> Option<Group> {
+fn open_group(spec: &[EventCfg], pid: libc::pid_t, cpu: i32) -> Option<Group> {
     let first = spec.first()?;
-    let leader = open_event(first.etype, first.config, tid, -1, true)?;
+    let leader = open_event(first.etype, first.config, pid, cpu, -1, true)?;
     let lfd = leader.as_raw_fd();
     let mut members = Vec::new();
     for ev in &spec[1..] {
-        members.push(open_event(ev.etype, ev.config, tid, lfd, false)?);
+        members.push(open_event(ev.etype, ev.config, pid, cpu, lfd, false)?);
     }
     // SAFETY: enabling the leader with the GROUP flag starts the group atomically.
     unsafe {
@@ -117,9 +162,21 @@ impl ThreadGroups {
         self.scan();
     }
 
-    /// Discover new threads and open all groups on each.
+    /// Discover new counting scopes and open all groups on each. Per-thread by
+    /// default (one set per `/proc/<pid>/task` thread); system-wide opens one set
+    /// per online CPU (pid=-1) — CPUs are static, so this runs once.
     pub fn scan(&mut self) {
         if !self.configured() {
+            return;
+        }
+        if system_wide() {
+            for cpu in online_cpus() {
+                if !self.seen.insert(cpu) {
+                    continue;
+                }
+                let opened = self.groups.iter().map(|spec| open_group(spec, -1, cpu)).collect();
+                self.threads.push(opened);
+            }
             return;
         }
         let dir = format!("/proc/{}/task", self.pid);
@@ -131,7 +188,7 @@ impl ThreadGroups {
             if !self.seen.insert(tid) {
                 continue;
             }
-            let opened = self.groups.iter().map(|spec| open_group(spec, tid)).collect();
+            let opened = self.groups.iter().map(|spec| open_group(spec, tid, -1)).collect();
             self.threads.push(opened);
         }
     }

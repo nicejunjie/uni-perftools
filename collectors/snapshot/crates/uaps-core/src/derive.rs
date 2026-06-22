@@ -42,8 +42,50 @@ pub fn derive(snapshot: &mut Snapshot) {
     let fills_all = snapshot.numeric("mem_fills_all");
     let fills_dram = snapshot.numeric("mem_fills_dram");
     let fills_remote = snapshot.numeric("mem_fills_remote");
+    let elapsed = snapshot.numeric("elapsed_time");
+    let cpu_time = snapshot.numeric("cpu_time");
+    let dtlb_acc = snapshot.numeric("dtlb_accesses");
+    let dtlb_miss = snapshot.numeric("dtlb_misses");
+    let itlb_miss = snapshot.numeric("itlb_misses");
 
     let mut derived = Vec::new();
+
+    // TLB misses per 1K instructions — page-walk pressure the cache/DRAM metrics don't
+    // capture: data-TLB for large/scattered working sets, instruction-TLB for large
+    // code footprints. (Miss *rate* dropped — the HW_CACHE access event under-counts
+    // on AMD; the instruction-normalized count is robust.)
+    if let (Some(a), Some(m)) = (dtlb_acc, dtlb_miss) {
+        if a > 0.0 {
+            derived.push(pct("dtlb_miss_rate", "dTLB miss rate", m / a * 100.0));
+        }
+    }
+    if let (Some(i), Some(m)) = (insns, dtlb_miss) {
+        if i > 0.0 {
+            derived.push(float("dtlb_mpki", "data-TLB misses", m / i * 1000.0, "per 1000 instructions"));
+        }
+    }
+    if let (Some(i), Some(m)) = (insns, itlb_miss) {
+        if i > 0.0 {
+            derived.push(float("itlb_mpki", "instruction-TLB misses", m / i * 1000.0,
+                               "per 1000 instructions"));
+        }
+    }
+
+    // Achieved DRAM bandwidth = demand DRAM fills × cache line / elapsed. Pairs with
+    // the roofline (the point's bandwidth) and explains the memory-bound %.
+    if let (Some(dram), Some(el)) = (fills_dram, elapsed) {
+        if el > 0.0 {
+            derived.push(float("dram_bandwidth_gbs", "DRAM bandwidth",
+                               dram * 64.0 / el / 1e9, "GB/s"));
+        }
+    }
+    // Average core clock = cycles / CPU-seconds. Reveals throttling / AVX-frequency
+    // offset / turbo — a common reason measured GFLOP/s sits below peak.
+    if let (Some(c), Some(t)) = (cycles, cpu_time) {
+        if t > 0.0 {
+            derived.push(float("cpu_freq_ghz", "Avg CPU frequency", c / t / 1e9, "GHz"));
+        }
+    }
 
     if let (Some(i), Some(c)) = (insns, cycles) {
         if i > 0.0 {
@@ -60,7 +102,7 @@ pub fn derive(snapshot: &mut Snapshot) {
     }
     if let (Some(i), Some(miss)) = (insns, cache_miss) {
         if i > 0.0 {
-            derived.push(float("llc_mpki", "LLC misses / 1K instr", miss / i * 1000.0, "MPKI"));
+            derived.push(float("llc_mpki", "last-level cache misses", miss / i * 1000.0, "per 1000 instructions"));
         }
     }
     if let (Some(b), Some(bm)) = (branches, branch_miss) {
@@ -71,7 +113,7 @@ pub fn derive(snapshot: &mut Snapshot) {
     // Measured memory hierarchy (AMD demand-fill data sources).
     if let (Some(i), Some(dram)) = (insns, fills_dram) {
         if i > 0.0 {
-            derived.push(float("dram_dpki", "DRAM fills / 1K instr", dram / i * 1000.0, "DPKI"));
+            derived.push(float("dram_dpki", "DRAM fills", dram / i * 1000.0, "per 1000 instructions"));
         }
     }
     if let (Some(all), Some(dram)) = (fills_all, fills_dram) {

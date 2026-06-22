@@ -4,6 +4,7 @@
 pub enum Vendor {
     Amd,
     Intel,
+    Arm,
     Other,
 }
 
@@ -31,8 +32,10 @@ pub fn detect() -> CpuInfo {
             }
             "cpu family" => info.family = val.trim().parse().unwrap_or(0),
             "model" => info.model = val.trim().parse().unwrap_or(0),
-            // Stop at the end of the first processor's block.
-            "" if info.family != 0 => break,
+            // arm64 cpuinfo has no vendor_id/cpu family — identify by implementer.
+            "CPU implementer" if info.vendor == Vendor::Other => info.vendor = Vendor::Arm,
+            // Stop at the end of the first processor's block (vendor identified).
+            "" if info.vendor != Vendor::Other => break,
             _ => {}
         }
     }
