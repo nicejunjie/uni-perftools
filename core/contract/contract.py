@@ -51,7 +51,7 @@ CATEGORY = {
     "FFTW": "math-libs",
     "MPI": "MPI",
     "IO": "IO",
-    "USER": "compute", "ETC": "system",
+    "USER": "compute", "WAIT": "idle", "ETC": "system",
 }
 
 

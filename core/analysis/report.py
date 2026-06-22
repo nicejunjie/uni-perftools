@@ -1,8 +1,11 @@
-"""Suite analysis brain: render a result directory as one combined report.
+"""Suite analysis brain: render a result directory as a single-tier report.
 
-Snapshot section (bird's-eye, from snap.json) then profile section (drill-down,
-delegated to the profile collector's reporter over prof.*.json). This is the one
-place suite reporting lives; the collectors only emit data.
+uaps and upat are independent cost tiers; a report covers exactly one of them —
+either the snapshot bird's-eye (from snap.json) or the deep profile (from
+prof.*.json, delegated to the profile collector's reporter). There is no combined
+report. The shared Environment header (run/machine/software/measurement) appears
+in both, but the analysis never mixes tiers. This is the one place suite reporting
+lives; the collectors only emit data.
 """
 import os
 import sys
@@ -12,9 +15,11 @@ import subprocess
 _HERE = os.path.dirname(os.path.abspath(__file__))
 _ROOT = os.path.dirname(os.path.dirname(_HERE))           # repo root
 sys.path.insert(0, os.path.join(_ROOT, "core", "contract"))
+sys.path.insert(0, os.path.join(_ROOT, "core", "roofline"))
 import contract   # noqa: E402
 import insights   # noqa: E402
 import viewpoints  # noqa: E402
+import roofline    # noqa: E402
 
 VIEWS = {
     "roofline":  lambda snap, prof, out: viewpoints.roofline_view(snap, prof, out),
@@ -26,6 +31,8 @@ VIEWS = {
     "mpi-summary": lambda snap, prof, out: viewpoints.mpi_summary_view(snap, prof, out),
     "vectorization": lambda snap, prof, out: viewpoints.vectorization_view(snap, prof, out),
     "roofline-func": lambda snap, prof, out: viewpoints.roofline_func_view(prof, out),
+    "mpi-snapshot": lambda snap, prof, out: viewpoints.mpi_snapshot_view(snap, out),
+    "scheduling": lambda snap, prof, out: viewpoints.scheduling_view(snap, out),
 }
 VIEW_ORDER = ["roofline", "roofline-func", "microarch", "memory", "vectorization",
               "threading", "mpi", "imbalance", "anomaly"]
@@ -43,11 +50,13 @@ def _profile_json(profs):
     except Exception:
         return None
 
-# roofline + characterization keys worth surfacing, in order
+# roofline + characterization keys worth surfacing, in order.
+# NOTE: keys must match what the snapshot collector actually emits (see snap.json):
+# it produces `gflops` and `topdown_*_pct`, not dp/sp_gflops or retiring/backend_pct.
 SNAP_KEYS = ["elapsed_time", "cpu_core_pct", "ipc", "cpi",
-             "dp_gflops", "sp_gflops", "arith_intensity", "peak_gflops", "peak_bw_gbs",
-             "memory_bound", "dram_bound_pct", "numa_remote_pct", "vectorization_pct",
-             "retiring_pct", "backend_bound_pct", "peak_rss", "disk_read", "disk_write"]
+             "gflops", "memory_bound", "dram_bound_pct", "numa_remote_pct",
+             "topdown_retiring_pct", "topdown_backend_pct", "peak_rss",
+             "disk_read", "disk_write"]
 
 
 def _load(path):
@@ -58,7 +67,8 @@ def _load(path):
 
 
 # which viewpoints belong to which collector's report
-UAPS_VIEWS = ["roofline", "microarch", "memory", "vectorization", "threading"]
+UAPS_VIEWS = ["roofline", "microarch", "memory", "vectorization", "mpi-snapshot",
+              "scheduling", "threading"]
 UPAT_VIEWS = ["roofline-func", "mpi-summary", "mpi", "imbalance", "anomaly"]
 
 UAPS_BANNER = ["─" * 78,
@@ -80,38 +90,78 @@ def _run_view(v, snap, profile, result_dir, out):
 
 
 def _render_snapshot(snap, out):
+    """Headline Performance section + a dedicated I/O section, one metric per line.
+    Detailed top-down/cache/DRAM/vec live in their own ══ sections. Snapshot's own
+    insights[] are omitted — the unified engine supplies them."""
     m = {x["key"]: x for x in snap.get("metrics", [])}
-    # NOTE: snapshot's own insights[] are intentionally not shown here — the
-    # unified suite insights engine (below) replaces them.
-    # roofline line if the collector provided the pieces
-    if "arith_intensity" in m and "dp_gflops" in m:
-        out.append("  roofline: AI %s, achieved %s (peak %s, BW %s)" % (
-            m["arith_intensity"]["display"], m["dp_gflops"]["display"],
-            m.get("peak_gflops", {}).get("display", "?"),
-            m.get("peak_bw_gbs", {}).get("display", "?")))
-    cells = ["%s %s" % (m[k]["label"], m[k]["display"]) for k in SNAP_KEYS if k in m]
-    for i in range(0, len(cells), 2):
-        out.append("    " + "   |   ".join(cells[i:i + 2]))
+
+    def disp(k):
+        return m[k]["display"] if k in m else None
+
+    def val(k):
+        return m.get(k, {}).get("value")
+
+    pk = roofline.peaks() or {}
+    out.append("\n══ Performance ══")
+    if disp("elapsed_time"):
+        out.append("    %-26s %s" % ("Elapsed time", disp("elapsed_time")))
+    if disp("gflops"):
+        peak, g = roofline.peak_compute(pk, "dp"), val("gflops")
+        extra = " (%.0f%% of FP64 peak)" % (g / peak * 100.0) if (peak and g) else ""
+        out.append("    %-26s %s%s" % ("FP throughput", disp("gflops"), extra))
+    if disp("cpu_freq_ghz"):
+        out.append("    %-26s %s" % ("Avg CPU frequency", disp("cpu_freq_ghz")))
+    if disp("cpu_core_pct"):
+        cu = val("cpu_cores_used")
+        extra = " (%.1f cores busy)" % cu if cu else ""
+        out.append("    %-26s %s%s" % ("Physical core utilization", disp("cpu_core_pct"), extra))
+    if disp("ipc"):
+        out.append("    %-26s %s" % ("IPC (instructions/cycle)", disp("ipc")))
+    if disp("cpi"):
+        out.append("    %-26s %s" % ("CPI (cycles/instruction)", disp("cpi")))
+    if "peak_rss" in m:        # memory footprint (a resource metric, not a cache/access one)
+        out.append("    %-26s %s" % (m["peak_rss"]["label"], disp("peak_rss")))
+
+    io = [(lbl, disp(k)) for k, lbl in
+          [("disk_read", "disk read"), ("disk_write", "disk write"),
+           ("io_read", "logical read"), ("io_write", "logical write")] if disp(k)]
+    if io:
+        out.append("\n══ I/O ══")
+        for lbl, v in io:
+            out.append("    %-26s %s" % (lbl, v))
 
 
-def render(result_dir, fmt="text", view="all", collector="both", detail=None, threshold=0.1):
+def render(result_dir, fmt="text", view="all", collector="upat", detail=None, threshold=0.1):
+    # Use the calibration captured when this run was collected (its own host's
+    # ceilings), not whatever is in the per-build cache.
+    roofline.use_result(result_dir)
     manifest = _load(os.path.join(result_dir, contract.MANIFEST)) or {}
     snap = _load(os.path.join(result_dir, contract.SNAP))
     profs = contract.prof_glob(result_dir)
     profile = _profile_json(profs)
 
+    # uaps and upat are independent cost tiers — a report covers exactly ONE of
+    # them, never both. The active tier owns the analysis (insights + sections);
+    # the other tier's data is NOT folded in. (The Environment header is shared
+    # run/machine/software *metadata*, so both reports describe the full system.)
+    a_snap = snap if collector == "uaps" else None
+    a_profile = profile if collector == "upat" else None
+
     if fmt == "json":
-        suite = insights.suite_insights(snap, profile)
-        json.dump({"schema_version": contract.SCHEMA_VERSION, "manifest": manifest,
-                   "snapshot": snap, "profile": profile, "insights": suite},
-                  sys.stdout, indent=2)
+        suite = insights.suite_insights(a_snap, a_profile)
+        payload = {"schema_version": contract.SCHEMA_VERSION, "manifest": manifest,
+                   "insights": suite}
+        payload["snapshot" if collector == "uaps" else "profile"] = \
+            snap if collector == "uaps" else profile
+        json.dump(payload, sys.stdout, indent=2)
         print()
         return
 
     if fmt == "html":
         import htmlrep
-        suite = insights.suite_insights(snap, profile)
-        print(htmlrep.build(result_dir, manifest, snap, profile, suite, detail=detail, threshold=threshold))
+        suite = insights.suite_insights(a_snap, a_profile)
+        print(htmlrep.build(result_dir, manifest, snap, profile, suite, detail=detail,
+                            threshold=threshold, collector=collector))
         return
 
     # focused per-facility detail (a UPAT post-recording analysis)
@@ -136,42 +186,38 @@ def render(result_dir, fmt="text", view="all", collector="both", detail=None, th
                             "--threshold", str(threshold)] + profs)
         return
 
-    suite = insights.suite_insights(snap, profile)
-    # snapshot section only when snap.json is actually present (e.g. a uaps run
-    # into the same dir); otherwise this is a pure upat (deep-tier) report.
-    do_uaps = collector in ("both", "uaps") and snap is not None
-    do_upat = collector in ("both", "upat")
+    do_uaps = collector == "uaps"
+    suite = insights.suite_insights(a_snap, a_profile)
 
-    head = []
-    if collector == "both":
-        head += ["=" * 78,
-                 "                        Universal Performance Tools",
-                 "=" * 78]
-    if manifest.get("command"):
-        head.append(" command: %s" % " ".join(manifest["command"]))
+    # Shared header: the tier's own banner, the full Environment (run/machine/
+    # software/measurement — shared metadata), then tier-scoped insights. The
+    # profiler additionally leads with where wall time went (a sampling product).
+    head = list(UAPS_BANNER if do_uaps else UPAT_BANNER)
+    viewpoints.environment_view(result_dir, manifest, snap, profile, head, collector=collector)
     head.append("\n── INSIGHTS " + "─" * 66)
     for s in suite:
         head.append("  ▶ " + s)
+    if not do_uaps:
+        viewpoints.time_breakdown_view(profile, head)
     print("\n".join(head))
 
+    out = [""]
     if do_uaps:
-        out = ["", ""] + UAPS_BANNER
         if snap:
             _render_snapshot(snap, out)
         else:
             out.append("  (no snapshot — hardware counters unavailable or not collected)")
-        for v in UAPS_VIEWS:
-            _run_view(v, snap, profile, result_dir, out)
+        for v in UAPS_VIEWS:                       # snapshot analysis only (a_profile=None)
+            _run_view(v, snap, None, result_dir, out)
         print("\n".join(out))
+        return
 
-    if do_upat:
-        out = ["", ""] + UPAT_BANNER
-        for v in UPAT_VIEWS:
-            _run_view(v, snap, profile, result_dir, out)
-        print("\n".join(out))
-        if profs:
-            sys.stdout.flush()   # our banner precedes the subprocess tables
-            subprocess.run([sys.executable, PROFILE_REPORT, "--no-observations",
-                            "--no-header", "--threshold", str(threshold)] + profs)
-        else:
-            print("\n(no profile data)")
+    for v in UPAT_VIEWS:                           # deep-profile analysis only (a_snap=None)
+        _run_view(v, None, profile, result_dir, out)
+    print("\n".join(out))
+    if profs:
+        sys.stdout.flush()                         # our banner precedes the subprocess tables
+        subprocess.run([sys.executable, PROFILE_REPORT, "--no-observations",
+                        "--no-header", "--threshold", str(threshold)] + profs)
+    else:
+        print("\n(no profile data)")

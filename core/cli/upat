@@ -25,8 +25,10 @@ HERE = os.path.dirname(os.path.abspath(__file__))
 ROOT = os.path.dirname(os.path.dirname(HERE))             # repo root
 sys.path.insert(0, os.path.join(ROOT, "core", "contract"))
 sys.path.insert(0, os.path.join(ROOT, "core", "analysis"))
+sys.path.insert(0, os.path.join(ROOT, "core", "roofline"))
 import contract       # noqa: E402
 import report         # noqa: E402
+import roofline       # noqa: E402
 
 
 def find(env, cands):
@@ -42,6 +44,90 @@ def profile_lib(dbi):
     return find("PROFILE_LIB", [os.path.join(
         ROOT, "collectors", "profile",
         "libupat-%s.so" % ("frida" if dbi else "preload"))])
+
+
+# Per-function roofline needs two semantic quantities — FLOPs and DRAM bytes —
+# attributed to a sampled PC. The *events* that carry them differ by vendor, but
+# their codes all live in perf's vendored pmu-events db, so we resolve them
+# data-drivenly (via `uaps resolve-events`) instead of hard-coding. Each entry is
+# (event_name, weight): weight = flops/op for FP (Intel splits FP by width, so the
+# umasks weight 1/2/4/8), bytes/sample for the DRAM-access event (a cache line).
+# ARM FP events are speculative-counted (a known accuracy caveat, not a gap).
+ROOFLINE_EVENTS = {
+    "amd": ([("fp_ret_sse_avx_ops.all", 1.0)],
+            [("ls_dmnd_fills_from_sys.dram_io_all", 64.0)]),
+    "intel": ([("FP_ARITH_INST_RETIRED.SCALAR_DOUBLE", 1.0),
+               ("FP_ARITH_INST_RETIRED.128B_PACKED_DOUBLE", 2.0),
+               ("FP_ARITH_INST_RETIRED.256B_PACKED_DOUBLE", 4.0),
+               ("FP_ARITH_INST_RETIRED.512B_PACKED_DOUBLE", 8.0)],
+              [("MEM_LOAD_RETIRED.L3_MISS", 64.0)]),
+    "arm": ([("FP_SCALE_OPS_SPEC", 1.0), ("FP_FIXED_OPS_SPEC", 1.0)],
+            [("LL_CACHE_MISS_RD", 64.0)]),
+}
+
+
+def _cpu_vendor():
+    """'amd' | 'intel' | 'arm' from /proc/cpuinfo, else None."""
+    try:
+        info = open("/proc/cpuinfo").read()
+    except OSError:
+        return None
+    if "AuthenticAMD" in info:
+        return "amd"
+    if "GenuineIntel" in info:
+        return "intel"
+    if "CPU implementer" in info:   # arm64 cpuinfo has no vendor_id
+        return "arm"
+    return None
+
+
+def find_uaps():
+    return find("UAPS", [os.path.join(ROOT, "collectors", "snapshot", "target", c, "uaps")
+                         for c in ("release", "debug")])
+
+
+def roofline_spec():
+    """Resolve this host's roofline FP/DRAM events to a UPAT_ROOFLINE_SPEC string
+    (`role,config,period,scale;...`) via the uaps pmu-events resolver. Returns None
+    if the vendor/events/resolver are unavailable — the C sampler then falls back to
+    its built-in AMD codes (or stays off on non-AMD), so behaviour degrades, never
+    breaks."""
+    vendor = _cpu_vendor()
+    uaps = find_uaps()
+    if not vendor or vendor not in ROOFLINE_EVENTS or not uaps:
+        return None
+    fp_list, mem_list = ROOFLINE_EVENTS[vendor]
+    fp_p = os.environ.get("UPAT_ROOFLINE_FP_PERIOD", "1000000")
+    mem_p = os.environ.get("UPAT_ROOFLINE_MEM_PERIOD", "10000")
+    names = [n for n, _ in fp_list] + [n for n, _ in mem_list]
+    try:
+        out = subprocess.run([uaps, "resolve-events", *names],
+                             capture_output=True, text=True, timeout=30)
+    except (OSError, subprocess.SubprocessError):
+        return None
+    cfg = {}
+    for line in out.stdout.splitlines():
+        if "=" in line:
+            k, v = line.split("=", 1)
+            cfg[k] = v.strip()        # "0xCONFIG:TYPE" or "GAP"
+    def conf(name):
+        v = cfg.get(name, "GAP")
+        if v == "GAP" or ":" not in v:
+            return None
+        config, _, ty = v.partition(":")   # type = perf_event_attr.type
+        return ty, config
+    # spec channel: role,type,config,period,scale
+    chans = []
+    for name, w in fp_list:
+        cv = conf(name)
+        if cv:
+            chans.append("fp,%s,%s,%s,%g" % (cv[0], cv[1], fp_p, w))
+    for name, w in mem_list:
+        cv = conf(name)
+        if cv:
+            chans.append("mem,%s,%s,%s,%g" % (cv[0], cv[1], mem_p, w))
+    # need at least one FP channel for a meaningful roofline
+    return ";".join(chans) if any(ch.startswith("fp,") for ch in chans) else None
 
 
 def scoped(cmd, env_vars):
@@ -71,10 +157,18 @@ def do_collect(args):
     if args.heap:
         env_vars["UPAT_HEAP"] = "1"
     if getattr(args, "roofline", False):
-        # characterize pass: FP-op + DRAM-fill event sampling for per-function roofline
+        # characterize pass: FP + DRAM-access event sampling for per-function roofline
         env_vars["UPAT_ROOFLINE"] = "1"
         env_vars["UPAT_SAMPLE"] = "1"
         env_vars["UPAT_SAMPLE_STACK"] = "1"
+        # Resolve the vendor's FP/DRAM events from pmu-events (cross-platform);
+        # the C sampler falls back to built-in AMD codes if we can't.
+        spec = roofline_spec()
+        if spec:
+            env_vars["UPAT_ROOFLINE_SPEC"] = spec
+        else:
+            sys.stderr.write("[upat] roofline: no resolved event spec for this host"
+                             " — using sampler's built-in fallback (AMD only)\n")
 
     # profile only — upat injects via LD_PRELOAD. The snapshot tier is the
     # separate `uaps` command; run it on its own (cost tiers, not combined).
@@ -86,6 +180,14 @@ def do_collect(args):
 
     sys.stderr.write("[upat] collecting: %s\n" % " ".join(args.cmd))
     rc = subprocess.run(full).returncode
+
+    # Recalibrate the roofline ceilings on THIS host and store them with the run,
+    # so the report reflects the machine the workload ran on (not a stale build
+    # cache that may have been calibrated on a different CPU).
+    try:
+        roofline.calibrate_into(result)
+    except Exception:
+        pass
     return result, rc
 
 
@@ -115,8 +217,9 @@ def main():
     rp.add_argument("--view", default="all", choices=VIEWS)
     rp.add_argument("--threshold", type=float, default=0.1,
                     help="hide functions below this %% of runtime (default 0.1; 0 = show all)")
-    rp.add_argument("--collector", default="both", choices=["both", "uaps", "upat"],
-                    help="render only one collector's report")
+    rp.add_argument("--collector", default=None, choices=["uaps", "upat"],
+                    help="which cost tier to report (default: auto — upat if a profile is "
+                         "present, else the uaps snapshot; the tiers are never combined)")
     rp.add_argument("--detail", choices=["blas", "lapack", "fftw", "mpi", "io"],
                     help="per-facility detail analysis (per-shape calls / MPI comm matrix)")
     rp.add_argument("-o", "--outdir",
@@ -151,10 +254,15 @@ def main():
         result = args.result or contract.latest_result()
         if not result:
             sys.exit("upat: no result dir given and none found")
+        # No combined report: pick the single tier to render. Explicit --collector
+        # wins; otherwise auto — a deep profile if one was recorded, else the snapshot.
+        coll = args.collector or ("upat" if contract.prof_glob(result) else "uaps")
+        args.collector = coll
         if args.outdir and args.format in ("text", "html"):
             os.makedirs(args.outdir, exist_ok=True)
             ext = "html" if args.format == "html" else "txt"
-            name = "report.%s.%s" % (args.detail, ext) if args.detail else "report.%s" % ext
+            name = ("detail.%s.%s" % (args.detail, ext) if args.detail
+                    else "%s.%s" % (coll, ext))
             path = os.path.join(args.outdir, name)
             # redirect fd 1 (not just sys.stdout) so the upat-report subprocess
             # output lands in the file too

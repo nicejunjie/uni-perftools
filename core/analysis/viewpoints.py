@@ -14,9 +14,70 @@ import contract   # noqa: E402
 import roofline   # noqa: E402
 
 
+# Plain-language definitions for the jargon/acronyms the reports use — surfaced as
+# `#` comment lines in the text report and as mouse-over tooltips in HTML (Intel
+# APS style). Shared by viewpoints (text) and htmlrep (HTML) so the two never drift.
+GLOSSARY = {
+    "retiring": "pipeline slots doing useful work — instructions that completed and committed",
+    "frontend-bound": "slots stalled fetching/decoding instructions (instruction-cache, branch, decode)",
+    "backend-bound": "slots stalled in execution — waiting on data from cache/DRAM or on busy execution units",
+    "bad speculation": "slots wasted on instructions from mispredicted branches (work later thrown away)",
+    "SMT contention": "slots lost to the sibling hyperthread sharing this physical core (SMT = simultaneous multithreading)",
+    "branch mispredict": "fraction of branches predicted wrong — the main cause of 'bad speculation' slots",
+    "DRAM bandwidth": "rate of data moved to/from main memory (DRAM = dynamic RAM, the off-chip main memory)",
+    "cache-miss rate": "fraction of last-level-cache accesses that missed and had to go to DRAM",
+    "last-level cache misses": "LLC (last-level cache) misses per 1000 instructions — the largest/slowest on-die cache before DRAM",
+    "data-TLB misses": "data TLB misses per 1000 instructions (TLB = translation-lookaside buffer; a miss triggers a page-table walk)",
+    "instruction-TLB misses": "instruction TLB misses per 1000 instructions — page-walk pressure from a large code footprint",
+    "DRAM fills": "demand cache-line fills from DRAM per 1000 instructions",
+    "DRAM-bound": "share of demand cache fills that came from DRAM (vs. a closer cache)",
+    "NUMA remote access": "share of memory accesses served by another socket's memory (NUMA = non-uniform memory access; remote is slower)",
+    "memory-bound (slots)": "estimated share of pipeline slots stalled waiting on the memory hierarchy",
+    "MPI time": "time in MPI calls (MPI = Message-Passing Interface, the inter-rank communication library)",
+    "MPI imbalance": "(max-avg)/max of per-rank MPI time — the recoverable fraction if ranks were balanced",
+    "FP efficiency": "achieved floating-point throughput vs. the CPU's vector (SIMD) peak — low means scalar/under-vectorized code",
+    # short labels used in the HTML cards/tables and the roofline
+    "IPC": "instructions per cycle — retired instructions ÷ cycles (higher = more throughput)",
+    "CPI": "cycles per instruction — cycles ÷ retired instructions (lower = cheaper instructions)",
+    "GFLOP/s": "billions of floating-point operations per second",
+    "core util": "physical-core utilization — busy cores ÷ available cores",
+    "peak RSS": "peak resident set size — the most physical memory the run held at once",
+    "AI": "arithmetic intensity — FLOPs performed per byte read from DRAM (FLOP/byte)",
+}
+
+# Short display labels (HTML/roofline) that mean the same as a glossary key above.
+_GLOSS_ALIASES = {
+    "cache-miss": "cache-miss rate", "NUMA remote": "NUMA remote access",
+    "mem-bound": "memory-bound (slots)", "frontend": "frontend-bound",
+    "backend": "backend-bound", "DRAM bandwidth ": "DRAM bandwidth",
+}
+
+
+def define(term):
+    """Plain-language definition for a label, following short-label aliases. Returns
+    None if the term isn't in the glossary (so callers can skip the tooltip)."""
+    return GLOSSARY.get(term) or GLOSSARY.get(_GLOSS_ALIASES.get(term, ""))
+
+
+def _gloss(out, *terms):
+    """Append `# term — definition` comment lines for any known terms (Intel-APS
+    style). Unknown terms are silently skipped so callers can pass labels freely."""
+    for t in terms:
+        d = GLOSSARY.get(t)
+        if d:
+            out.append("    # %s — %s" % (t, d))
+
+
 def _rule(header):
     """A horizontal divider matching a 4-space-indented table header's width."""
     return "    " + "─" * (len(header) - 4)
+
+
+def _cpu(profile):
+    """time% denominator: total CPU time (thread-seconds) so a function's share is
+    bounded 0-100% and comparable to Samp%. Falls back to wall runtime if absent."""
+    p = profile or {}
+    return p.get("cpu_time_s") or p.get("runtime_s", 0.0) or 0.0
 
 
 def _load_json(path):
@@ -38,6 +99,243 @@ def _disp(snap, key):
         if x.get("key") == key:
             return x.get("display")
     return None
+
+
+# ----------------------------------------------------- environment / run info
+import glob as _glob          # noqa: E402
+import platform as _plat      # noqa: E402
+import socket as _socket      # noqa: E402
+import subprocess as _sp      # noqa: E402
+import datetime as _dt        # noqa: E402
+
+# Loaded sci-lib sonames carry their version (libfftw3.so.3.7.11, libmpi.so.40.40.7,
+# libopenblasp-r0.3.33.so) — label -> substring to match in the basename.
+_KNOWN_LIBS = [("OpenBLAS", "libopenblas"), ("BLIS", "libblis"), ("MKL", "libmkl_rt"),
+               ("MKL", "libmkl_core"), ("ATLAS", "libatlas"), ("ESSL", "libessl"),
+               ("NVPL", "libnvpl"), ("LAPACK", "liblapack"), ("ScaLAPACK", "libscalapack"),
+               ("FFTW", "libfftw3"), ("Open MPI", "libmpi.so"), ("MPICH", "libmpich"),
+               ("Intel MPI", "libmpi_intel")]
+
+
+def _read(path):
+    try:
+        return open(path).read()
+    except OSError:
+        return ""
+
+
+def _human_bytes(n):
+    n = float(n)
+    for u in ("B", "KiB", "MiB", "GiB", "TiB"):
+        if n < 1024 or u == "TiB":
+            return ("%.0f %s" % (n, u)) if u == "B" else ("%.1f %s" % (n, u))
+        n /= 1024.0
+
+
+def _cores_sockets():
+    """(physical cores, sockets) from /proc/cpuinfo."""
+    cores, socks, cur = set(), set(), {}
+    for line in _read("/proc/cpuinfo").splitlines():
+        if ":" in line:
+            k, v = line.split(":", 1)
+            cur[k.strip()] = v.strip()
+        elif "physical id" in cur and "core id" in cur:
+            cores.add((cur["physical id"], cur["core id"]))
+            socks.add(cur["physical id"])
+            cur = {}
+    if "physical id" in cur and "core id" in cur:
+        cores.add((cur["physical id"], cur["core id"]))
+        socks.add(cur["physical id"])
+    return (len(cores) or os.cpu_count() or 1), (len(socks) or 1)
+
+
+def _os_pretty():
+    for line in _read("/etc/os-release").splitlines():
+        if line.startswith("PRETTY_NAME="):
+            return line.split("=", 1)[1].strip().strip('"')
+    return _plat.system()
+
+
+def _cpu_uarch():
+    """Microarchitecture + codename from /proc/cpuinfo CPUID (x86 family/model or
+    ARM implementer/part), e.g. 'Zen 5 (Granite Ridge)', 'Sapphire Rapids',
+    'Neoverse V2 (Grace)'. None if unrecognized."""
+    info = {}
+    for line in _read("/proc/cpuinfo").splitlines():
+        if ":" in line:
+            k, v = line.split(":", 1)
+            info.setdefault(k.strip(), v.strip())
+    vendor = info.get("vendor_id", "")
+    try:
+        fam = int(info.get("cpu family", "0"))
+        mod = int(info.get("model", "0"))
+    except ValueError:
+        fam = mod = 0
+    if vendor == "AuthenticAMD":
+        if fam == 0x1A:  # Zen 5
+            return ("Zen 5 (Turin)" if mod <= 0x1F else
+                    "Zen 5 (Granite Ridge)" if 0x40 <= mod <= 0x4F else
+                    "Zen 5 (Strix Point)" if 0x20 <= mod <= 0x2F else "Zen 5")
+        if fam == 0x19:  # Zen 3 / Zen 4
+            return ("Zen 3 (Milan)" if mod <= 0x0F else
+                    "Zen 4 (Genoa)" if 0x10 <= mod <= 0x1F else
+                    "Zen 3 (Vermeer)" if 0x20 <= mod <= 0x2F else
+                    "Zen 3 (Cezanne)" if 0x50 <= mod <= 0x5F else
+                    "Zen 4 (Raphael)" if 0x60 <= mod <= 0x6F else
+                    "Zen 4 (Phoenix)" if 0x70 <= mod <= 0x7F else
+                    "Zen 4c (Bergamo/Siena)" if 0xA0 <= mod <= 0xAF else "Zen 3 / Zen 4")
+        if fam == 0x17:  # Zen / Zen+ / Zen 2
+            return ("Zen (Naples)" if mod <= 0x0F else
+                    "Zen 2 (Rome)" if 0x30 <= mod <= 0x3F else
+                    "Zen 2 (Matisse/Renoir)" if 0x60 <= mod <= 0x7F else "Zen / Zen 2")
+    if vendor == "GenuineIntel" and fam == 6:
+        return {0x4F: "Broadwell-EP", 0x56: "Broadwell-DE",
+                0x55: "Skylake / Cascade / Cooper Lake-SP",
+                0x6A: "Ice Lake-SP", 0x6C: "Ice Lake-D",
+                0x8F: "Sapphire Rapids", 0xCF: "Emerald Rapids",
+                0xAD: "Granite Rapids", 0xAF: "Sierra Forest",
+                0x57: "Knights Landing", 0x85: "Knights Mill"}.get(mod)
+    # ARM: identified by implementer + part (hex), independent of vendor_id.
+    try:
+        part = int(info.get("CPU part", "0"), 16)
+    except ValueError:
+        part = 0
+    return {0xd0c: "Neoverse N1", 0xd40: "Neoverse V1", 0xd49: "Neoverse N2",
+            0xd4f: "Neoverse V2 (Grace / Graviton4)", 0xd83: "Neoverse V3",
+            0xd8e: "Neoverse N3"}.get(part)
+
+
+def _compiler_of(app):
+    """Compiler string(s) from the app binary's ELF .comment section (best-effort)."""
+    if not app or not os.path.exists(app):
+        return None
+    try:
+        r = _sp.run(["readelf", "-p", ".comment", app], capture_output=True, text=True, timeout=10)
+    except (OSError, _sp.SubprocessError):
+        return None
+    out = []
+    for line in r.stdout.splitlines():
+        i = line.find("]")
+        s = line[i + 1:].strip() if i != -1 else ""
+        if s and any(k in s for k in ("GCC", "clang", "Intel", "ifort", "ifx", "nvc", "AOCC", "Flang")):
+            out.append(s)
+    return " | ".join(dict.fromkeys(out)) if out else None
+
+
+def environment_view(result_dir, manifest, snap, profile, out, collector=None):
+    """APS-style header as grouped ══ sections (Run / Machine / Software /
+    Measurement), one fact per line."""
+    for title, items in environment_rows(result_dir, manifest, snap, profile, collector):
+        if not items:
+            continue
+        out.append("\n══ %s ══" % title)
+        for k, v in items:
+            out.append("    %-14s %s" % (k, v))
+
+
+def environment_rows(result_dir, manifest, snap, profile, collector=None):
+    """Run/environment metadata grouped into sections: [(title, [(label, value), …]), …]
+    — Run (app/command/ranks/threads/time), Machine (CPU/cores/SMT/memory/host),
+    Software (OS/kernel/libraries+versions/compiler), Measurement (HWPC scope/paranoid/
+    sampling). Shared by the text and HTML reports.
+
+    `collector` ("uaps" | "upat" | None) scopes the two tier-specific bits: the
+    *timing* (snap and profile may be separate runs, so a upat report takes its
+    elapsed/CPU from the profile and a uaps report from the snapshot) and the
+    *Measurement* block (HWPC scope for the snapshot vs statistical sampling Hz for
+    the profiler). Machine and Software are shared, run-independent metadata."""
+    profs = sorted(_glob.glob(os.path.join(result_dir, "prof.*.json")))
+    raw = next((d for d in (_load_json(p) for p in profs) if d), None)
+    manifest = manifest or {}
+    app_path = (raw or {}).get("application") or (manifest.get("command") or [""])[0]
+    app = os.path.basename(app_path) if app_path else "?"
+    cmd = " ".join(manifest.get("command", []))
+    nranks = (profile or {}).get("nranks") or len(profs) or 1
+    nthr = int((raw or {}).get("nthreads") or _m(snap, "max_threads") or 1)
+    # Timing is per-run: snap and profile can be separate runs (the suite collects
+    # each tier independently), so a upat report reports the profile's own wall/CPU
+    # time and a uaps report the snapshot's — never one tier's timing on the other's.
+    if collector == "upat":
+        elapsed = (profile or {}).get("runtime_s") or _m(snap, "elapsed_time")
+        ct = (profile or {}).get("cpu_time_s")           # per-rank avg
+        cputime = ct * nranks if ct else None            # -> total job CPU
+    else:
+        elapsed = _m(snap, "elapsed_time") or (profile or {}).get("runtime_s")
+        cputime = _m(snap, "cpu_time")
+        if not cputime:
+            ct = (profile or {}).get("cpu_time_s")
+            cputime = ct * nranks if ct else None
+    mtimes = [os.path.getmtime(p) for p in (profs + [os.path.join(result_dir, contract.SNAP)])
+              if os.path.exists(p)]
+    date = _dt.datetime.fromtimestamp(max(mtimes)).strftime("%Y-%m-%d %H:%M") if mtimes else ""
+
+    # Grouped into dedicated sections; one fact per line (easy to grep).
+    run = [("application", app)]
+    if cmd:
+        run.append(("command", cmd))
+    run.append(("ranks", str(nranks)))
+    run.append(("threads/rank", str(nthr)))
+    if elapsed:
+        run.append(("elapsed", "%.1f s" % elapsed))
+    if cputime:
+        run.append(("CPU time", "%.0f s" % cputime))
+    if date:
+        run.append(("date", date))
+
+    # CPU brand string: empirical peaks first. ARM has no /proc/cpuinfo "model
+    # name" line (so the empirical brand is empty) — prefer the microarch name
+    # (e.g. "Neoverse V2 (Grace …)") over the bare "aarch64" from platform.
+    cpu = ((roofline.peaks() or {}).get("cpu") or _cpu_uarch()
+           or _plat.processor() or "?")
+    cores, socks = _cores_sockets()
+    smt = _read("/sys/devices/system/cpu/smt/active").strip()
+    memkb = next((int(l.split()[1]) for l in _read("/proc/meminfo").splitlines()
+                  if l.startswith("MemTotal:")), 0)
+    machine = [("CPU", cpu)]
+    uarch = _cpu_uarch()
+    if uarch:
+        machine.append(("microarch", uarch))
+    machine.append(("cores", "%d socket%s × %d physical (%d logical)"
+                    % (socks, "" if socks == 1 else "s", cores, os.cpu_count() or cores)))
+    if smt in ("0", "1"):
+        machine.append(("SMT", "on" if smt == "1" else "off"))
+    if memkb:
+        machine.append(("memory", _human_bytes(memkb * 1024)))
+    machine.append(("host", _socket.gethostname()))
+
+    software = [("OS", _os_pretty()), ("kernel", _plat.release())]
+    libs = {}
+    for m in (raw or {}).get("sampling", {}).get("maps", []):
+        b = os.path.basename(m.get("path", "")).lower()
+        for label, key in _KNOWN_LIBS:
+            if key in b and label not in libs:
+                libs[label] = os.path.basename(m.get("path", ""))
+    software += list(libs.items())           # one library per line
+    cc = _compiler_of(app_path)
+    if cc:
+        software.append(("compiler", cc))
+
+    # How the data was gathered — genuinely tier-specific: the snapshot reads HW
+    # counters (node-wide or per-process), the profiler statistically samples call
+    # stacks at a fixed rate. Show each tier only its own collection method.
+    measurement = []
+    par = _read("/proc/sys/kernel/perf_event_paranoid").strip()
+    hz = (raw or {}).get("sampling", {}).get("hz")
+    if collector == "upat":
+        if hz:
+            measurement.append(("method", "statistical call-stack sampling"))
+            measurement.append(("sampling", "%d Hz" % hz))
+        if par:
+            measurement.append(("paranoid", par))
+    else:
+        measurement.append(("method", "hardware performance counters"))
+        measurement.append(("HWPC scope",
+                            "node-level (system-wide)" if _m(snap, "system_wide") else "per-process"))
+        if par:
+            measurement.append(("paranoid", par))
+
+    return [("Run", run), ("Machine", machine), ("Software", software),
+            ("Measurement", measurement)]
 
 
 # ----------------------------------------------------------------- roofline
@@ -70,8 +368,12 @@ def roofline_view(snap, profile, out):
         return
     c = roofline.classify(points[0]["ai"], points[0]["gflops"], pk, "dp")
     if c:
-        out.append("    whole program is %s-bound at %.0f%% of the DP ceiling." % (c[2], c[1]))
-    out.append("    (per-function roofline → future profile two-pass: survey hotspots, then characterize)")
+        if c[2] == "latency":
+            out.append("    whole program sits at %.0f%% of the DP ceiling — far below the "
+                       "roofline: latency/overhead/idle-bound, not compute- or bandwidth-bound."
+                       % c[1])
+        else:
+            out.append("    whole program is %s-bound at %.0f%% of the DP ceiling." % (c[2], c[1]))
 
 
 # ------------------------------------------------ per-function roofline (B)
@@ -86,28 +388,48 @@ def roofline_func_view(profile, out):
     if not rf:
         return
     pk = roofline.peaks()
-    fp_p, mem_p = rf.get("fp_period", 0), rf.get("mem_period", 0)
-    bpf, hz = rf.get("bytes_per_fill", 64), rf.get("hz", 0)
+    hz = rf.get("hz", 0)
     rows = []
     for fn, e in rf.get("functions", {}).items():
-        self_s, fp, mem = e.get("self", 0), e.get("fp", 0), e.get("mem", 0)
-        if self_s < 2 and fp < 4:               # below the noise floor
+        # flops/bytes are already period- and width-weighted in postprocess
+        # (Intel's 4 FP_ARITH umasks summed at 1/2/4/8; AMD/ARM single events).
+        self_s, fp_samp = e.get("self", 0), e.get("fp_samp", 0)
+        flops, byts = e.get("flops", 0.0), e.get("bytes", 0.0)
+        if self_s < 2 and fp_samp < 4:          # below the noise floor
             continue
         t = self_s / hz if hz else 0.0
         if t <= 0:
             continue
-        flops = fp * fp_p
-        byts = mem * mem_p * bpf
         gflops = flops / t / 1e9
         ai = (flops / byts) if byts > 0 else None
         rows.append((self_s, fn, e.get("group", "ETC"), t, gflops, ai))
     if not rows:
         return
     rows.sort(reverse=True)                       # by exclusive time = the hotspots
+    # time% denominator = total roofline-sampler samples (over *all* sampled
+    # functions, not just those above the noise floor) so the column is the
+    # sampler's own Samp% — bounded 0-100% and summing to 100%. (Using CPU/wall
+    # seconds here breaks for blocking syscalls: their wall/thread-summed self-time
+    # exceeds CPU time and the % runs past 100%.)
+    total_self = sum(e.get("self", 0) for e in rf.get("functions", {}).values()) or 1
     out.append("\n══ Roofline (per function — measured, event-based sampling) ══")
-    out.append("  flops = FP-op samples x period (ops-based proxy); bytes = DRAM-fill samples x line.")
-    hdr = ("    %-26s %8s %7s %9s %9s %7s  bound"
-           % ("function", "self(s)", "AI", "GFLOP/s", "ceiling", "%peak"))
+    out.append("  flops = FP-event samples x period x width; bytes = DRAM-access samples x line.")
+    # Log-log roofline plot of the hottest functions that have measurable DRAM
+    # traffic (finite AI); each is a lettered point matching the table below.
+    # Compute-bound / cache-resident functions (AI=inf) can't be placed on the
+    # AI axis, so they appear only in the table.
+    pts = [{"label": fn, "ai": ai, "gflops": gflops, "prec": "dp"}
+           for self_s, fn, grp, t, gflops, ai in rows
+           if ai is not None and gflops > 0][:8]
+    plot = roofline.ascii_plot(pts, pk) if pts else []
+    if plot:
+        out.append("")
+        out.extend(plot)
+        out.append("")
+    # mark each plotted function with its plot letter in the table
+    letter = {p["label"]: chr(ord("A") + i) for i, p in enumerate(pts)} if len(pts) > 1 else {}
+    hdr = ("    %1s %-24s %7s %7s %6s %9s %6s  bound"
+           % ("", "function", "self(s)", "time%", "AI", "GFLOP/s", "%peak"))
     out.append(hdr)
     out.append(_rule(hdr))
     for self_s, fn, grp, t, gflops, ai in rows[:12]:
@@ -118,8 +440,9 @@ def roofline_func_view(profile, out):
         ais = "%.1f" % ai if ai is not None else "  inf"
         if ai is None:
             bound = "compute"
-        out.append("    %-26s %8.3f %7s %9.1f %9.0f %6.0f%%  %s"
-                   % (fn[:26], t, ais, gflops, ceil, pct, bound))
+        tp = 100.0 * self_s / total_self
+        out.append("    %1s %-24s %7.3f %6.1f%% %6s %9.1f %5.0f%%  %s"
+                   % (letter.get(fn, ""), fn[:24], t, tp, ais, gflops, pct, bound))
     out.append(_rule(hdr))
     out.append("    (AI=inf → no DRAM traffic sampled = cache-resident/compute-bound; precision assumed DP)")
 
@@ -138,21 +461,109 @@ def microarch_view(snap, out):
         v = _m(snap, k)
         if v is not None:
             out.append("    %-18s %5.1f%%" % (lbl, v))
-    for k in ("ipc", "cpi"):
-        if _disp(snap, k):
-            out.append("    %-18s %s" % (k.upper(), _disp(snap, k)))
+    # SMT contention = the slots unaccounted by the four buckets (the sibling thread
+    # took them). Only meaningful with SMT on; NA otherwise (then the four sum ~100%).
+    four = [_m(snap, k) for k in ("topdown_retiring_pct", "topdown_frontend_pct",
+                                  "topdown_backend_pct", "topdown_badspec_pct")]
+    if all(v is not None for v in four):
+        if _m(snap, "smt_active"):
+            out.append("    %-18s %5.1f%%" % ("SMT contention", max(0.0, 100.0 - sum(four))))
+            out.append("      (retiring + frontend + backend + bad-spec + SMT = 100% of slots)")
+        else:
+            out.append("    %-18s %5s" % ("SMT contention", "NA"))
+    # branch mispredict is NOT part of the slot partition above — it's a rate over
+    # branches and the main *cause* of the 'bad speculation' slots. Shown separately.
+    bm = _disp(snap, "branch_mispredict_rate")
+    if bm is not None:
+        out.append("    %-18s %s   (of branches — main cause of bad speculation)"
+                   % ("branch mispredict", bm))
+    _gloss(out, "retiring", "frontend-bound", "backend-bound", "bad speculation",
+           "SMT contention", "branch mispredict")
 
 
 def memory_view(snap, out):
     if not snap:
         return
     out.append("\n══ Memory access ══")
-    for k, lbl in [("cache_miss_rate", "cache-miss rate"), ("llc_mpki", "LLC MPKI"),
-                   ("dram_dpki", "DRAM fills / 1K-instr"), ("dram_bound_pct", "DRAM-bound"),
-                   ("numa_remote_pct", "NUMA remote access"), ("memory_bound", "memory-bound (slots)"),
-                   ("peak_rss", "peak RSS")]:
+    bw = _m(snap, "dram_bandwidth_gbs")
+    if bw is not None:
+        peak_bw = (roofline.peaks() or {}).get("peak_bw_gbs")
+        s = "%.1f GB/s" % bw + (" (%.0f%% of peak)" % (bw / peak_bw * 100.0) if peak_bw else "")
+        out.append("    %-22s %s" % ("DRAM bandwidth", s))
+    # NB: dTLB *rate* is dropped — the generic HW_CACHE DTLB access event under-counts
+    # on AMD, so misses/access is unreliable; the instruction-normalized MPKI is robust.
+    for k, lbl in [("cache_miss_rate", "cache-miss rate"), ("llc_mpki", "last-level cache misses"),
+                   ("dtlb_mpki", "data-TLB misses"), ("itlb_mpki", "instruction-TLB misses"),
+                   ("dram_dpki", "DRAM fills"), ("dram_bound_pct", "DRAM-bound"),
+                   ("numa_remote_pct", "NUMA remote access"), ("memory_bound", "memory-bound (slots)")]:
         if _disp(snap, k) is not None:
-            out.append("    %-22s %s" % (lbl, _disp(snap, k)))
+            out.append("    %-24s %s" % (lbl, _disp(snap, k)))
+    _gloss(out, "DRAM bandwidth", "cache-miss rate", "last-level cache misses",
+           "data-TLB misses", "instruction-TLB misses", "NUMA remote access",
+           "memory-bound (slots)")
+
+
+def mpi_snapshot_view(snap, out):
+    """APS-style MPI bird's-eye from the snapshot's own PMPI-shim metrics (present
+    when the run was MPI): total MPI time, % of runtime, imbalance, ranks, and the
+    top calls by time. (The profile collector's MPI section is more detailed; this
+    is the snapshot's at-a-glance view.)"""
+    if _m(snap, "mpi_time") is None:
+        return
+    out.append("\n══ MPI ══")
+    for k, lbl in [("mpi_time", "MPI time"), ("mpi_time_pct", "MPI % of runtime"),
+                   ("mpi_imbalance_pct", "MPI imbalance"), ("mpi_ranks", "ranks")]:
+        if _disp(snap, k) is not None:
+            out.append("    %-24s %s" % (lbl, _disp(snap, k)))
+    tops = [(x.get("label", "").strip(), x.get("display", ""))
+            for k in ("mpi_top1", "mpi_top2", "mpi_top3", "mpi_top4", "mpi_top5")
+            for x in (snap or {}).get("metrics", []) if x.get("key") == k]
+    if tops:
+        out.append("    top calls (time):")
+        for name, t in tops:
+            out.append("      %-34s %s" % (name, t))
+    _gloss(out, "MPI time", "MPI imbalance")
+
+
+def time_breakdown_view(profile, out):
+    """Where wall time goes, from the sampling dominant-group attribution (each
+    sample charged to the highest-priority group on its stack). A quick 'is this
+    MPI-, compute-, or idle-bound' read, as a horizontal bar."""
+    groups = (profile or {}).get("groups") or {}
+    total = (profile or {}).get("group_total") or 0
+    if not groups or total <= 0:
+        return
+    cat = {"MPI": "MPI", "IO": "I/O", "USER": "user code",
+           "WAIT": "idle/wait", "ETC": "system/other",
+           "BLAS": "math-libs", "LAPACK": "math-libs", "PBLAS": "math-libs",
+           "ScaLAPACK": "math-libs", "CBLAS": "math-libs", "LAPACKe": "math-libs", "FFTW": "math-libs"}
+    agg = {}
+    for g, n in groups.items():
+        c = cat.get(g, "other / wait")
+        agg[c] = agg.get(c, 0) + n
+    out.append("\n══ Time breakdown (sampled, by dominant group) ══")
+    for c, n in sorted(agg.items(), key=lambda x: -x[1]):
+        pc = 100.0 * n / total
+        out.append("    %-14s %5.1f%%  %s" % (c, pc, "█" * int(round(pc / 100.0 * 40))))
+
+
+def scheduling_view(snap, out):
+    """Kernel software counters: context switches, CPU migrations, page faults —
+    scheduling pressure / oversubscription / memory-pressure signals."""
+    if _m(snap, "ctx_switches") is None and _m(snap, "page_faults") is None:
+        return
+    el = _m(snap, "elapsed_time") or 0.0
+    out.append("\n══ Scheduling / OS ══")
+    cs = _m(snap, "ctx_switches")
+    if cs is not None:
+        rate = "   (%.0f/s)" % (cs / el) if el else ""
+        out.append("    %-22s %d%s" % ("context switches", int(cs), rate))
+    for k, lbl, note in [("cpu_migrations", "CPU migrations", ""),
+                         ("page_faults", "page faults", ""),
+                         ("page_faults_maj", "major page faults", "   (disk-backed)")]:
+        v = _m(snap, k)
+        if v is not None:
+            out.append("    %-22s %d%s" % (lbl, int(v), note))
 
 
 # ----------------------------------------------------------- load imbalance
@@ -166,17 +577,22 @@ def imbalance_view(profile, out):
         imb = f.get("imb_excl", 0.0)
         t = f.get("t_excl", 0.0)
         if t > 0.005 and imb >= 5:
-            recoverable = t * imb / 100.0   # ~ time the slow rank could shed
+            # recoverable = what the slow rank could shed = max - avg. With
+            # imb = (max-avg)/max and t = avg, this is t*(imb/100)/(1-imb/100).
+            frac = min(imb, 99.0) / 100.0
+            recoverable = t * frac / (1.0 - frac)   # ~ time the slow rank could shed
             rows.append((recoverable, imb, t, f.get("name", ""), f.get("group", "")))
     if not rows:
         return
+    runtime = _cpu(profile)
     rows.sort(reverse=True)
     out.append("\n══ Load imbalance (across %d ranks, ranked by recoverable time) ══" % nr)
-    hdr = "    %-24s %6s %10s %12s" % ("function", "imb%", "avg excl(s)", "recover(s)")
+    hdr = "    %-24s %6s %7s %11s %11s" % ("function", "imb%", "time%", "avg excl(s)", "recover(s)")
     out.append(hdr)
     out.append(_rule(hdr))
     for rec, imb, t, name, grp in rows[:10]:
-        out.append("    %-24s %5.0f%% %10.4f %12.4f" % (name[:24], imb, t, rec))
+        tp = 100.0 * t / runtime if runtime else 0.0
+        out.append("    %-24s %5.0f%% %6.1f%% %11.4f %11.4f" % (name[:24], imb, tp, t, rec))
     out.append(_rule(hdr))
 
 
@@ -239,6 +655,8 @@ def mpi_view(profile, out):
     if not fns:
         return
     nr = (profile or {}).get("nranks", 1)
+    if nr < 2:                                 # MPI wait-state is a multi-rank concern;
+        return                                 # for a single rank these calls are no-ops
     rows, wait_t, xfer_t = [], 0.0, 0.0
     for f in fns:
         t = f.get("t_excl", 0.0)
@@ -256,14 +674,16 @@ def mpi_view(profile, out):
     out.append("    synchronization/wait %6.4fs (%2.0f%%) | transfer/initiation %6.4fs (%2.0f%%)"
                % (wait_t, wait_t / total * 100, xfer_t, xfer_t / total * 100))
     # imb% is a cross-rank metric — omit it for a single-rank run (always 0%).
+    runtime = _cpu(profile)
     imb_col = nr >= 2
-    hdr = ("    %-22s %10s %7s %6s" % ("call", "excl(s)", "class", "imb%")) if imb_col \
-        else ("    %-22s %10s %7s" % ("call", "excl(s)", "class"))
+    hdr = ("    %-20s %7s %10s %7s %6s" % ("call", "time%", "excl(s)", "class", "imb%")) if imb_col \
+        else ("    %-20s %7s %10s %7s" % ("call", "time%", "excl(s)", "class"))
     out.append(hdr)
     out.append(_rule(hdr))
     for t, cls, name, imb in rows[:10]:
-        out.append(("    %-22s %10.5f %7s %5.0f%%" % (name[:22], t, cls, imb)) if imb_col
-                   else ("    %-22s %10.5f %7s" % (name[:22], t, cls)))
+        tp = 100.0 * t / runtime if runtime else 0.0
+        out.append(("    %-20s %6.1f%% %10.5f %7s %5.0f%%" % (name[:20], tp, t, cls, imb)) if imb_col
+                   else ("    %-20s %6.1f%% %10.5f %7s" % (name[:20], tp, t, cls)))
     out.append(_rule(hdr))
     # late-sender / load-imbalance signal: wait dominates AND a wait call is imbalanced
     wait_imb = max((imb for t, cls, name, imb in rows if cls == "wait"), default=0.0)
@@ -399,6 +819,7 @@ def vectorization_view(snap, profile, out):
         return
     out.append("\n══ Vectorization ══")
     out.extend(lines)
+    _gloss(out, "FP efficiency")
     # candidates: hottest non-library compute kernels (library SIMD is the lib's job)
     fns = (profile or {}).get("functions", [])
     cand = sorted((f for f in fns if f.get("group") in ("USER", "ETC")
@@ -414,14 +835,23 @@ def vectorization_view(snap, profile, out):
 def threading_view(snap, out):
     if not snap:
         return
-    cores = _m(snap, "cpu_cores_used")
+    # At node scope the thread count / imbalance are the launcher's, not the ranks',
+    # so per-process "parallel efficiency" is meaningless (and would read >100%).
+    # Node CPU utilization is already reported in the snapshot/microarch sections.
+    if _m(snap, "system_wide"):
+        return
     threads = _m(snap, "max_threads")
-    timb = _m(snap, "thread_imbalance_pct")
     if not threads or threads < 2:
         return
+    cores = _m(snap, "cpu_cores_used")
+    active = _m(snap, "active_threads")
+    timb = _m(snap, "thread_imbalance_pct")
     out.append("\n══ Threading ══")
+    out.append("    %-22s %d" % ("threads (peak)", int(threads)))
+    if active is not None:
+        out.append("    %-22s %d of %d" % ("active threads", int(active), int(threads)))
     if cores is not None:
-        out.append("    threads %d | avg cores used %.2f | parallel efficiency %.0f%%"
-                   % (threads, cores, (cores / threads * 100.0) if threads else 0))
+        out.append("    %-22s %.2f" % ("avg cores used", cores))
+        out.append("    %-22s %.0f%%" % ("parallel efficiency", cores / threads * 100.0))
     if timb is not None:
-        out.append("    thread imbalance %.0f%%  ((max-avg)/max of per-thread time)" % timb)
+        out.append("    %-22s %.0f%%  ((max-avg)/max of per-thread time)" % ("thread imbalance", timb))

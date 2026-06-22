@@ -51,6 +51,10 @@ def suite_insights(snap, profile):
     mem = _snap(metrics, "memory_bound")
     vec = _snap(metrics, "vectorization_pct")
     numa = _snap(metrics, "numa_remote_pct")
+    core_pct = _snap(metrics, "cpu_core_pct")
+    cores_used = _snap(metrics, "cpu_cores_used")
+    threads = _snap(metrics, "max_threads")
+    ipc = _snap(metrics, "ipc")
     mpi_f = catfrac.get("MPI", 0.0)
     io_f = catfrac.get("IO", 0.0)
     lib_f = catfrac.get("math-libs", 0.0)
@@ -86,6 +90,27 @@ def suite_insights(snap, profile):
     if numa is not None and numa >= 10:
         out.append("NUMA remote access %.0f%% — bind threads/memory (first-touch / numactl)." % numa)
 
+    # Oversubscription / idle parallelism: many threads but few cores kept busy means
+    # workers spin idle (OpenMP) rather than doing work — it surfaces as do_spin /
+    # futex / poll dominating the sampling profile and buries the real hotspots.
+    oversub = False
+    if threads and cores_used and threads >= 2:
+        par_eff = cores_used / threads * 100.0
+        if par_eff < 50 and (threads - cores_used) >= 2:
+            oversub = True
+            out.append("Parallel efficiency ~%.0f%%: %d threads but only %.1f cores busy on "
+                       "average — likely oversubscribed or idle OpenMP spin (do_spin/futex). "
+                       "Match the thread count to the work you have, or widen the parallel "
+                       "regions." % (par_eff, int(threads), cores_used))
+
+    # Pipeline mostly stalled (low IPC) with no library/MPI/I-O hotspot to blame: the
+    # cores are waiting (memory latency or synchronization), not computing.
+    if not oversub and ipc is not None and ipc < 0.5 and lib_f < 0.3 \
+            and mpi_f < 0.2 and io_f < 0.15:
+        out.append("Low IPC %.2f (CPI %.1f) with no dominant library/MPI/I-O hotspot — the "
+                   "pipeline is stalled (memory latency or synchronization), not "
+                   "compute-throughput-bound." % (ipc, (1.0 / ipc) if ipc else 0.0))
+
     if worst_imb is not None and worst_imb.get("imb_excl", 0) >= 30 and \
             worst_imb.get("group") != "MPI":
         out.append("%s is %.0f%% load-imbalanced across ranks — uneven work distribution."
@@ -98,5 +123,10 @@ def suite_insights(snap, profile):
                    % (lib_f * 100, top["name"], eff))
 
     if not out:
-        out.append("No dominant bottleneck detected; the run looks reasonably balanced and efficient.")
+        if core_pct is not None and core_pct < 50:
+            out.append("CPU utilization is low (%.0f%% of cores) with no single dominant "
+                       "hotspot — the run is latency- or idle-bound; look at thread activity "
+                       "and synchronization rather than per-function tuning." % core_pct)
+        else:
+            out.append("No dominant bottleneck detected; the run looks reasonably balanced and efficient.")
     return out
