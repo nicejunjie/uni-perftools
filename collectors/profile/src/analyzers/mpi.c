@@ -21,6 +21,13 @@ static int type_size(void *datatype)
     static int resolved;
     if (!resolved) { fn = (type_size_fn)dlsym(RTLD_DEFAULT, "PMPI_Type_size"); resolved = 1; }
     int sz = 0;
+    /* Defensive guard mirroring the Fortran type_size_f path: under MPI_IN_PLACE
+     * the send count/type slots are undefined and the "datatype" handle may be a
+     * bogus value (MPI_DATATYPE_NULL / garbage). Passing it to PMPI_Type_size can
+     * trip OpenMPI's FATAL error handler and abort the app. A NULL handle is the
+     * common MPI_DATATYPE_NULL representation under OpenMPI (opaque pointer); treat
+     * it as 0 bytes. (MPICH ints are passed by-slot and resolve harmlessly.) */
+    if (!datatype) return 0;
     if (fn && fn(datatype, &sz) == 0 && sz > 0) return sz;
     return 0;
 }
@@ -81,6 +88,13 @@ static int an_coll(libprof_key_t *k, libprof_delta_t *md, const libprof_desc_t *
 { (void)k;(void)d;(void)r; md->bytes = volume(a, 1, 2); record(md->bytes, 0, -1); return 0; }
 static int an_scatterv(libprof_key_t *k, libprof_delta_t *md, const libprof_desc_t *d, void **a, void *r)
 { (void)k;(void)d;(void)r; md->bytes = volume(a, 5, 6); record(md->bytes, 0, -1); return 0; }
+/* Alltoallv / Reduce_scatter: counts are PER-RANK vector arrays (scounts/rcounts),
+ * not a single scalar slot the scalar-volume path can read. Bind a COUNT-ONLY
+ * analyzer (call count + time recorded; byte volume left 0 / approximate-omitted)
+ * so these heavy FFT-transpose / domain-decomp collectives are at least counted
+ * instead of being silently dropped from the call table. */
+static int an_count_only(libprof_key_t *k, libprof_delta_t *md, const libprof_desc_t *d, void **a, void *r)
+{ (void)k;(void)d;(void)a;(void)r; md->bytes = 0; return 0; }
 
 /* ---- Fortran bindings (mpi_*_): args are by reference, datatype is a Fortran
  * integer handle. Convert it with MPI_Type_f2c, then reuse PMPI_Type_size. The
@@ -155,6 +169,9 @@ void libprof_register_mpi_analyzers(void)
     bind("MPI_Scatter", an_coll);
     bind("MPI_Gatherv", an_coll);      bind("MPI_Allgatherv", an_coll);
     bind("MPI_Scatterv", an_scatterv);
+    /* vector collectives with per-rank count arrays: count-only (volume approx) */
+    bind("MPI_Alltoallv", an_count_only);
+    bind("MPI_Reduce_scatter", an_count_only);
     /* Sendrecv counts as a send to dest (arg 3) for the matrix */
     bind("MPI_Sendrecv", an_send);
 
@@ -170,6 +187,9 @@ void libprof_register_mpi_analyzers(void)
     bind("mpi_gather_", fan_coll);       bind("mpi_scatter_", fan_coll);
     bind("mpi_gatherv_", fan_coll);      bind("mpi_allgatherv_", fan_coll);
     bind("mpi_scatterv_", fan_scatterv);
+    /* Fortran vector collectives with per-rank count arrays: count-only (volume approx) */
+    bind("mpi_alltoallv_", an_count_only);
+    bind("mpi_reduce_scatter_", an_count_only);
 
     extern void libprof_register_emitter(libprof_emitter_fn);
     libprof_register_emitter(emit);

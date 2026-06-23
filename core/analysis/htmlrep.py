@@ -142,6 +142,15 @@ def _roofline_svg(pk, point):
     W, H, pad = 520, 320, 44
     dp, sp, bw = roofline.peak_compute(pk, "dp"), roofline.peak_compute(pk, "sp"), pk.get("peak_bw_gbs") or 1
     xmin, xmax, ymin, ymax = 0.1, 1000.0, 1.0, (sp or dp) * 1.3
+    # Grow the window to whole decades that contain the measured point — otherwise a
+    # memory-bound point left of the default window (e.g. STREAM at AI≈0.06) clamps to
+    # the left edge and looks detached from the bandwidth roof instead of sitting on it.
+    if point:
+        if point.get("ai", 0) > 0:
+            xmin = min(xmin, 10 ** math.floor(math.log10(point["ai"])))
+            xmax = max(xmax, 10 ** math.ceil(math.log10(point["ai"])))
+        if point.get("gflops", 0) > 0:
+            ymin = min(ymin, 10 ** math.floor(math.log10(point["gflops"])))
     lx0, lx1, ly0, ly1 = math.log10(xmin), math.log10(xmax), math.log10(ymin), math.log10(ymax)
 
     def X(ai):
@@ -307,32 +316,32 @@ def _profile_tables(profile, threshold=0.1):
 
     def keep(seq):
         if threshold > 0 and rt > 0:
-            return [f for f in seq if f["t_incl"] / rt * 100.0 >= threshold]
+            return [f for f in seq if f.get("t_incl", 0) / rt * 100.0 >= threshold]
         return list(seq)
     def tpct(f):                              # inclusive time as % of wall runtime
-        return "%.1f%%" % (100.0 * f["t_incl"] / rt) if rt > 0 else "—"
-    comp = keep(sorted((f for f in fns if f["group"] in COMPUTE), key=lambda f: -f["t_incl"]))[:40]
+        return "%.1f%%" % (100.0 * f.get("t_incl", 0) / rt) if rt > 0 else "—"
+    comp = keep(sorted((f for f in fns if f.get("group", "") in COMPUTE), key=lambda f: -f.get("t_incl", 0)))[:40]
     if comp:
         out.append("<h2>Compute (BLAS / LAPACK / FFTW)</h2>")
         out.append(_table(["time%", "group", "function", "count", "incl(s)", "excl(s)"],
-                          [[tpct(f), f["group"], f["name"], "%.0f" % f["count"],
-                            "%.4f" % f["t_incl"], "%.4f" % f["t_excl"]]
+                          [[tpct(f), f.get("group", ""), f.get("name", ""), "%.0f" % f.get("count", 0),
+                            "%.4f" % f.get("t_incl", 0), "%.4f" % f.get("t_excl", 0)]
                            for f in comp], leftcols=(1, 2)))
         out.append("<p class='note'>time%% = inclusive time / total CPU time (thread-seconds); "
                    "calls aggregated over input sizes; below %.3g%% hidden; incl = routine+callees, "
                    "excl = routine only.</p>" % threshold)
-    mpi = keep(sorted((f for f in fns if f["group"] == "MPI"), key=lambda f: -f["t_incl"]))
+    mpi = keep(sorted((f for f in fns if f.get("group", "") == "MPI"), key=lambda f: -f.get("t_incl", 0)))
     if mpi:
         out.append("<h2>MPI communication</h2>")
         out.append(_table(["time%", "function", "count", "incl(s)", "bytes", "GB/s"],
-                          [[tpct(f), f["name"], "%.0f" % f["count"], "%.4f" % f["t_incl"], f["bytes"],
-                            "%.2f" % (f["bytes"] / f["t_incl"] / 1e9 if f["t_incl"] > 0 else 0)] for f in mpi],
+                          [[tpct(f), f.get("name", ""), "%.0f" % f.get("count", 0), "%.4f" % f.get("t_incl", 0), f.get("bytes", 0),
+                            "%.2f" % (f.get("bytes", 0) / f["t_incl"] / 1e9 if f.get("t_incl", 0) > 0 else 0)] for f in mpi],
                           leftcols=(1,)))
-    io = keep(sorted((f for f in fns if f["group"] == "IO"), key=lambda f: -f["t_incl"]))
+    io = keep(sorted((f for f in fns if f.get("group", "") == "IO"), key=lambda f: -f.get("t_incl", 0)))
     if io:
         out.append("<h2>I/O</h2>")
         out.append(_table(["time%", "call", "count", "incl(s)", "bytes"],
-                          [[tpct(f), f["name"], "%.0f" % f["count"], "%.4f" % f["t_incl"], f["bytes"]]
+                          [[tpct(f), f.get("name", ""), "%.0f" % f.get("count", 0), "%.4f" % f.get("t_incl", 0), f.get("bytes", 0)]
                            for f in io], leftcols=(1,)))
     return "".join(out)
 
@@ -452,11 +461,11 @@ def build(result_dir, manifest, snap, profile, suite, detail=None, threshold=0.1
         body.append("<h2>MPI calls</h2>")
         fns = (profile or {}).get("functions", [])
         rt = (profile or {}).get("cpu_time_s") or (profile or {}).get("runtime_s", 0.0)
-        mpi = sorted((f for f in fns if f["group"] == "MPI"), key=lambda f: -f["t_incl"])
+        mpi = sorted((f for f in fns if f.get("group", "") == "MPI"), key=lambda f: -f.get("t_incl", 0))
         body.append(_table(["time%", "function", "count", "incl(s)", "bytes", "GB/s"],
-                           [["%.1f%%" % (100.0 * f["t_incl"] / rt) if rt > 0 else "—",
-                             f["name"], "%.0f" % f["count"], "%.4f" % f["t_incl"], f["bytes"],
-                             "%.2f" % (f["bytes"] / f["t_incl"] / 1e9 if f["t_incl"] > 0 else 0)]
+                           [["%.1f%%" % (100.0 * f.get("t_incl", 0) / rt) if rt > 0 else "—",
+                             f.get("name", ""), "%.0f" % f.get("count", 0), "%.4f" % f.get("t_incl", 0), f.get("bytes", 0),
+                             "%.2f" % (f.get("bytes", 0) / f["t_incl"] / 1e9 if f.get("t_incl", 0) > 0 else 0)]
                             for f in mpi], leftcols=(1,)))
         return _page("MPI analysis", "".join(body))
 
@@ -571,17 +580,17 @@ def build(result_dir, manifest, snap, profile, suite, detail=None, threshold=0.1
             body.extend(left + right)
 
     # APS-style top-5 MPI functions (bird's-eye, upat tier)
-    mpis = sorted((f for f in (profile or {}).get("functions", []) if f["group"] == "MPI"),
-                  key=lambda f: -f["t_incl"])
+    mpis = sorted((f for f in (profile or {}).get("functions", []) if f.get("group", "") == "MPI"),
+                  key=lambda f: -f.get("t_incl", 0))
     if do_upat and mpis and (profile or {}).get("nranks", 1) >= 2:
         rt = (profile or {}).get("runtime_s", 0.0)
-        mt = sum(f["t_incl"] for f in mpis)
+        mt = sum(f.get("t_incl", 0) for f in mpis)
         body.append("<div class='sec'><h2>Top MPI functions</h2>")
         body.append("<p class='note'>MPI time %.4fs (%.1f%% of runtime, %d ranks)</p>"
                     % (mt, (mt / rt * 100 if rt else 0), profile.get("nranks", 1)))
         body.append(_table(["function", "time(s)", "%MPI", "calls", "imb%"],
-                           [[f["name"], "%.4f" % f["t_incl"], "%.1f" % (f["t_incl"] / mt * 100 if mt else 0),
-                             "%.0f" % f["count"], "%.0f" % f.get("imb_excl", 0)] for f in mpis[:5]]))
+                           [[f.get("name", ""), "%.4f" % f.get("t_incl", 0), "%.1f" % (f.get("t_incl", 0) / mt * 100 if mt else 0),
+                             "%.0f" % f.get("count", 0), "%.0f" % f.get("imb_excl", 0)] for f in mpis[:5]]))
         body.append("</div>")
 
     # UPAT profile tables

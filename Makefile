@@ -47,6 +47,8 @@ install: profile
 	install -m644 $(PROFILE)/libupat-preload.so $(PROFILE)/libupat-frida.so $(DEST)/collectors/profile/
 	install -m755 $(PROFILE)/tools/upat-report.py $(DEST)/collectors/profile/tools/
 	install -m755 $(SNAPSHOT)/target/release/uaps $(DEST)/collectors/snapshot/target/release/
+	install -m644 $$(ls $(SNAPSHOT)/target/release/build/uaps-cli-*/out/uaps_mpi.so | head -1) \
+	              $(DEST)/collectors/snapshot/target/release/uaps_mpi.so
 	cp -r core $(DEST)/
 	printf '#!/bin/sh\nexec "%s/lib/uni-perftools/core/cli/upat" "$$@"\n' "$(PREFIX)" > $(DESTDIR)$(PREFIX)/bin/upat
 	printf '#!/bin/sh\nexec "%s/lib/uni-perftools/collectors/snapshot/target/release/uaps" "$$@"\n' "$(PREFIX)" > $(DESTDIR)$(PREFIX)/bin/uaps

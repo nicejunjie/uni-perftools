@@ -141,6 +141,14 @@ static inline libprof_frame_t *libprof_enter(void)
     return f;
 }
 
+/* Mark the calling thread as running profiler-internal code (an analyzer).
+ * While set, libprof_enter() returns NULL, so a wrapped function invoked from
+ * inside an analyzer runs unmeasured instead of recursing into measurement.
+ * Used only on the cold analyzer path; the original-function call stays outside
+ * the guard so legitimate nesting (e.g. LAPACK calling BLAS) is still timed. */
+static inline void libprof_runtime_begin(void) { if (libprof_tls) libprof_tls->in_runtime = 1; }
+static inline void libprof_runtime_end(void)   { if (libprof_tls) libprof_tls->in_runtime = 0; }
+
 static inline void libprof_exit(libprof_desc_t *d, double dt,
                                 const libprof_key_t *k, const libprof_delta_t *md)
 {

@@ -37,6 +37,16 @@ node_perf_ok() {
 PHYS=$(lscpu -p=Socket,Core 2>/dev/null | grep -v '^#' | sort -u | wc -l)
 [ "$PHYS" -ge 1 ] 2>/dev/null || PHYS=$(nproc)
 HALF=$(( PHYS / 2 )); [ "$HALF" -ge 1 ] || HALF=1
+# The bundled conda OpenMPI bakes in the absolute install prefix from wherever the
+# project tree lived when it was unpacked. After the tree is moved/renamed, mpirun
+# fails with `prterun-exec-failed` and the MPI runs collect nothing — point it at
+# the current qenv so it stays self-contained regardless of the checkout path.
+[ -d "$HERE/qenv" ] && export OPAL_PREFIX="$HERE/qenv"
+# This conda PMIx warns that its `pcompress` component is unavailable and can't
+# find its (missing) help file, printing a "Sorry!" box AND a stray NUL byte to
+# stderr — harmless, but the NUL makes the captured run-logs read as binary to
+# grep/text tools. Silence it so the logs stay clean text.
+export PMIX_MCA_pcompress_base_silence_warning=1
 export OMP_PLACES=cores OMP_PROC_BIND=close
 echo "== QE validation: $PHYS physical cores (serial=$PHYS threads, MPI=2x$HALF, large=${PHYS}x MPI) =="
 

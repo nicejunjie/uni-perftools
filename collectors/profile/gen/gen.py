@@ -110,7 +110,61 @@ def emit_desc(records, out):
         f.write("};\n")
 
 
+# True libc variadics whose trailing `mode` arg is present ONLY with O_CREAT /
+# O_TMPFILE. Declaring them with a fixed 3rd `int mode` param (as the prototype
+# files do for argument-count purposes) and forwarding that param unconditionally
+# reads a garbage slot on 2-arg open() calls and forwards random permission bits
+# to the real open on O_CREAT. We instead emit a real C variadic wrapper that
+# pulls `mode` with va_arg ONLY when the create flags are set, mirroring glibc.
+# These have no byte-volume analyzer (open/openat aren't in register_io_analyzers),
+# so the wrapper only needs to time the call and forward args correctly.
+VARIADIC_OPEN = {
+    # name : (index of the `flags` arg among the fixed leading args)
+    "open":   1,   # open(path, flags, [mode])
+    "openat": 2,   # openat(dirfd, path, flags, [mode])
+}
+
+
+def emit_variadic_open(f, ret, name, arg_names, flags_idx):
+    """Emit a true-variadic open/openat wrapper (mode read via va_arg)."""
+    fixed = arg_names[:flags_idx + 1]          # leading args up to & including flags
+    # Reconstruct fixed param decls from the opaque/known signature. open/openat
+    # are declared as: open(char* path,int flags,int mode) /
+    # openat(int dirfd,char* path,int flags,int mode). Hardcode the fixed decls.
+    if name == "open":
+        decl = "const char *path, int flags"
+        fixed_names = ["path", "flags"]
+    else:  # openat
+        decl = "int dirfd, const char *path, int flags"
+        fixed_names = ["dirfd", "path", "flags"]
+    fp = "%s (*)()" % ret
+    callfixed = ", ".join(fixed_names)
+    f.write("#include <stdarg.h>\n#include <fcntl.h>\n")
+    f.write("#ifndef O_TMPFILE\n#define O_TMPFILE 0\n#endif\n")
+    f.write("%s WRAP(%s)(%s, ...)\n{\n" % (ret, name, decl))
+    f.write("    int lp__mode = 0;\n")
+    f.write("    if (flags & (O_CREAT | O_TMPFILE)) {\n")
+    f.write("        va_list lp__ap; va_start(lp__ap, flags);\n")
+    f.write("        lp__mode = va_arg(lp__ap, int);\n")
+    f.write("        va_end(lp__ap);\n")
+    f.write("    }\n")
+    f.write("    libprof_desc_t *lp__d = &libprof_desc[SLOT_%s];\n" % name)
+    f.write("    if (__builtin_expect(lp__d->orig == NULL, 0)) libprof_resolve(lp__d);\n")
+    f.write("    libprof_frame_t *lp__fr = libprof_enter();\n")
+    f.write("    if (__builtin_expect(lp__fr == NULL, 0)) return ((%s)lp__d->orig)(%s, lp__mode);\n"
+            % (fp, callfixed))
+    f.write("    %s lp__r = ((%s)lp__d->orig)(%s, lp__mode);\n" % (ret, fp, callfixed))
+    f.write("    double lp__dt = libprof_now() - lp__fr->t0;\n")
+    # open/openat have no analyzer bound; just record the call + time.
+    f.write("    libprof_exit(lp__d, lp__dt, (libprof_key_t*)0, (libprof_delta_t*)0);\n")
+    f.write("    return lp__r;\n")
+    f.write("}\n\n")
+
+
 def emit_wrapper(f, ret, name, args, arg_names, dialect):
+    if name in VARIADIC_OPEN:
+        emit_variadic_open(f, ret, name, arg_names, VARIADIC_OPEN[name])
+        return
     is_void = (ret == "void")
     # opaque (MPI): ignore declared types, take/forward uniform void* slots
     if dialect == "opaque":
@@ -145,7 +199,11 @@ def emit_wrapper(f, ret, name, args, arg_names, dialect):
     f.write("    if (__builtin_expect(lp__d->analyze != 0, 0)) {\n")
     f.write(argarr)
     f.write("        libprof_key_t lp__k; libprof_delta_t lp__md = {0};\n")
+    # Guard the analyzer: if it calls a wrapped function, that call runs
+    # unmeasured (libprof_enter returns NULL) instead of recursing.
+    f.write("        libprof_runtime_begin();\n")
     f.write("        int lp__sh = lp__d->analyze(&lp__k, &lp__md, lp__d, lp__args, %s);\n" % retexpr)
+    f.write("        libprof_runtime_end();\n")
     f.write("        libprof_exit(lp__d, lp__dt, lp__sh ? &lp__k : (libprof_key_t*)0, &lp__md);\n")
     f.write("    } else {\n")
     f.write("        libprof_exit(lp__d, lp__dt, (libprof_key_t*)0, (libprof_delta_t*)0);\n")

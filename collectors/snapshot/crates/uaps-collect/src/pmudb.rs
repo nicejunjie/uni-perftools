@@ -561,7 +561,15 @@ impl Parser<'_> {
             if o == "*" || o == "/" {
                 self.pos += 1;
                 let r = self.factor()?;
-                v = if o == "*" { v * r } else if r != 0.0 { v / r } else { 0.0 };
+                // Divide-by-zero gaps (None) rather than fabricating a 0.0 —
+                // a measured zero denominator is "unknown", not "the metric is 0".
+                v = if o == "*" {
+                    v * r
+                } else if r != 0.0 {
+                    v / r
+                } else {
+                    return None;
+                };
             } else {
                 break;
             }
@@ -721,6 +729,10 @@ const CANON: &[(&str, &str, &[&str])] = &[
     ("topdown_retiring_pct", "Retiring", &["retiring", "tma_retiring"]),
     ("topdown_frontend_pct", "Frontend bound", &["frontend_bound", "tma_frontend_bound"]),
     ("topdown_backend_pct", "Backend bound", &["backend_bound", "tma_backend_bound"]),
+    // SMT contention is a first-class L1 bucket on AMD (slots lost to the sibling
+    // thread sharing the physical core); Intel folds SMT into its other buckets,
+    // so this simply gaps there.
+    ("topdown_smt_pct", "SMT contention", &["smt_contention"]),
     ("topdown_badspec_pct", "Bad speculation", &["bad_speculation", "tma_bad_speculation"]),
 ];
 
@@ -1126,12 +1138,25 @@ mod tests {
 
             if required.contains(&name.as_str()) {
                 required_seen.insert(name.clone());
-                let gaps: Vec<_> = st.iter().filter(|s| !s.resolved).collect();
+                // SMT contention is an AMD-only L1 bucket (Intel folds SMT into its
+                // other buckets; ARM has no equivalent) — a documented per-arch gap,
+                // not a guess. Require the 4 universal quadrants; check SMT for AMD.
+                let gaps: Vec<_> = st
+                    .iter()
+                    .filter(|s| !s.resolved && s.key != "topdown_smt_pct")
+                    .collect();
                 assert!(
                     gaps.is_empty(),
                     "{name}: claimed-supported family failed top-down: {:?}",
                     gaps.iter().map(|s| format!("{} ({})", s.key, s.note)).collect::<Vec<_>>()
                 );
+                if name.starts_with("amdzen") {
+                    let smt = st.iter().find(|s| s.key == "topdown_smt_pct");
+                    assert!(
+                        smt.is_some_and(|s| s.resolved),
+                        "{name}: AMD family must resolve SMT contention (smt_contention)"
+                    );
+                }
             }
             if known_gaps.contains(&name.as_str()) {
                 assert!(

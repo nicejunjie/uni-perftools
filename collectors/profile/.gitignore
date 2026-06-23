@@ -9,3 +9,8 @@
 # Captured profiler baselines / scratch
 /baselines/
 perf.*/
+
+# Stray raw per-rank profiler output (default UPAT_OUTPUT prefix is "upat";
+# profiles are prof.<rank>.json) left by ad-hoc LD_PRELOAD runs in the tree.
+upat.*.json
+prof.*.json

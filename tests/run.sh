@@ -8,14 +8,27 @@ set -u
 cd "$(dirname "$0")/.."
 ROOT=$(pwd)
 UPAT="$ROOT/core/cli/upat"
-UAPS=$(ls "$ROOT"/collectors/snapshot/target/release/uaps \
-          "$ROOT"/collectors/snapshot/target/debug/uaps 2>/dev/null | head -1)
+# Prefer the optimized binary when present, else the debug build `make` produces.
+# (Explicit, not `ls a b | head -1` — ls sorts alphabetically so "debug" would win.)
+UAPS="$ROOT/collectors/snapshot/target/release/uaps"
+[ -x "$UAPS" ] || UAPS="$ROOT/collectors/snapshot/target/debug/uaps"
 CC=${CC:-mpicc}
-TMP=$(mktemp -d)
+# Keep test artifacts under the project (CLAUDE.md: never write to /tmp).
+TMP=$(mktemp -d "$ROOT/tests/.tmp.XXXXXX")
 PASS=0; FAIL=0
 BLAS=$(ls /lib/x86_64-linux-gnu/libblas.so* /usr/lib/x86_64-linux-gnu/libblas.so* 2>/dev/null | head -1)
+if [ -z "$BLAS" ]; then
+  echo "  SKIP: no libblas found — cannot build BLAS/LAPACK test apps; skipping suite"
+  rm -rf "$TMP"
+  exit 0
+fi
 
 ok(){ if eval "$2"; then echo "  PASS: $1"; PASS=$((PASS+1)); else echo "  FAIL: $1"; FAIL=$((FAIL+1)); fi; }
+
+# Structured assertion: run a python predicate `$2` (which gets `d` = parsed JSON
+# from file `$3`, and may exit nonzero / raise to fail). More robust than grepping
+# the rendered report, which churns with cosmetic formatting changes.
+okjson(){ ok "$1" "python3 -c 'import json,sys; d=json.load(open(sys.argv[1])); sys.exit(0 if ($2) else 1)' \"$3\""; }
 
 [ -f "$ROOT/collectors/profile/libupat-preload.so" ] || { echo "build first (make)"; exit 1; }
 
@@ -100,6 +113,9 @@ OMPI_MCA_rmaps_base_oversubscribe=1 mpirun --oversubscribe -n 4 true >/dev/null 
 if [ "$HAVE_MPI" = 1 ]; then
   OUT=$(OMPI_MCA_rmaps_base_oversubscribe=1 "$UPAT" run -o "$TMP/r2" -- mpirun --oversubscribe -n 4 "$TMP/m" 2>/dev/null)
   ok "mpi: 4 prof files"            "[ \$(ls $TMP/r2/prof.*.json | wc -l) -eq 4 ]"
+  # Structured checks on the raw per-rank contract (not the rendered table).
+  okjson "mpi: rank0 json schema"   'all(k in d for k in ("rank","runtime_s","functions")) and isinstance(d["functions"],list)' "$TMP/r2/prof.0.json"
+  okjson "mpi: rank0 traced MPI vol" 'any(f["group"]=="MPI" and f.get("bytes",0)>0 for f in d["functions"])' "$TMP/r2/prof.0.json"
   OUT0=$("$UPAT" report "$TMP/r2" --threshold 0 2>/dev/null)   # show all (tiny MPI in a compute-heavy app)
   ok "mpi: MPI table in profile"    "echo \"$OUT0\" | grep -q 'MPI (communication)'"
   ok "mpi: unified imb header"      "echo \"$OUT\" | grep -q '(max-avg)/max'"
@@ -121,7 +137,7 @@ if [ "$HAVE_MPI" = 1 ]; then
   if [ -n "$UAPS" ]; then
     # uaps writes its report to stderr (the target owns stdout); capture stderr.
     SOUT=$(OMPI_MCA_rmaps_base_oversubscribe=1 "$UAPS" run -- mpirun --oversubscribe -n 4 "$TMP/m" 2>&1 >/dev/null)
-    ok "uaps: APS MPI section"        "echo \"$SOUT\" | grep -q 'MPI ranks'"
+    ok "uaps: APS MPI section"        "echo \"$SOUT\" | grep -q 'MPI % of runtime'"
     ok "uaps: MPI time + imbalance"   "echo \"$SOUT\" | grep -q 'MPI time' && echo \"$SOUT\" | grep -q 'MPI imbalance'"
     ok "uaps: top MPI function"       "echo \"$SOUT\" | grep -qE 'MPI_(Allreduce|Sendrecv|Bcast).*of MPI'"
   fi

@@ -1,6 +1,7 @@
+[upat] warning: unrecognized launcher 'pw' — env (LD_PRELOAD/UPAT_*) may not propagate to ranks
 [upat] collecting: ./pw -in si.scf.in
 
-     Program PWSCF v.7.5 starts on 21Jun2026 at 13:51:55 
+     Program PWSCF v.7.5 starts on 23Jun2026 at  8:55:32 
 
      This program is part of the open-source Quantum ESPRESSO suite
      for quantum simulation of materials; please cite
@@ -16,7 +17,7 @@
      Threads/MPI process:                     1
 
      MPI processes distributed on     1 nodes
-     6602 MiB available memory on the printing compute node when the environment starts
+     35329 MiB available memory on the printing compute node when the environment starts
 
      Reading input from si.scf.in
 
@@ -204,7 +205,7 @@
      Davidson diagonalization with overlap
      ethr =  8.96E-07,  avg # of iterations =  3.3
 
-     total cpu time spent up to now is        0.9 secs
+     total cpu time spent up to now is        1.0 secs
 
      total energy              =     -15.85306663 Ry
      estimated scf accuracy    <       0.00000206 Ry
@@ -481,8 +482,8 @@
 
      Forces acting on atoms (cartesian axes, Ry/au):
 
-     atom    1 type  1   force =    -0.00000000   -0.00000000   -0.00000000
-     atom    2 type  1   force =     0.00000000    0.00000000    0.00000000
+     atom    1 type  1   force =     0.00000000    0.00000000    0.00000000
+     atom    2 type  1   force =    -0.00000000   -0.00000000   -0.00000000
 
      Total force =     0.000000     Total SCF correction =     0.000000
 
@@ -490,16 +491,16 @@
      Computing stress (Cartesian axis) and pressure
 
           total   stress  (Ry/bohr**3)                   (kbar)     P=      -14.83
-  -0.00010081   0.00000000   0.00000000          -14.83        0.00        0.00
-   0.00000000  -0.00010081   0.00000000            0.00      -14.83        0.00
-   0.00000000   0.00000000  -0.00010081            0.00        0.00      -14.83
+  -0.00010081  -0.00000000  -0.00000000          -14.83       -0.00       -0.00
+  -0.00000000  -0.00010081  -0.00000000           -0.00      -14.83       -0.00
+  -0.00000000  -0.00000000  -0.00010081           -0.00       -0.00      -14.83
 
 
      Writing all to output data dir ./scratch/si.save/ :
      XML data file, charge density, pseudopotentials, collected wavefunctions
 
      init_run     :      0.25s CPU      0.25s WALL (       1 calls)
-     electrons    :      1.00s CPU      1.05s WALL (       1 calls)
+     electrons    :      1.00s CPU      1.07s WALL (       1 calls)
      forces       :      0.01s CPU      0.01s WALL (       1 calls)
      stress       :      0.05s CPU      0.05s WALL (       1 calls)
 
@@ -509,23 +510,23 @@
      hinit0       :      0.09s CPU      0.09s WALL (       1 calls)
 
      Called by electrons:
-     c_bands      :      0.84s CPU      0.88s WALL (       7 calls)
+     c_bands      :      0.85s CPU      0.90s WALL (       7 calls)
      sum_band     :      0.15s CPU      0.16s WALL (       7 calls)
      v_of_rho     :      0.00s CPU      0.00s WALL (       7 calls)
      mix_rho      :      0.00s CPU      0.00s WALL (       7 calls)
 
      Called by c_bands:
      init_us_2    :      0.05s CPU      0.05s WALL (    1020 calls)
-     cegterg      :      0.81s CPU      0.85s WALL (     420 calls)
+     cegterg      :      0.82s CPU      0.87s WALL (     420 calls)
 
      Called by *egterg:
      cdiaghg      :      0.03s CPU      0.03s WALL (    1372 calls)
-     h_psi        :      0.86s CPU      0.90s WALL (    1492 calls)
+     h_psi        :      0.87s CPU      0.93s WALL (    1492 calls)
      g_psi        :      0.01s CPU      0.01s WALL (    1012 calls)
 
      Called by h_psi:
      h_psi:calbec :      0.01s CPU      0.01s WALL (    1492 calls)
-     vloc_psi     :      0.84s CPU      0.88s WALL (    1492 calls)
+     vloc_psi     :      0.85s CPU      0.90s WALL (    1492 calls)
                                         0.00s GPU  (    1492 calls)
      add_vuspsi   :      0.01s CPU      0.01s WALL (    1492 calls)
 
@@ -533,14 +534,14 @@
      calbec       :      0.02s CPU      0.02s WALL (    2512 calls)
      fft          :      0.08s CPU      0.08s WALL (      26 calls)
      ffts         :      0.00s CPU      0.00s WALL (       7 calls)
-     fftw         :      0.87s CPU      0.91s WALL (   12434 calls)
+     fftw         :      0.88s CPU      0.94s WALL (   12434 calls)
 
      Parallel routines
 
-     PWSCF        :      1.32s CPU      1.37s WALL
+     PWSCF        :      1.33s CPU      1.40s WALL
 
 
-   This run was terminated on:  13:51:56  21Jun2026            
+   This run was terminated on:   8:55:34  23Jun2026            
 
 =------------------------------------------------------------------------------=
    JOB DONE.
@@ -556,7 +557,7 @@
     threads/rank   4
     elapsed        1.5 s
     CPU time       1 s
-    date           2026-06-21 13:51
+    date           2026-06-23 08:55
 
 ══ Machine ══
     CPU            AMD Ryzen 9 9950X 16-Core Processor
@@ -568,7 +569,7 @@
 
 ══ Software ══
     OS             Ubuntu 24.04.4 LTS
-    kernel         6.17.0-29-generic
+    kernel         6.17.0-35-generic
     Open MPI       libmpi.so.40.40.7
     OpenBLAS       libopenblasp-r0.3.33.so
     FFTW           libfftw3.so.3.7.11
@@ -581,26 +582,46 @@
     paranoid       1
 
 ── INSIGHTS ──────────────────────────────────────────────────────────────────
-  ▶ Compute is dominated by math libraries (47%, top: fftw_execute_dft) (running efficiently) — the main tuning target.
+  ▶ Compute is dominated by math libraries (46%, top: fftw_execute_dft) (running efficiently) — the main tuning target.
 
 
 ══ Roofline (per function — measured, event-based sampling) ══
-  flops = FP-op samples x period (ops-based proxy); bytes = DRAM-fill samples x line.
-    function                 self(s)   time%     AI   GFLOP/s  %peak  bound
-    ───────────────────────────────────────────────────────────────────────
-    epoll_wait                 1.497  102.2%    inf       0.0     0%  compute
-    __GI___poll                1.429   97.6%    inf       0.0     0%  compute
-    n1bv_32                    0.215   14.7%    inf      24.9     2%  compute
-    n1fv_32                    0.209   14.3%    inf      19.8     2%  compute
-    __pthread_rwlock_rdunloc   0.124    8.5%    inf       2.1     0%  compute
-    n1_32                      0.102    7.0%    inf       6.0     1%  compute
-    0x765f88233c4b             0.082    5.6%    inf       2.2     0%  compute
-    vloc_psi_k_acc_            0.056    3.8%    inf      19.5     2%  compute
-    __fft_scalar_fftw3_MOD_c   0.047    3.2%    inf      22.7     2%  compute
-    libc_feholdsetround_sse_   0.038    2.6%    inf       3.5     0%  compute
-    libprof_now                0.023    1.6%    inf       4.8     0%  compute
-    apply                      0.023    1.6%    inf       9.1     1%  compute
-    ───────────────────────────────────────────────────────────────────────
+  flops = FP-event samples x period x width; bytes = DRAM-access samples x line.
+
+    GFLOP/s
+            │                    ································
+            │                 ··///‾‾‾‾‾‾‾‾‾‾‾‾‾‾‾‾‾‾‾‾‾‾‾‾‾‾‾‾‾‾
+       1000 │              ··///                                 
+            │           ··///                                    
+            │        ··///                                       
+            │    ···///                                          
+        100 │ ··////                                             
+            │///                                                 
+            │                                                    
+            │                                                    
+         10 │                       ●                            
+            │                                                    
+            │                                                    
+            │                                                    
+            └────────────────────────────────────────────────────
+             1           10           100        1000       10000  AI (FLOP/byte)
+             ● measured   / bandwidth roof   ‾ compute ceiling   · theoretical roof
+
+      function                 self(s)   time%     AI   GFLOP/s  %peak  bound
+    ─────────────────────────────────────────────────────────────────────────
+      epoll_wait                 1.528   34.5%    inf       0.0     0%  compute
+      __GI___poll                1.461   33.0%    inf       0.0     0%  compute
+      n1bv_32                    0.236    5.3%    inf      22.8     1%  compute
+      n1fv_32                    0.187    4.2%    inf      22.1     1%  compute
+      __pthread_rwlock_rdunloc   0.153    3.5%    inf       0.1     0%  compute
+      0x7828fe669c4b             0.065    1.5%    inf       8.0     0%  compute
+      vloc_psi_k_acc_            0.057    1.3%    inf      19.1     1%  compute
+      __fft_scalar_fftw3_MOD_c   0.049    1.1%    inf      21.2     1%  compute
+      libc_feholdsetround_sse_   0.037    0.8%    inf       2.9     0%  compute
+      apply                      0.028    0.6%    inf      10.5     0%  compute
+      n1bv_8                     0.026    0.6%    inf       3.2     0%  compute
+      __fft_helper_subroutines   0.023    0.5%    inf       0.0     0%  compute
+    ─────────────────────────────────────────────────────────────────────────
     (AI=inf → no DRAM traffic sampled = cache-resident/compute-bound; precision assumed DP)
 
 Table 1:  Profile by Function Group and Function  (sampling @ 1000 Hz, 1 PEs)
@@ -608,63 +629,70 @@ Table 1:  Profile by Function Group and Function  (sampling @ 1000 Hz, 1 PEs)
    Samp%      Samp  Group
                      Function=[file:line]
   ──────────────────────────────────────────────────────────────────────────────
- 100.0%      4330  Total
+ 100.0%      4428  Total
   ──────────────────────────────────────────────────────────────────────────────
-  67.6%      2929  WAIT
-  34.6%      1497    epoll_wait  [epoll_wait.c:30]
-  33.0%      1429    __GI___poll  [poll.c:29]
-   ... 2 more below 0.1% of CPU time (report --threshold 0 to show all)
+  67.6%      2994  WAIT
+  34.5%      1528    epoll_wait  [epoll_wait.c:30]
+  33.0%      1461    __GI___poll  [poll.c:29]
+   ... 3 more below 0.1% of CPU time (report --threshold 0 to show all)
   ──────────────────────────────────────────────────────────────────────────────
-  15.2%       658  FFTW
-   5.0%       215    n1bv_32  [n1bv_32.c:?]
-   4.8%       209    n1fv_32  [n1fv_32.c:?]
-   2.4%       102    n1_32  [n1_32.c:?]
-   0.5%        23    apply  [direct.c:?]
-   0.2%         9    fftw_cpy2d  [libfftw3.so.3.7.11]
+  14.6%       648  FFTW
+   5.3%       236    n1bv_32  [n1bv_32.c:?]
+   4.2%       187    n1fv_32  [n1fv_32.c:?]
+   0.6%        28    apply  [buffered.c:?]
+   0.6%        26    n1bv_8  [n1bv_8.c:?]
+   0.5%        22    n1fv_8  [n1fv_8.c:?]
+   0.3%        15    t2bv_4  [t2bv_4.c:?]
+   0.3%        13    fftw_cpy1d  [libfftw3.so.3.7.11]
+   0.2%        10    fftw_cpy2d  [libfftw3.so.3.7.11]
+   0.2%         9    t2fv_4  [t2fv_4.c:?]
+   0.2%         8    fftw_measure_execution_time  [libfftw3.so.3.7.11]
    0.2%         7    n1_8  [n1_8.c:?]
-   0.1%         6    n1bv_2  [n1bv_2.c:?]
-   0.1%         6    n2fv_8  [n2fv_8.c:?]
-   0.1%         5    n1_16  [n1_16.c:?]
-   0.1%         5    fftw_cpy2d_pair  [libfftw3.so.3.7.11]
-   0.1%         5    n1fv_16  [n1fv_16.c:?]
-   ... 39 more below 0.1% of CPU time (report --threshold 0 to show all)
+   0.2%         7    n1_32  [n1_32.c:?]
+   0.1%         5    n1bv_16  [n1bv_16.c:?]
+   0.1%         5    n1_2  [n1_2.c:?]
+   ... 36 more below 0.1% of CPU time (report --threshold 0 to show all)
   ──────────────────────────────────────────────────────────────────────────────
-  10.1%       438  ETC
-   2.9%       124    __pthread_rwlock_rdunlock  [pthread_rwlock_common.c:
-   1.9%        82    0x765f88233c4b
-   0.9%        38    libc_feholdsetround_sse_ctx  [fenv_private.h:416]
-   0.5%        23    libprof_now  [timer.c:12]
-   0.3%        14    do_sin  [s_sin.c:143]
-   0.3%        12    __pthread_rwlock_rdlock_full64  [pthread_rwlock_comm
-   0.3%        12    __sincos_fma  [s_sincos-fma.c:37]
-   0.3%        11    __GI___libc_read  [read.c:26]
-   0.2%         9    fftw_execute_dft  [libprof.h:165]
-   0.2%         9    __getrusage  [getrusage.c:29]
-   0.2%         8    do_cos  [s_sin.c:115]
-   0.2%         7    __GI___clock_gettime  [clock_gettime.c:30]
-   0.1%         5    __atan_fma  [s_atan-fma.c:53]
-   ... 59 more below 0.1% of CPU time (report --threshold 0 to show all)
+  10.3%       456  ETC
+   3.5%       153    __pthread_rwlock_rdunlock  [pthread_rwlock_common.c:
+   1.5%        65    0x7828fe669c4b
+   0.8%        37    libc_feholdsetround_sse_ctx  [fenv_private.h:416]
+   0.5%        20    libprof_now  [timer.c:12]
+   0.4%        17    __GI___libc_read  [read.c:26]
+   0.3%        12    on_overflow  [roofline_sampler.c:187]
+   0.3%        12    __getrusage  [getrusage.c:29]
+   0.2%         9    __pthread_rwlock_rdlock_full64  [pthread_rwlock_comm
+   0.2%         9    __sincos_fma  [s_sincos-fma.c:37]
+   0.2%         9    do_sin  [s_sin.c:143]
+   0.1%         6    __atan_fma  [s_atan-fma.c:53]
+   0.1%         6    _int_free  [malloc.c:4649]
+   0.1%         5    libprof_exit  [libprof.h:158]
+   0.1%         5    __GI___clock_gettime  [clock_gettime.c:40]
+   ... 58 more below 0.1% of CPU time (report --threshold 0 to show all)
   ──────────────────────────────────────────────────────────────────────────────
-   5.6%       243  USER
-   1.3%        56    vloc_psi_k_acc_  [pw.x]
-   1.1%        47    __fft_scalar_fftw3_MOD_cfft3ds  [pw.x]
-   0.5%        20    __fft_helper_subroutines_MOD_fftx_c2psi_k  [pw.x]
-   0.4%        19    init_us_2_acc_  [pw.x]
-   0.3%        13    sum_band_k.5  [sum_band.f90:?]
-   0.3%        12    ylmr2_  [pw.x]
-   0.3%        12    __beta_mod_MOD_interp_beta  [pw.x]
-   0.2%         9    g_psi_  [pw.x]
-   0.1%         6    usnldiag_  [pw.x]
-   0.1%         5    stres_us_  [pw.x]
-   ... 25 more below 0.1% of CPU time (report --threshold 0 to show all)
+   6.0%       264  USER
+   1.3%        57    vloc_psi_k_acc_  [pw.x]
+   1.1%        49    __fft_scalar_fftw3_MOD_cfft3ds  [pw.x]
+   0.5%        23    __fft_helper_subroutines_MOD_fftx_c2psi_k  [pw.x]
+   0.4%        16    sum_band_k.5  [sum_band.f90:?]
+   0.3%        14    ylmr2_  [pw.x]
+   0.3%        13    init_us_2_acc_  [pw.x]
+   0.3%        13    g_psi_  [pw.x]
+   0.2%        10    __beta_mod_MOD_interp_beta  [pw.x]
+   0.2%         8    usnldiag_  [pw.x]
+   0.1%         6    __fft_helper_subroutines_MOD_fftx_psi2c_k  [pw.x]
+   0.1%         6    stres_us_  [pw.x]
+   0.1%         5    __fft_helper_subroutines_MOD_fftx_c2psi_k._omp_fn.0 
+   ... 27 more below 0.1% of CPU time (report --threshold 0 to show all)
   ──────────────────────────────────────────────────────────────────────────────
-   1.4%        61  BLAS
-   0.4%        17    zgemm_kernel_n_COOPERLAKE  [libopenblasp-r0.3.33.so]
-   0.3%        14    zgemm_kernel_l_COOPERLAKE  [libopenblasp-r0.3.33.so]
+   1.4%        64  BLAS
+   0.4%        19    zgemm_kernel_n_COOPERLAKE  [libopenblasp-r0.3.33.so]
+   0.4%        19    zgemm_kernel_l_COOPERLAKE  [libopenblasp-r0.3.33.so]
    0.2%         7    zgemm_itcopy_COOPERLAKE  [libopenblasp-r0.3.33.so]
-   0.1%         6    zgemm_incopy_COOPERLAKE  [libopenblasp-r0.3.33.so]
-   0.1%         5    zgemm_oncopy_COOPERLAKE  [libopenblasp-r0.3.33.so]
-   ... 7 more below 0.1% of CPU time (report --threshold 0 to show all)
+   ... 10 more below 0.1% of CPU time (report --threshold 0 to show all)
+  ──────────────────────────────────────────────────────────────────────────────
+   0.0%         1  LAPACK
+   ... 1 more below 0.1% of CPU time (report --threshold 0 to show all)
   ──────────────────────────────────────────────────────────────────────────────
    0.0%         1  MPI
    ... 1 more below 0.1% of CPU time (report --threshold 0 to show all)
@@ -680,50 +708,53 @@ Table 1b:  Profile by source line  (hotspots, sampling @ 1000 Hz, 1 PEs)
 
    Samp%      Samp  Function  [file:line]  (group)
   ──────────────────────────────────────────────────────────────────────────────
-  34.6%      1497  epoll_wait  [epoll_wait.c:30]  (WAIT)
-  33.0%      1429  __GI___poll  [poll.c:29]  (WAIT)
-   5.0%       215  n1bv_32  [n1bv_32.c:?]  (FFTW)
-   4.8%       209  n1fv_32  [n1fv_32.c:?]  (FFTW)
-   2.8%       123  __pthread_rwlock_rdunlock  [pthread_rwlock_common.c:254]  
-   2.4%       102  n1_32  [n1_32.c:?]  (FFTW)
-   1.9%        82  0x765f88233c4b  (ETC)
-   1.3%        56  vloc_psi_k_acc_  [pw.x]  (USER)
-   1.1%        47  __fft_scalar_fftw3_MOD_cfft3ds  [pw.x]  (USER)
-   0.8%        36  libc_feholdsetround_sse_ctx  [fenv_private.h:416]  (ETC)
-   0.5%        20  __fft_helper_subroutines_MOD_fftx_c2psi_k  [pw.x]  (USER)
-   0.5%        20  libprof_now  [timer.c:12]  (ETC)
-   0.4%        19  init_us_2_acc_  [pw.x]  (USER)
-   0.4%        17  zgemm_kernel_n_COOPERLAKE  [libopenblasp-r0.3.33.so]  (BLA
-   0.3%        14  zgemm_kernel_l_COOPERLAKE  [libopenblasp-r0.3.33.so]  (BLA
-   0.3%        14  apply  [direct.c:?]  (FFTW)
-   0.3%        13  sum_band_k.5  [sum_band.f90:?]  (USER)
-   0.3%        12  ylmr2_  [pw.x]  (USER)
-   0.3%        12  __beta_mod_MOD_interp_beta  [pw.x]  (USER)
-   0.3%        11  __pthread_rwlock_rdlock_full64  [pthread_rwlock_common.c:3
-   0.3%        11  __GI___libc_read  [read.c:26]  (ETC)
-   0.2%         9  __getrusage  [getrusage.c:29]  (ETC)
-   0.2%         9  fftw_cpy2d  [libfftw3.so.3.7.11]  (FFTW)
-   0.2%         9  g_psi_  [pw.x]  (USER)
+  34.5%      1528  epoll_wait  [epoll_wait.c:30]  (WAIT)
+  33.0%      1461  __GI___poll  [poll.c:29]  (WAIT)
+   5.3%       236  n1bv_32  [n1bv_32.c:?]  (FFTW)
+   4.2%       187  n1fv_32  [n1fv_32.c:?]  (FFTW)
+   3.4%       151  __pthread_rwlock_rdunlock  [pthread_rwlock_common.c:254]  
+   1.5%        65  0x7828fe669c4b  (ETC)
+   1.3%        57  vloc_psi_k_acc_  [pw.x]  (USER)
+   1.1%        49  __fft_scalar_fftw3_MOD_cfft3ds  [pw.x]  (USER)
+   0.8%        34  libc_feholdsetround_sse_ctx  [fenv_private.h:416]  (ETC)
+   0.6%        26  n1bv_8  [n1bv_8.c:?]  (FFTW)
+   0.5%        23  __fft_helper_subroutines_MOD_fftx_c2psi_k  [pw.x]  (USER)
+   0.5%        22  n1fv_8  [n1fv_8.c:?]  (FFTW)
+   0.4%        19  zgemm_kernel_n_COOPERLAKE  [libopenblasp-r0.3.33.so]  (BLA
+   0.4%        19  zgemm_kernel_l_COOPERLAKE  [libopenblasp-r0.3.33.so]  (BLA
+   0.4%        19  libprof_now  [timer.c:12]  (ETC)
+   0.4%        17  __GI___libc_read  [read.c:26]  (ETC)
+   0.4%        16  sum_band_k.5  [sum_band.f90:?]  (USER)
+   0.3%        15  t2bv_4  [t2bv_4.c:?]  (FFTW)
+   0.3%        14  ylmr2_  [pw.x]  (USER)
+   0.3%        13  init_us_2_acc_  [pw.x]  (USER)
+   0.3%        13  g_psi_  [pw.x]  (USER)
+   0.3%        13  fftw_cpy1d  [libfftw3.so.3.7.11]  (FFTW)
+   0.3%        12  on_overflow  [roofline_sampler.c:187]  (ETC)
+   0.3%        12  __getrusage  [getrusage.c:29]  (ETC)
+   0.2%        10  __beta_mod_MOD_interp_beta  [pw.x]  (USER)
+   0.2%        10  fftw_cpy2d  [libfftw3.so.3.7.11]  (FFTW)
+   0.2%        10  apply  [buffered.c:?]  (FFTW)
+   0.2%         9  t2fv_4  [t2fv_4.c:?]  (FFTW)
+   0.2%         8  apply  [direct.c:?]  (FFTW)
+   0.2%         8  __pthread_rwlock_rdlock_full64  [pthread_rwlock_common.c:3
+   0.2%         8  fftw_measure_execution_time  [libfftw3.so.3.7.11]  (FFTW)
+   0.2%         8  usnldiag_  [pw.x]  (USER)
    0.2%         7  n1_8  [n1_8.c:?]  (FFTW)
    0.2%         7  zgemm_itcopy_COOPERLAKE  [libopenblasp-r0.3.33.so]  (BLAS)
-   0.2%         7  fftw_execute_dft  [libprof.h:165]  (ETC)
-   0.2%         7  apply  [vrank-geq1.c:?]  (FFTW)
-   0.1%         6  n1bv_2  [n1bv_2.c:?]  (FFTW)
-   0.1%         6  n2fv_8  [n2fv_8.c:?]  (FFTW)
-   0.1%         6  usnldiag_  [pw.x]  (USER)
-   0.1%         6  zgemm_incopy_COOPERLAKE  [libopenblasp-r0.3.33.so]  (BLAS)
-   0.1%         5  zgemm_oncopy_COOPERLAKE  [libopenblasp-r0.3.33.so]  (BLAS)
-   0.1%         5  stres_us_  [pw.x]  (USER)
-   0.1%         5  n1_16  [n1_16.c:?]  (FFTW)
-   0.1%         5  fftw_cpy2d_pair  [libfftw3.so.3.7.11]  (FFTW)
-   0.1%         5  n1fv_16  [n1fv_16.c:?]  (FFTW)
-   ... 170 more below 0.1% of CPU time (report --threshold 0 to show all)
+   0.2%         7  n1_32  [n1_32.c:?]  (FFTW)
+   0.1%         6  __fft_helper_subroutines_MOD_fftx_psi2c_k  [pw.x]  (USER)
+   0.1%         6  stres_us_  [pw.x]  (USER)
+   0.1%         5  n1bv_16  [n1bv_16.c:?]  (FFTW)
+   0.1%         5  n1_2  [n1_2.c:?]  (FFTW)
+   0.1%         5  __fft_helper_subroutines_MOD_fftx_c2psi_k._omp_fn.0  [fft_
+   ... 182 more below 0.1% of CPU time (report --threshold 0 to show all)
 
    ⚠ no source-line info for 19% of the hotspots above — file:line shows a
      module/binary name (or 'file:?'); those objects were built without -g
      or were stripped, so line-level hotspots are unavailable for them.
      this includes your own application code — rebuild it first.
-     affected: n1bv_32.c, n1fv_32.c, pw.x, n1_32.c, libopenblasp-r0.3.33.so, direct.c
+     affected: n1bv_32.c, pw.x, n1fv_32.c, libopenblasp-r0.3.33.so, libfftw3.so.3.7.11, n1bv_8.c
      → keep line tables when building (optimization is unaffected): cc -O2 -g
        and do not 'strip'. For distro libraries, install the matching
        -dbg / -debuginfo package (e.g. libfftw3-dbg, debuginfo-install <pkg>).
@@ -739,26 +770,26 @@ Table 2:  Library calls by group and function  (tracing)
   ──────────────────────────────────────────────────────────────────────────────
    time% group    function                  count    incl(s)    excl(s)
   ──────────────────────────────────────────────────────────────────────────────
-   37.7% FFTW     fftw_execute_dft        2549003     0.5515     0.5515
-    5.1% FFTW     fftw_plan_dft_3d              2     0.0741     0.0741
-    3.9% BLAS     zgemm_                    13233     0.0564     0.0564
+   37.0% FFTW     fftw_execute_dft        2549003     0.5531     0.5531
+    5.0% FFTW     fftw_plan_dft_3d              2     0.0744     0.0744
+    3.8% BLAS     zgemm_                    13233     0.0562     0.0562
     1.6% LAPACK   zhegvx_                    1072     0.0239     0.0004
     1.3% LAPACK   zheevx_                    1072     0.0193     0.0004
     0.4% LAPACK   zhetrd_                    1372     0.0053     0.0001
     0.4% LAPACK   zstein_                    1072     0.0053     0.0038
-    0.4% LAPACK   zhetd2_                    1372     0.0052     0.0017
-    0.3% LAPACK   dstebz_                    1072     0.0050     0.0003
-    0.3% LAPACK   dlaebz_                    3216     0.0047     0.0047
-    0.3% LAPACK   zhegst_                    1372     0.0042     0.0001
+    0.3% LAPACK   zhetd2_                    1372     0.0052     0.0017
+    0.3% LAPACK   dstebz_                    1072     0.0051     0.0003
+    0.3% LAPACK   dlaebz_                    3216     0.0048     0.0048
+    0.3% LAPACK   zhegst_                    1372     0.0041     0.0001
     0.3% LAPACK   zhegs2_                    1372     0.0040     0.0031
     0.2% LAPACK   zlarfg_                    7821     0.0028     0.0014
-    0.2% LAPACK   zhegv_                      300     0.0026     0.0001
+    0.2% LAPACK   zhegv_                      300     0.0025     0.0001
     0.2% LAPACK   zunmtr_                    1072     0.0023     0.0001
     0.1% LAPACK   zunmql_                    1072     0.0021     0.0001
     0.1% LAPACK   zunm2l_                    1072     0.0020     0.0003
-    0.1% LAPACK   zheev_                      300     0.0019     0.0001
     0.1% LAPACK   zlarf1l_                   7821     0.0019     0.0015
-    0.1% LAPACK   zlanhe_                    1372     0.0017     0.0017
+    0.1% LAPACK   zheev_                      300     0.0019     0.0001
+    0.1% LAPACK   zlanhe_                    1372     0.0017     0.0016
    ... 49 more below 0.1% of CPU time (report --threshold 0 to show all)
   ──────────────────────────────────────────────────────────────────────────────
   legend:
@@ -775,7 +806,7 @@ Table 4:  I/O statistics  (tracing)
   ──────────────────────────────────────────────────────────────────────────────
    time% call            count   r/R   incl(s)      bytes    GB/s
   ──────────────────────────────────────────────────────────────────────────────
-    7.4% read             2104   1/1      0.1085     253879    0.00
+    7.3% read             2104   1/1      0.1087     253879    0.00
     0.2% openat           2413   1/1      0.0034          0    0.00
     0.1% close            2266   1/1      0.0015          0    0.00
   ──────────────────────────────────────────────────────────────────────────────

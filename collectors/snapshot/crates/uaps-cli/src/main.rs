@@ -16,7 +16,7 @@ use uaps_collect::{
     SwCollector, ThreadCollector, TopdownCollector,
 };
 use uaps_core::{Collector, Snapshot, Target};
-use uaps_report::{render, Format};
+use uaps_report::{render_json, Format};
 
 /// Locate the MPI PMPI shim: an explicit `UAPS_MPI_SHIM` override wins,
 /// otherwise the copy built by `build.rs` (empty if mpicc was absent).
@@ -26,14 +26,147 @@ fn resolve_mpi_shim() -> Result<String> {
             return Ok(p);
         }
     }
+    // Alongside the executable (survives `make install` / a moved binary, where
+    // the compile-time OUT_DIR path below no longer exists).
+    if let Ok(exe) = std::env::current_exe() {
+        if let Some(dir) = exe.parent() {
+            let beside = dir.join("uaps_mpi.so");
+            if beside.exists() {
+                return Ok(beside.to_string_lossy().into_owned());
+            }
+        }
+    }
     let built = env!("UAPS_MPI_SHIM_BUILT");
     if !built.is_empty() && Path::new(built).exists() {
         return Ok(built.to_string());
     }
     anyhow::bail!(
-        "MPI shim unavailable (mpicc was missing when uaps was built). \
-         Build shim/mpi/uaps_mpi.c with mpicc and set UAPS_MPI_SHIM to its path."
+        "MPI shim unavailable (no C compiler when uaps was built, or the binary was \
+         moved away from its build tree). Build shim/mpi/uaps_mpi.c with a C compiler \
+         and set UAPS_MPI_SHIM to its path, or place uaps_mpi.so next to the uaps binary."
     )
+}
+
+/// Locate the shared core renderer (`core/cli/upat`) relative to this binary so
+/// uaps and upat render through ONE engine. The dev tree and the install layout
+/// both keep `core/` a few levels above the uaps binary
+/// (`…/collectors/snapshot/target/<profile>/uaps` → `…/core/cli/upat`).
+fn find_core_upat() -> Option<PathBuf> {
+    if let Ok(p) = std::env::var("UAPS_CORE_UPAT") {
+        let p = PathBuf::from(p);
+        if p.exists() {
+            return Some(p);
+        }
+    }
+    let exe = std::env::current_exe().ok()?;
+    let mut dir = exe.parent();
+    for _ in 0..6 {
+        let d = dir?;
+        let cand = d.join("core").join("cli").join("upat");
+        if cand.exists() {
+            return Some(cand);
+        }
+        dir = d.parent();
+    }
+    None
+}
+
+/// Produce the human report (text/HTML) by handing the snapshot to the shared
+/// core renderer — the single owner of the roofline, viewpoints and insights.
+/// Removes a temp staging directory on drop, so every early-return path (a
+/// failed snapshot write, a renderer error) cleans up — not just the success
+/// case at the end of `render_via_core`.
+struct TempDir(PathBuf);
+impl Drop for TempDir {
+    fn drop(&mut self) {
+        let _ = std::fs::remove_dir_all(&self.0);
+    }
+}
+
+fn render_via_core(
+    snapshot: &Snapshot,
+    command: &[String],
+    format: Format,
+    output: &Option<PathBuf>,
+) -> Result<()> {
+    // HTML needs a real output directory to write into: with no `-o` we'd render
+    // into the temp staging dir and then delete it, producing nothing on a 0 exit.
+    // Fail loudly instead.
+    if matches!(format, Format::Html) && output.is_none() {
+        anyhow::bail!("uaps: --format html requires -o <dir> to write the report into");
+    }
+    let upat = find_core_upat().context(
+        "uaps: shared core renderer (core/cli/upat) not found next to the binary — \
+         use `--format json` for the raw snapshot, or set UAPS_CORE_UPAT",
+    )?;
+    // Stage the snapshot contract in a result dir the core knows how to read.
+    // The TempDir guard removes it on every return path below.
+    let dir = std::env::temp_dir().join(format!("uaps-render-{}", std::process::id()));
+    std::fs::create_dir_all(&dir)?;
+    let _tmp = TempDir(dir.clone());
+    let snap = dir.join("snap.json");
+    std::fs::write(&snap, render_json(snapshot))
+        .with_context(|| format!("failed to stage snapshot at {}", snap.display()))?;
+    // A manifest carries the run command so the core's Run/Software sections show
+    // the application, command line, and the target binary's compiler (the core
+    // reads `command` from here and resolves the compiler from command[0]).
+    let cmd_json: String = command
+        .iter()
+        .map(|a| {
+            format!(
+                "\"{}\"",
+                a.replace('\\', "\\\\").replace('"', "\\\"")
+            )
+        })
+        .collect::<Vec<_>>()
+        .join(", ");
+    let _ = std::fs::write(
+        dir.join("manifest.json"),
+        format!("{{\"command\": [{cmd_json}]}}\n"),
+    );
+
+    let mut cmd = Command::new(&upat);
+    cmd.arg("report").arg(&dir).arg("--collector").arg("uaps");
+    let result = match format {
+        Format::Html => {
+            // Guaranteed Some by the guard at the top of this function.
+            let outdir = output.clone().expect("html requires -o (checked above)");
+            cmd.arg("--format").arg("html").arg("-o").arg(&outdir);
+            cmd.status().map(|s| s.success()).unwrap_or(false)
+        }
+        _ => {
+            // Text: the core prints to stdout; route it to -o or to stderr (the
+            // target owns stdout), preserving `uaps run`'s pipe-friendly contract.
+            match cmd.output() {
+                Ok(o) => {
+                    // Surface the renderer's own diagnostics: when it exits
+                    // non-zero the user otherwise sees only the generic bail!.
+                    if !o.status.success() && !o.stderr.is_empty() {
+                        use std::io::Write;
+                        let _ = std::io::stderr().write_all(&o.stderr);
+                    }
+                    if !o.status.success() {
+                        false
+                    } else {
+                        match output {
+                            Some(path) => std::fs::write(path, &o.stdout).is_ok(),
+                            None => {
+                                use std::io::Write;
+                                let _ = std::io::stderr().write_all(b"\n");
+                                std::io::stderr().write_all(&o.stdout).is_ok()
+                            }
+                        }
+                    }
+                }
+                Err(_) => false,
+            }
+        }
+    };
+    // `_tmp` (TempDir guard) removes the staging dir when it drops at function exit.
+    if !result {
+        anyhow::bail!("uaps: core renderer ({}) failed", upat.display());
+    }
+    Ok(())
 }
 
 #[derive(Debug, Clone, Copy, ValueEnum)]
@@ -88,6 +221,8 @@ enum Cmd {
         argv: Vec<String>,
     },
     /// Attach to an already-running process (coming in a later phase).
+    /// Hidden from --help until implemented, but still dispatchable.
+    #[command(hide = true)]
     Attach {
         /// PID of the process to profile.
         pid: u32,
@@ -243,23 +378,27 @@ fn run(
 
     // Turn raw counts into APS-style derived metrics (CPI, cache-miss rate, …).
     uaps_core::derive(&mut snapshot);
-    let insights = uaps_core::insights(&snapshot);
 
-    let report = render(&snapshot, &insights, format);
-    match &output {
-        Some(path) => {
-            std::fs::write(path, &report)
-                .with_context(|| format!("failed to write report to {}", path.display()))?;
-            eprintln!("uaps: report written to {}", path.display());
+    // JSON is the on-disk contract — emitted here. The human report (text/HTML)
+    // is produced by the SHARED core renderer (the one place that owns the
+    // roofline, viewpoints and insights for BOTH tiers), so `uaps run` and
+    // `upat report --collector uaps` never diverge. We hand the core a snap.json.
+    match format {
+        Format::Json => {
+            let report = render_json(&snapshot);
+            match &output {
+                Some(path) => {
+                    std::fs::write(path, &report)
+                        .with_context(|| format!("failed to write snapshot to {}", path.display()))?;
+                    eprintln!("uaps: snapshot written to {}", path.display());
+                }
+                None => {
+                    eprintln!();
+                    eprint!("{report}");
+                }
+            }
         }
-        None => {
-            // The target owns stdout — write our report to stderr (like `perf
-            // stat`) so it never mingles with the profiled program's output.
-            // `uaps run -- app > app.out 2> snap.txt` cleanly separates the two;
-            // for machine-readable JSON, use `-o file.json`.
-            eprintln!();
-            eprint!("{report}");
-        }
+        _ => render_via_core(&snapshot, &argv, format, &output)?,
     }
 
     // Mirror the target's exit code so `uaps run` is transparent in pipelines.

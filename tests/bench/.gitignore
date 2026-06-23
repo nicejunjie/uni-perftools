@@ -1,0 +1,14 @@
+# Large downloaded sources / built binaries / run outputs — reproducible, not tracked.
+# Keep tracked: xcheck.sh, CROSSCHECK.md, this .gitignore.
+stream.c
+stream
+hpl-2.3/
+hpcg/
+CloverLeaf_ref/
+TeaLeaf_ref/
+POT3D/
+apoa1/
+hpl-2.3.tar.gz
+out/
+*.o
+HPCG-Benchmark_*.txt

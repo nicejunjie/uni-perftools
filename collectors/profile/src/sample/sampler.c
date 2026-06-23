@@ -16,13 +16,19 @@
 #include <ucontext.h>
 #include <execinfo.h>
 #include <setjmp.h>
+#include <pthread.h>
 
 #define SAMP_SIG   (SIGRTMIN + 6)
 #define LEAF_CAP   8192             /* distinct leaf PCs (leaf mode) */
 #define MAXD       128              /* max frames captured per sample */
 
 static int            enabled;
-static volatile int   active;
+/* `active` gates the handler. Accessed via __atomic_* (SEQ_CST): the release
+ * store in libprof_sample_stop_all() happens-before the acquire load in the
+ * handler, so once a thread observes !active it also sees the stop having
+ * occurred. Plain `volatile int` gave ordering against the optimizer but no
+ * cross-thread memory barrier. */
+static int            active;
 static clockid_t      clockid;
 static int            depth;        /* frames to record (1 = leaf only) */
 
@@ -38,6 +44,7 @@ static int            depth;        /* frames to record (1 = leaf only) */
 static __thread sigjmp_buf      s_unwind_jmp;
 static __thread volatile sig_atomic_t s_unwinding;
 static struct sigaction s_old_segv, s_old_bus;
+static volatile int     s_chain_saved;          /* captured the app's SEGV/BUS handler once */
 
 static void unwind_guard(int sig, siginfo_t *si, void *ctx)
 {
@@ -61,6 +68,37 @@ static void unwind_guard(int sig, siginfo_t *si, void *ctx)
 
 static __thread timer_t s_timer;
 static __thread int     s_armed;
+
+/* Registry of every armed per-thread timer. libprof_sample_stop_all() runs on
+ * ONE thread but must disarm EVERY thread's timer before emit reads the shared
+ * stack tables — otherwise other threads keep firing SAMP_SIG and mutate their
+ * tables (and torn counts) while emit_one walks them. timer_t is a process-wide
+ * handle, so timer_delete() from the finalizing thread disarms a timer created
+ * on another thread. The list is mutex-guarded; the signal path never touches
+ * it. */
+struct tmrnode { timer_t timer; int live; struct tmrnode *next; };
+static struct tmrnode  *tmr_list;
+static pthread_mutex_t  tmr_lock = PTHREAD_MUTEX_INITIALIZER;
+static __thread struct tmrnode *s_tmrnode;
+
+/* Install our SEGV/BUS unwind guard, capturing the app's prior handler as the
+ * chain target the first time. Called OFF the signal path (thread start), not
+ * from inside on_sample, to avoid racing the app's own sigaction every sample.
+ * Idempotent-safe: if our guard is already installed, the captured chain is
+ * left untouched. */
+static void install_unwind_guard(void)
+{
+    struct sigaction g, ps, pb;
+    memset(&g, 0, sizeof(g));
+    g.sa_sigaction = unwind_guard;
+    g.sa_flags = SA_SIGINFO | SA_NODEFER;
+    sigemptyset(&g.sa_mask);
+    sigaction(SIGSEGV, &g, &ps);
+    sigaction(SIGBUS,  &g, &pb);
+    if (!s_chain_saved && ps.sa_sigaction != unwind_guard) {
+        s_old_segv = ps; s_old_bus = pb; s_chain_saved = 1;
+    }
+}
 
 /* ---- call-stack table (one per thread, via tls->samp_stack) -------------- */
 typedef struct {
@@ -107,7 +145,7 @@ static void stack_record(sstack_t *s, uint64_t *f, int n)
 static void on_sample(int sig, siginfo_t *si, void *ctx)
 {
     (void)sig; (void)si;
-    if (!active) return;
+    if (!__atomic_load_n(&active, __ATOMIC_ACQUIRE)) return;
     libprof_tls_t *t = libprof_tls;
     if (!t) return;
 
@@ -136,13 +174,31 @@ static void on_sample(int sig, siginfo_t *si, void *ctx)
 
     sstack_t *s = t->samp_stack;
     if (!s) return;
+
+    /* The target's runtime (gfortran -fbacktrace, OpenMPI) may install its own
+     * SIGSEGV/SIGBUS handler at init, overriding our unwind guard. Rather than
+     * re-arm with sigaction() on every sample (which races the app's handler and
+     * is not async-signal-safe to do unconditionally), the guard is installed
+     * once per thread off-signal in libprof_sample_thread_start(). We re-arm here
+     * ONLY if our guard is no longer the active SEGV handler — i.e. the app
+     * replaced it — using sigaction(SIGSEGV, NULL, &cur) to peek without writing.
+     * In steady state this is a single read syscall and never overwrites a
+     * handler that is still ours. */
+    {
+        struct sigaction cur;
+        if (sigaction(SIGSEGV, NULL, &cur) == 0 && cur.sa_sigaction != unwind_guard)
+            install_unwind_guard();
+    }
+
     void *bt[MAXD];
     int n = 0;
+    int want = depth + 2;                          /* +2: handler + sigtrampoline */
+    if (want > MAXD) want = MAXD;                  /* never overflow bt[] */
     /* guarded: a fault inside backtrace() longjmps back with n unchanged (0),
      * so we still record the leaf rather than crash the target. */
     s_unwinding = 1;
     if (sigsetjmp(s_unwind_jmp, 1) == 0)
-        n = backtrace(bt, depth + 2);              /* +2: handler + sigtrampoline */
+        n = backtrace(bt, want);
     s_unwinding = 0;
     int skip = 2;                                  /* drop on_sample + __restore_rt */
     uint64_t frames[MAXD];
@@ -162,13 +218,7 @@ void libprof_sample_init(void)
         void *w[4]; backtrace(w, 4);                  /* warm up libgcc unwinder off-signal */
         /* install the unwind fault guard (SA_NODEFER so a fault re-enters cleanly
          * for the longjmp); chain to any prior handler for non-sampler faults. */
-        struct sigaction g;
-        memset(&g, 0, sizeof(g));
-        g.sa_sigaction = unwind_guard;
-        g.sa_flags = SA_SIGINFO | SA_NODEFER;
-        sigemptyset(&g.sa_mask);
-        sigaction(SIGSEGV, &g, &s_old_segv);
-        sigaction(SIGBUS, &g, &s_old_bus);
+        install_unwind_guard();
     }
 
     struct sigaction sa;
@@ -179,7 +229,7 @@ void libprof_sample_init(void)
     if (sigaction(SAMP_SIG, &sa, NULL) != 0) return;
 
     enabled = 1;
-    active = 1;
+    __atomic_store_n(&active, 1, __ATOMIC_RELEASE);
     libprof_sample_thread_start();
 }
 
@@ -187,6 +237,11 @@ void libprof_sample_thread_start(void)
 {
     if (!enabled || s_armed) return;
     libprof_tls_t *t = libprof_tls ? libprof_tls : libprof_tls_init();
+
+    /* Re-assert the unwind guard for THIS thread off-signal: the app's runtime
+     * (gfortran/OpenMPI) may have replaced our SEGV/BUS handler after our
+     * constructor ran. Doing it here (not in the handler) avoids racing the app. */
+    if (depth > 1) install_unwind_guard();
 
     if (depth <= 1) {
         if (!t->samp_pc) {
@@ -223,14 +278,60 @@ void libprof_sample_thread_start(void)
     its.it_value = its.it_interval;
     if (timer_settime(s_timer, 0, &its, NULL) != 0) { timer_delete(s_timer); return; }
     s_armed = 1;
+
+    /* Register the timer so stop_all() can disarm it from another thread. */
+    struct tmrnode *node = calloc(1, sizeof(*node));
+    if (node) {
+        node->timer = s_timer; node->live = 1;
+        pthread_mutex_lock(&tmr_lock);
+        node->next = tmr_list; tmr_list = node;
+        pthread_mutex_unlock(&tmr_lock);
+        s_tmrnode = node;
+    }
 }
 
 void libprof_sample_thread_stop(void)
 {
-    if (s_armed) { timer_delete(s_timer); s_armed = 0; }
+    if (!s_armed) return;
+    if (s_tmrnode) {                        /* mark dead so stop_all won't double-delete */
+        pthread_mutex_lock(&tmr_lock);
+        if (s_tmrnode->live) { s_tmrnode->live = 0; timer_delete(s_timer); }
+        pthread_mutex_unlock(&tmr_lock);
+        s_tmrnode = NULL;
+    } else {
+        timer_delete(s_timer);
+    }
+    s_armed = 0;
 }
 
-void libprof_sample_stop_all(void) { active = 0; libprof_sample_thread_stop(); }
+void libprof_sample_stop_all(void)
+{
+    /* Release the stop so the handler's acquire-load observes it (and all writes
+     * before it). After this, any thread that takes a sample early-returns. */
+    __atomic_store_n(&active, 0, __ATOMIC_RELEASE);
+
+    /* Disarm and delete EVERY registered thread's timer (not just this one), so
+     * no thread keeps firing SAMP_SIG and mutating its stack table while emit
+     * reads it. A sample in flight on another thread either already saw active=1
+     * (harmless, completes) or sees active=0 and returns; once timer_delete
+     * returns, no further deliveries occur for that timer. */
+    pthread_mutex_lock(&tmr_lock);
+    for (struct tmrnode *n = tmr_list; n; n = n->next) {
+        if (n->live) { n->live = 0; timer_delete(n->timer); }
+    }
+    pthread_mutex_unlock(&tmr_lock);
+    s_tmrnode = NULL;
+    s_armed = 0;
+    /* Residual risk (acceptable): a handler on another thread that ALREADY passed
+     * the active-load before our release-store can still complete one final record
+     * into ITS OWN thread's table. timer_delete() is synchronous (no further
+     * deliveries after it returns), and finalize runs as a process destructor when
+     * threads are typically already joined (tramp() calls thread_stop on return),
+     * so this is a single, self-contained in-flight sample at worst — versus the
+     * prior behavior where every other thread's timer stayed fully armed and kept
+     * firing throughout emit. There is no portable async-signal-safe way to join
+     * an in-flight handler here without a heavier per-thread ack protocol. */
+}
 
 /* ---- emit the whole "sampling" JSON object (called from emit.c) ---------- */
 struct ectx { FILE *f; int first; uint64_t total, dropped; };
@@ -274,8 +375,16 @@ static void emit_maps(FILE *f)
         if (perms[2] != 'x') continue;
         char *p = path; while (*p == ' ') p++;
         if (p[0] != '/') continue;
-        fprintf(f, "%s\n      {\"path\":\"%s\",\"start\":%lu,\"end\":%lu,\"off\":%lu}",
-                first ? "" : ",", p, start, end, off);
+        /* Emit the path as a properly escaped JSON string. A raw %s breaks the
+         * whole prof.*.json (and silently drops the run) if a mapped path contains
+         * a '"' or '\\' — rare but legal in a filename. Escape inline, matching
+         * emit.c's json_str(). */
+        fprintf(f, "%s\n      {\"path\":\"", first ? "" : ",");
+        for (char *q = p; *q; q++) {
+            if (*q == '"' || *q == '\\') fputc('\\', f);
+            fputc(*q, f);
+        }
+        fprintf(f, "\",\"start\":%lu,\"end\":%lu,\"off\":%lu}", start, end, off);
         first = 0;
     }
     fclose(m);
@@ -298,6 +407,7 @@ void libprof_sample_emit(void *fp)
 /* ---- pthread_create interposer: arm each new thread ---------------------- */
 #include <dlfcn.h>
 #include <pthread.h>
+#include <errno.h>
 typedef void *(*startfn)(void *);
 struct tramparg { startfn fn; void *arg; };
 
@@ -323,10 +433,13 @@ int pthread_create(pthread_t *thread, const pthread_attr_t *attr,
 {
     static int (*real)(pthread_t *, const pthread_attr_t *, void *(*)(void *), void *);
     if (!real) real = dlsym(RTLD_NEXT, "pthread_create");
+    if (!real) return EAGAIN;               /* no real pthread_create: cannot proceed */
     int roof = libprof_roofline_enabled && libprof_roofline_enabled();
     if (!enabled && !roof) return real(thread, attr, start, arg);
     struct tramparg *ta = malloc(sizeof(*ta));
     if (!ta) return real(thread, attr, start, arg);
     ta->fn = start; ta->arg = arg;
-    return real(thread, attr, tramp, ta);
+    int rc = real(thread, attr, tramp, ta);
+    if (rc != 0) free(ta);                  /* failed: tramp never runs, so free its arg */
+    return rc;
 }

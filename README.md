@@ -34,6 +34,19 @@ upat roofline -- ./app             # per-function roofline (event sampling)
 upat scale   R1 R2 ...             # strong/weak scaling across runs
 ```
 
+### Options (env, `upat` collection)
+The `upat run`/`collect` collector reads a few env vars (defaults shown):
+
+| Variable | Default | Effect |
+| --- | --- | --- |
+| `UPAT_SAMPLE` | `1` | Call-stack sampling on; `0` traces sci-lib/MPI/IO only. |
+| `UPAT_SAMPLE_HZ` | `1000` | Sampling frequency in Hz (clamped 1–100000). |
+| `UPAT_SAMPLE_STACK` | `64` | Max call-stack depth captured (1–128). |
+| `UPAT_HEAP` | `0` | `1` adds heap high-water (peak / live-at-exit / allocs). Off by default — leaves the allocator untouched. |
+| `UPAT_ROOFLINE` | `0` | `1` runs the per-function roofline characterization pass (or use `upat roofline`). |
+| `UPAT_OUTPUT` | `upat` | Output prefix/dir for the raw per-rank JSON. |
+| `UPAT_QUIET` | `0` | `1` silences the startup/finish banner. |
+
 ## Layout
 ```
 collectors/profile/    C profiler  → libupat-{preload,frida}.so + upat-report.py

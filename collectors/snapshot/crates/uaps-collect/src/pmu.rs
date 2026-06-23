@@ -99,25 +99,76 @@ pub fn open_event(etype: u32, config: u64, pid: libc::pid_t, cpu: i32, group_fd:
     }
 }
 
+/// A scaled grouped read plus its multiplexing coverage.
+pub struct GroupRead {
+    pub vals: Vec<f64>,
+    /// `time_running / time_enabled` in `[0,1]`: the fraction of the window the
+    /// group was actually scheduled. 1.0 = never multiplexed off.
+    pub coverage: f64,
+}
+
 /// Read `n` grouped values from a leader, scaled for multiplexing.
 /// Layout (PERF_FORMAT_GROUP, no IDs): [nr, time_enabled, time_running, v0..].
-pub fn read_values(leader: &mut File, n: usize) -> Option<Vec<f64>> {
+/// Returns the scaled values and the group's coverage, or `None` on a failed
+/// read (incl. a torn/over- or under-sized record, or a dead fd / ESRCH).
+pub fn read_values(leader: &mut File, n: usize) -> Option<GroupRead> {
     let mut buf = vec![0u8; (3 + n) * 8];
     leader.read_exact(&mut buf).ok()?;
     let at = |i: usize| -> f64 { u64::from_ne_bytes(buf[i * 8..i * 8 + 8].try_into().unwrap()) as f64 };
     let nr = at(0) as usize;
     let time_enabled = at(1);
     let time_running = at(2);
-    if nr < n || time_running == 0.0 {
+    // `nr != n` (not just `nr < n`): if the kernel returns MORE members than we
+    // asked for, `read_exact` consumed only the first n values, leaving a torn
+    // record in the fd that would corrupt every subsequent sample — fail instead.
+    if nr != n || time_running == 0.0 || time_enabled == 0.0 {
         return None;
     }
     let scale = time_enabled / time_running;
-    Some((0..n).map(|k| at(3 + k) * scale).collect())
+    Some(GroupRead {
+        vals: (0..n).map(|k| at(3 + k) * scale).collect(),
+        coverage: (time_running / time_enabled).clamp(0.0, 1.0),
+    })
 }
 
 struct Group {
     leader: File,
     _members: Vec<File>,
+    /// Last successful scaled read. Counters are cumulative, so the newest read
+    /// supersedes the previous one; a thread that has since exited keeps this
+    /// cached value instead of vanishing from the totals (see `poll`).
+    last: Option<Vec<f64>>,
+    /// Coverage of the last successful read (`time_running/time_enabled`). Used
+    /// to drop heavily-multiplexed groups from the cross-thread *absolute* sums
+    /// instead of extrapolating fabricated counts.
+    coverage: f64,
+    /// Set once a read of this group's fd fails (ESRCH / thread gone). A dead
+    /// group is pruned rather than left summing its stale `last` forever.
+    dead: bool,
+}
+
+/// Read field 22 (`starttime`, in clock ticks) of `/proc/<pid>/task/<tid>/stat`.
+/// Combined with the tid it uniquely identifies a thread incarnation: when the
+/// kernel recycles a tid (pid_max wrap on a long run) the new thread gets a
+/// different starttime, so dedup keyed on `(tid, starttime)` does not mistake it
+/// for the dead one. Field 2 (`comm`) may contain spaces/parens, so we split
+/// after the final ')'. Returns 0 if it can't be read (still dedups on tid).
+fn thread_starttime(pid: u32, tid: libc::pid_t) -> u64 {
+    match std::fs::read_to_string(format!("/proc/{pid}/task/{tid}/stat")) {
+        Ok(s) => parse_starttime(&s),
+        Err(_) => 0,
+    }
+}
+
+/// Pull field 22 (`starttime`) out of a `/proc/.../stat` line. Field 2 (`comm`)
+/// can contain spaces and parens, so we split after the FINAL ')': everything
+/// after is space-separated `state ppid ...`, where starttime is the 20th token
+/// (field 22 − fields 1,2 already consumed). Returns 0 if malformed.
+fn parse_starttime(stat: &str) -> u64 {
+    let Some((_, after)) = stat.rsplit_once(')') else {
+        return 0;
+    };
+    after.split_whitespace().nth(19).and_then(|f| f.parse().ok()).unwrap_or(0)
 }
 
 fn open_group(spec: &[EventCfg], pid: libc::pid_t, cpu: i32) -> Option<Group> {
@@ -132,7 +183,7 @@ fn open_group(spec: &[EventCfg], pid: libc::pid_t, cpu: i32) -> Option<Group> {
     unsafe {
         sys::ioctls::ENABLE(lfd, sys::bindings::PERF_IOC_FLAG_GROUP);
     }
-    Some(Group { leader, _members: members })
+    Some(Group { leader, _members: members, last: None, coverage: 0.0, dead: false })
 }
 
 /// Manages a set of counter groups replicated across every thread of a target.
@@ -142,7 +193,11 @@ fn open_group(spec: &[EventCfg], pid: libc::pid_t, cpu: i32) -> Option<Group> {
 pub struct ThreadGroups {
     pid: u32,
     groups: Vec<Vec<EventCfg>>,
-    seen: HashSet<libc::pid_t>,
+    /// Discovered scopes already opened. For threads the key is
+    /// `(tid, starttime)` so a recycled tid (pid_max wrap on a long run) is
+    /// treated as a fresh thread instead of being skipped; for system-wide CPUs
+    /// it is `(cpu, 0)`.
+    seen: HashSet<(i64, u64)>,
     /// Per thread: one optional Group per spec group (None if it failed).
     threads: Vec<Vec<Option<Group>>>,
 }
@@ -171,31 +226,72 @@ impl ThreadGroups {
         }
         if system_wide() {
             for cpu in online_cpus() {
-                if !self.seen.insert(cpu) {
+                if !self.seen.insert((cpu as i64, 0)) {
                     continue;
                 }
                 let opened = self.groups.iter().map(|spec| open_group(spec, -1, cpu)).collect();
                 self.threads.push(opened);
             }
-            return;
-        }
-        let dir = format!("/proc/{}/task", self.pid);
-        let Ok(entries) = std::fs::read_dir(&dir) else { return };
-        for entry in entries.flatten() {
-            let Ok(tid) = entry.file_name().to_string_lossy().parse::<libc::pid_t>() else {
-                continue;
-            };
-            if !self.seen.insert(tid) {
-                continue;
+        } else if let Ok(entries) = std::fs::read_dir(format!("/proc/{}/task", self.pid)) {
+            for entry in entries.flatten() {
+                let Ok(tid) = entry.file_name().to_string_lossy().parse::<libc::pid_t>() else {
+                    continue;
+                };
+                let starttime = thread_starttime(self.pid, tid);
+                if !self.seen.insert((tid as i64, starttime)) {
+                    continue;
+                }
+                let opened = self.groups.iter().map(|spec| open_group(spec, tid, -1)).collect();
+                self.threads.push(opened);
             }
-            let opened = self.groups.iter().map(|spec| open_group(spec, tid, -1)).collect();
-            self.threads.push(opened);
+        }
+        // Cache every live group's counters now. A thread that exits before the
+        // final read still contributes its last poll instead of dropping out.
+        self.poll();
+    }
+
+    /// Refresh each live group's cached counter read. Called on every `scan`
+    /// (i.e. every sample) and once more in `read_sums`.
+    fn poll(&mut self) {
+        let sizes: Vec<usize> = self.groups.iter().map(|g| g.len()).collect();
+        for thread in &mut self.threads {
+            for (gi, slot) in thread.iter_mut().enumerate() {
+                let Some(group) = slot else { continue };
+                if group.dead {
+                    continue;
+                }
+                match read_values(&mut group.leader, sizes[gi]) {
+                    Some(r) => {
+                        group.last = Some(r.vals);
+                        group.coverage = r.coverage;
+                    }
+                    // Read failed. Two cases:
+                    //  - We had a prior successful read → the thread/process just
+                    //    exited (ESRCH). Keep its last cumulative read but stop
+                    //    polling it (so a recycled TID can't double-count it).
+                    //  - We never read it successfully → it may simply not have
+                    //    been scheduled yet (just opened, or its CPU still idle —
+                    //    `time_running == 0` right after `scan()` opens it). Leave
+                    //    it to retry on the next poll. Pruning here permanently
+                    //    drops a counter that is merely slow to start, which gapped
+                    //    HPL/HPCG FP (per-CPU groups first-polled before the ranks
+                    //    spun up).
+                    None => {
+                        if group.last.is_some() {
+                            group.dead = true;
+                        }
+                    }
+                }
+            }
         }
     }
 
     /// Per-event totals summed across all threads, flattened across groups.
-    /// `None` for any event that no thread successfully programmed.
+    /// Uses each group's most recent successful read (cached by `poll`), so
+    /// threads that have already exited still count. `None` for any event that
+    /// no thread ever successfully read.
     pub fn read_sums(&mut self) -> Vec<Option<f64>> {
+        self.poll(); // capture still-live threads one last time
         let sizes: Vec<usize> = self.groups.iter().map(|g| g.len()).collect();
         let total: usize = sizes.iter().sum();
         let mut offsets = Vec::with_capacity(sizes.len());
@@ -207,17 +303,51 @@ impl ThreadGroups {
 
         let mut sums = vec![0.0f64; total];
         let mut present = vec![false; total];
-        for thread in &mut self.threads {
-            for (gi, group) in thread.iter_mut().enumerate() {
+        for thread in &self.threads {
+            for (gi, group) in thread.iter().enumerate() {
                 let Some(group) = group else { continue };
-                if let Some(vals) = read_values(&mut group.leader, sizes[gi]) {
-                    for (j, v) in vals.into_iter().enumerate() {
-                        sums[offsets[gi] + j] += v;
-                        present[offsets[gi] + j] = true;
-                    }
+                let Some(vals) = &group.last else { continue };
+                // NOTE: we deliberately do NOT gap groups on low multiplexing
+                // coverage. `uaps -a` runs ~5-6 event groups competing for AMD's
+                // 6 PMCs, so even a perfectly-pinned compute-bound run gives each
+                // group a low per-group `time_running/time_enabled` (~0.15) — the
+                // values in `vals` are already scaled by that factor in
+                // `read_values`, which compensates correctly (HPL GFLOPS=535 here
+                // matches the validated ground truth). A coverage floor here
+                // wrongly gapped that validated metric, so the raw counts are
+                // always summed; `coverage` is retained only for diagnostics.
+                for (j, v) in vals.iter().enumerate() {
+                    sums[offsets[gi] + j] += *v;
+                    present[offsets[gi] + j] = true;
                 }
             }
         }
         sums.into_iter().zip(present).map(|(s, p)| p.then_some(s)).collect()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn parses_starttime_field_22_with_parens_in_comm() {
+        // A real /proc/<pid>/task/<tid>/stat line whose comm contains a space
+        // and parens; field 22 (starttime) is 12481606 here. Splitting after the
+        // FINAL ')' must land on it (the 20th token of the remainder).
+        let line = "848646 (my proc) R 848637 848646 848637 0 -1 4194304 93 0 0 0 \
+                    0 0 0 0 20 0 1 0 12481606 8642560 478 18446744073709551615 0 0";
+        assert_eq!(parse_starttime(line), 12481606);
+        // A different incarnation (recycled tid) yields a different starttime.
+        let line2 = "848646 (my proc) R 848637 848646 848637 0 -1 4194304 93 0 0 0 \
+                     0 0 0 0 20 0 1 0 99999999 8642560 478 18446744073709551615 0 0";
+        assert_eq!(parse_starttime(line2), 99999999);
+    }
+
+    #[test]
+    fn malformed_starttime_is_zero_not_panic() {
+        assert_eq!(parse_starttime(""), 0);
+        assert_eq!(parse_starttime("no close paren 1 2 3"), 0);
+        assert_eq!(parse_starttime("1 (c) R 1 2"), 0); // too few fields
     }
 }

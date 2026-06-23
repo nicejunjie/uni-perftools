@@ -167,7 +167,7 @@ EOF
 $CC -O2 "$TMP/t6.c" -o "$TMP/t6" 2>/dev/null
 OUT=$(run "$TMP/t6" "UPAT_SAMPLE=0")
 ok "I/O: table present"              "echo \"$OUT\" | grep -q 'I/O statistics'"
-ok "I/O: write traced with bytes"   "echo \"$OUT\" | grep -E '^   write ' | grep -qE '[0-9]{7}'"
+ok "I/O: write traced with bytes"   "echo \"$OUT\" | grep -E '^ +[0-9.]+% +write ' | grep -qE '[0-9]{7}'"
 
 # --- heap high-water (opt-in) ---
 cat > "$TMP/t7.c" <<'EOF'

@@ -8,8 +8,8 @@
     ranks          2
     threads/rank   11
     elapsed        1.8 s
-    CPU time       11 s
-    date           2026-06-21 13:51
+    CPU time       10 s
+    date           2026-06-23 08:55
 
 ══ Machine ══
     CPU            AMD Ryzen 9 9950X 16-Core Processor
@@ -21,7 +21,7 @@
 
 ══ Software ══
     OS             Ubuntu 24.04.4 LTS
-    kernel         6.17.0-29-generic
+    kernel         6.17.0-35-generic
     Open MPI       libmpi.so.40.40.7
     OpenBLAS       libopenblasp-r0.3.33.so
     FFTW           libfftw3.so.3.7.11
@@ -38,111 +38,142 @@
 
 
 ══ Performance ══
-    Elapsed time               1.814 s
-    FP throughput              11.95 GFLOP/s (1% of FP64 peak)
-    Avg CPU frequency          5.66 GHz
-    Physical core utilization  18.4% (5.9 cores busy)
-    IPC (instructions/cycle)   0.61
-    CPI (cycles/instruction)   1.63
-    Node memory used (peak)    12.2 GiB
+    Elapsed time               1.775 s
+    FP throughput              11.97 GFLOP/s (0.49% of FP64 peak)
+    Avg CPU frequency          5.55 GHz
+    Physical core utilization  17.5% (5.6 cores busy)
+    IPC (instructions/cycle)   0.67
+    CPI (cycles/instruction)   1.48
+    Node memory used (peak)    6.7 GiB
 
 ══ I/O ══
     disk read                  0 B
-    disk write                 6.7 MiB
+    disk write                 6.1 MiB
 
 ══ Roofline (whole program) ══
-  Roofline (empirical peaks for AMD Ryzen 9 9950X 16-Core Processor):
-    peak compute FP64    1112 GFLOP/s
-    peak compute FP32    2261 GFLOP/s
-    peak DRAM bandwidth  53 GB/s
-    ridge AI FP64        20.85 FLOP/byte
-    ridge AI FP32        42.41 FLOP/byte
-    # AI = arithmetic intensity: FLOPs performed per byte read from DRAM
-    # FP64/FP32 = double/single precision floating point
-    # ridge AI = AI where the compute roof meets the bandwidth roof; below it a
-    #   kernel is memory-bandwidth-bound, above it compute-bound — the minimum AI
-    #   at which this machine's peak GFLOP/s is reachable
+  Roofline ceilings for AMD Ryzen 9 9950X 16-Core Processor:
+    peak compute FP64    2431    GFLOP/s   achievable   (2947 theoretical)
+    peak compute FP32    5013    GFLOP/s   achievable   (5895 theoretical)
+    peak DRAM bandwidth  52      GB/s      achievable   (77 theoretical)
+    ridge AI FP64        46.31 FLOP/byte
+    ridge AI FP32        95.48 FLOP/byte
+      # achievable = microbenchmark-measured peak (register-resident
+      #   FMA kernel for compute, a STREAM triad with non-temporal
+      #   stores for bandwidth) — the realistic ceiling; %peak is
+      #   measured against this
+      # theoretical = hardware-spec upper bound (cores × max-boost
+      #   freq × FLOPs/cycle; memory channels × DDR rate) —
+      #   unreachable in practice (AVX clocks throttle below max boost
+      #   under all-core load)
+      # AI = arithmetic intensity: FLOPs performed per byte read from
+      #   DRAM
+      # FP64/FP32 = double/single precision floating point
+      # ridge AI = AI where the compute roof meets the bandwidth roof;
+      #   below it a kernel is memory-bandwidth-bound, above it
+      #   compute-bound — the minimum AI at which this machine's peak
+      #   GFLOP/s is reachable
 
     GFLOP/s
-            │                              ‾‾‾‾‾‾‾‾‾‾‾‾‾‾‾‾‾‾‾‾‾‾
-       1000 │                          ////                      
-            │                       ///                          
-            │                    ///                             
-            │                 ///                                
-        100 │              ///                                   
-            │           ///                                      
-            │        ///                                         
-            │    ////                       ●                    
-         10 │ ///                                                
-            │/                                                   
+            │                    ································
+            │                 ··///‾‾‾‾‾‾‾‾‾‾‾‾‾‾‾‾‾‾‾‾‾‾‾‾‾‾‾‾‾‾
+       1000 │              ··///                                 
+            │           ··///                                    
+            │        ··///                                       
+            │    ···///                                          
+        100 │ ··////                                             
+            │///                                                 
             │                                                    
             │                                                    
-          1 │                                                    
+         10 │                  ●                                 
+            │                                                    
+            │                                                    
+            │                                                    
             └────────────────────────────────────────────────────
-             0.1          1           10          100        1000  AI (FLOP/byte)
-             ● measured   / bandwidth roof   ‾ compute ceiling
+             1           10           100        1000       10000  AI (FLOP/byte)
+             ● measured   / bandwidth roof   ‾ compute ceiling   · theoretical roof
 
     point                      prec       AI    GFLOP/s    ceiling    %peak  bound
     ──────────────────────────────────────────────────────────────────────────────
-    whole-program (measured)     DP    26.83       11.9     1111.5       1%  latency
+    whole-program (measured)     DP    26.21       12.0     1375.9       1%  latency
     ──────────────────────────────────────────────────────────────────────────────
+    measured application:  12.0 GFLOP/s   0.5 GB/s DRAM   AI 26.208 FLOP/byte
     whole program sits at 1% of the DP ceiling — far below the roofline: latency/overhead/idle-bound, not compute- or bandwidth-bound.
 
 ══ Microarchitecture (top-down pipeline slots) ══
-    retiring (useful)    9.5%
-    frontend-bound      37.0%
-    backend-bound       46.6%
-    bad speculation      0.3%
-    SMT contention       6.5%
-      (retiring + frontend + backend + bad-spec + SMT = 100% of slots)
-    branch mispredict  0.5%   (of branches — main cause of bad speculation)
-    # retiring — pipeline slots doing useful work — instructions that completed and committed
-    # frontend-bound — slots stalled fetching/decoding instructions (instruction-cache, branch, decode)
-    # backend-bound — slots stalled in execution — waiting on data from cache/DRAM or on busy execution units
-    # bad speculation — slots wasted on instructions from mispredicted branches (work later thrown away)
-    # SMT contention — slots lost to the sibling hyperthread sharing this physical core (SMT = simultaneous multithreading)
-    # branch mispredict — fraction of branches predicted wrong — the main cause of 'bad speculation' slots
+    retiring (useful)   10.0%
+    frontend-bound      36.8%
+    backend-bound       46.2%
+    bad speculation      0.5%
+    SMT contention       6.6%
+      # retiring + frontend + backend + bad-spec + SMT = 100% of slots
+    branch mispredict  0.7%   (of branches — main cause of bad speculation)
+      # retiring — pipeline slots doing useful work — instructions
+      #   that completed and committed
+      # frontend-bound — slots stalled fetching/decoding instructions
+      #   (instruction-cache, branch, decode)
+      # backend-bound — slots stalled in execution — waiting on data
+      #   from cache/DRAM or on busy execution units
+      # bad speculation — slots wasted on instructions from
+      #   mispredicted branches (work later thrown away)
+      # SMT contention — slots lost to the sibling hyperthread sharing
+      #   this physical core (SMT = simultaneous multithreading)
+      # branch mispredict — fraction of branches predicted wrong — the
+      #   main cause of 'bad speculation' slots
 
 ══ Memory access ══
-    DRAM bandwidth         0.4 GB/s (1% of peak)
-    cache-miss rate          9.1%
-    last-level cache misses  4.89 per 1000 instructions
-    data-TLB misses          0.08 per 1000 instructions
-    instruction-TLB misses   0.01 per 1000 instructions
-    DRAM fills               0.34 per 1000 instructions
+    DRAM bandwidth         0.5 GB/s (1% of peak)
+    cache-miss rate          9.2%
+    last-level cache misses  4.99 per 1k instructions
+    data-TLB misses          0.06 per 1k instructions
+    instruction-TLB misses   0.01 per 1k instructions
+    DRAM fills               0.34 per 1k instructions
     DRAM-bound               2.2%
     NUMA remote access       0.0%
-    memory-bound (slots)     6.3%
-    # DRAM bandwidth — rate of data moved to/from main memory (DRAM = dynamic RAM, the off-chip main memory)
-    # cache-miss rate — fraction of last-level-cache accesses that missed and had to go to DRAM
-    # last-level cache misses — LLC (last-level cache) misses per 1000 instructions — the largest/slowest on-die cache before DRAM
-    # data-TLB misses — data TLB misses per 1000 instructions (TLB = translation-lookaside buffer; a miss triggers a page-table walk)
-    # instruction-TLB misses — instruction TLB misses per 1000 instructions — page-walk pressure from a large code footprint
-    # NUMA remote access — share of memory accesses served by another socket's memory (NUMA = non-uniform memory access; remote is slower)
-    # memory-bound (slots) — estimated share of pipeline slots stalled waiting on the memory hierarchy
+    memory-bound (slots)     6.9%
+      # DRAM bandwidth — rate of data moved to/from main memory (DRAM
+      #   = dynamic RAM, the off-chip main memory)
+      # cache-miss rate — fraction of last-level-cache accesses that
+      #   missed and had to go to DRAM
+      # last-level cache misses — LLC (last-level cache) misses per 1k
+      #   instructions — the largest/slowest on-die cache before DRAM
+      # data-TLB misses — data TLB misses per 1k instructions (TLB =
+      #   translation-lookaside buffer; a miss triggers a page-table
+      #   walk)
+      # instruction-TLB misses — instruction TLB misses per 1k
+      #   instructions — page-walk pressure from a large code
+      #   footprint
+      # NUMA remote access — share of memory accesses served by
+      #   another socket's memory (NUMA = non-uniform memory access;
+      #   remote is slower)
+      # memory-bound (slots) — estimated share of pipeline slots
+      #   stalled waiting on the memory hierarchy
 
 ══ Vectorization ══
-    FP efficiency 1.1% of vector peak (12 / 1112 GFLOP/s)
+    FP efficiency 0.5% of vector peak (12 / 2431 GFLOP/s)
     → FP throughput far below vector peak in compute-bound code: likely scalar / under-vectorized (or a reference library).
-    # FP efficiency — achieved floating-point throughput vs. the CPU's vector (SIMD) peak — low means scalar/under-vectorized code
+      # FP efficiency — achieved floating-point throughput vs. the
+      #   CPU's vector (SIMD) peak — low means scalar/under-vectorized
+      #   code
     confirm SIMD per loop with a compiler vec report (gcc -fopt-info-vec / icc -qopt-report=5) and build -O3 -march=native.
 
 ══ MPI ══
-    MPI time                 0.11 s
-    MPI % of runtime         18.1%
-    MPI imbalance            15.6%
+    MPI time                 0.08 s
+    MPI % of runtime         14.6%
+    MPI imbalance            6.6%
     ranks                    2
     top calls (time):
-      MPI_Alltoall  (66% of MPI)         0.15 s
-      MPI_Barrier  (17% of MPI)          0.04 s
-      MPI_Allreduce  (9% of MPI)         0.02 s
-      MPI_Bcast  (7% of MPI)             0.02 s
-      MPI_Send  (0% of MPI)              0.00 s
-    # MPI time — time in MPI calls (MPI = Message-Passing Interface, the inter-rank communication library)
-    # MPI imbalance — (max-avg)/max of per-rank MPI time — the recoverable fraction if ranks were balanced
+      MPI_Alltoall  (65% of MPI)         0.11 s
+      MPI_Barrier  (13% of MPI)          0.02 s
+      MPI_Allreduce  (11% of MPI)        0.02 s
+      MPI_Bcast  (10% of MPI)            0.02 s
+      MPI_Send  (1% of MPI)              0.00 s
+      # MPI time — time in MPI calls (MPI = Message-Passing Interface,
+      #   the inter-rank communication library)
+      # MPI imbalance — (max-avg)/max of per-rank MPI time — the
+      #   recoverable fraction if ranks were balanced
 
 ══ Scheduling / OS ══
-    context switches       29765   (16411/s)
-    CPU migrations         283
-    page faults            54107
-    major page faults      26   (disk-backed)
+    context switches                 8263/s   (14670 total)
+    CPU migrations                    139/s   (246 total)
+    page faults (minor+major)       30301/s   (53796 total)
+    major page faults                    21   (disk-backed — should be ~0)

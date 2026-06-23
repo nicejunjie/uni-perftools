@@ -28,12 +28,20 @@ use crate::pmu::{EventCfg, ThreadGroups};
 /// event up after resolution; the encoding comes entirely from the db.
 fn policy(vendor: Vendor) -> &'static [(&'static str, &'static str)] {
     match vendor {
-        // FpRetSseAvxOps already counts FLOPs; demand-fill sources by umask.
+        // FpRetSseAvxOps already counts FLOPs. The ls_dmnd_fills_from_sys events
+        // are DEMAND L1 fills by source — used for the demand-miss locality ratios
+        // (DRAM-bound %, NUMA %). They CANNOT measure DRAM bandwidth: the L2
+        // hardware prefetcher streams DRAM→L2, so demand loads then hit L2 (counted
+        // "from L2", not "from DRAM"). For true DRAM read traffic use
+        // l2_fill_rsp_src.dram_io_* — L2 fills sourced from DRAM, which INCLUDES
+        // prefetcher traffic (near + far cover both NUMA nodes / sockets).
         Vendor::Amd => &[
             ("fp", "fp_ret_sse_avx_ops.all"),
             ("fills_all", "ls_dmnd_fills_from_sys.all"),
             ("fills_dram", "ls_dmnd_fills_from_sys.dram_io_all"),
             ("fills_remote", "ls_dmnd_fills_from_sys.far_all"),
+            ("l2_dram_near", "l2_fill_rsp_src.dram_io_near"),
+            ("l2_dram_far", "l2_fill_rsp_src.dram_io_far"),
         ],
         // FP_ARITH_INST_RETIRED per-width double-precision umasks → weighted FLOPs
         // + a scalar/vector split (vectorization %).
@@ -74,7 +82,15 @@ impl RawPmuCollector {
                 }
             }
         }
-        Self { vendor, role_idx, groups: ThreadGroups::new(vec![spec]), started: None }
+        // Split into perf groups of at most GROUP_MAX events. A single group can
+        // only count if all its events fit in the core PMUs at once, and one PMC
+        // is usually taken by the NMI watchdog — so >4 events can fail to open and
+        // gap the whole set. `read_sums` flattens groups in spec order, so the
+        // role→index mapping above is unchanged. Demand-fill events stay together
+        // in the first group, keeping their ratios exact (no cross-group scaling).
+        const GROUP_MAX: usize = 4;
+        let groups: Vec<Vec<EventCfg>> = spec.chunks(GROUP_MAX).map(<[_]>::to_vec).collect();
+        Self { vendor, role_idx, groups: ThreadGroups::new(groups), started: None }
     }
 }
 
@@ -122,6 +138,12 @@ impl Collector for RawPmuCollector {
                     if let Some(v) = get(role) {
                         out.push(int_metric(key, label, v));
                     }
+                }
+                // True DRAM read traffic = L2 fills sourced from DRAM (incl. the
+                // L2 prefetcher), near + far NUMA nodes. Feeds DRAM bandwidth.
+                if let (Some(near), far) = (get("l2_dram_near"), get("l2_dram_far")) {
+                    out.push(int_metric("mem_dram_reads", "DRAM read fills (incl. prefetch)",
+                                        near + far.unwrap_or(0.0)));
                 }
             }
             Vendor::Intel => {
@@ -190,6 +212,10 @@ mod tests {
             ("ls_dmnd_fills_from_sys.all", 0xff43),
             ("ls_dmnd_fills_from_sys.dram_io_all", 0x4843),
             ("ls_dmnd_fills_from_sys.far_all", 0x5043),
+            // L2 fills from DRAM (incl. prefetch) — drives DRAM bandwidth.
+            // Event 0x165: code[7:0]=0x65, code[11:8]=0x1 (config bit 32+), umask high byte.
+            ("l2_fill_rsp_src.dram_io_near", 0x1_0000_0865),
+            ("l2_fill_rsp_src.dram_io_far", 0x1_0000_4065),
         ];
         for (name, cfg) in expect {
             if let Some((got, _ty)) = crate::pmudb::resolve_config_in(&db, name) {

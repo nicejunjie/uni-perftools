@@ -41,7 +41,7 @@ use crate::pmu::{self, TYPE_RAW};
 const CFG_CYCLES: u64 = 0x0076; // ls_not_halted_cyc
 const CFG_FRONTEND: u64 = (1 << 32) | 0x01A0; // de_no_dispatch_per_slot.no_ops_from_frontend
 const CFG_BACKEND: u64 = (1 << 32) | 0x1EA0; // de_no_dispatch_per_slot.backend_stalls (umask 0x1e)
-const CFG_DISPATCHED: u64 = 0x07AA; // de_src_op_disp.all (umask 0x07)
+const CFG_SMT: u64 = (1 << 32) | 0x60A0; // de_no_dispatch_per_slot.smt_contention (umask 0x60)
 const CFG_RETIRED: u64 = 0x00C1; // ex_ret_ops
 // Backend split (L2): of the cycles where retire is stalled on an incomplete
 // op, how many are waiting on a load (memory) vs other execution (core).
@@ -60,6 +60,16 @@ struct ThreadGroup {
     _main_members: Vec<File>,
     split_leader: Option<File>,
     _split_member: Option<File>,
+    /// Last successful reads (cumulative counters), refreshed every sample so a
+    /// thread that exits before `finish` still contributes its final values.
+    main_last: Option<Vec<f64>>,
+    split_last: Option<Vec<f64>>,
+    /// Set once the main group's fd read fails (thread exited / ESRCH) after we
+    /// captured at least one value: stop polling but keep the last good read.
+    /// If the very first read fails the whole group is pruned in `scan_threads`.
+    main_dead: bool,
+    /// Same, for the best-effort split group's fd.
+    split_dead: bool,
 }
 
 /// Open a grouped event set on thread `tid`: a leader plus members sharing its
@@ -81,8 +91,12 @@ fn open_grouped(pid: libc::pid_t, cpu: i32, leader_cfg: u64, member_cfgs: &[u64]
 /// Open both top-down groups on one scope (a thread, or a CPU when system-wide).
 /// The L1 group is required; the backend-split group is best-effort.
 fn open_group(pid: libc::pid_t, cpu: i32) -> Option<ThreadGroup> {
+    // 5-event group: the four no-dispatch / retire counters share the leader's
+    // cycles. Bad speculation is derived as the remaining slots (the AMD L1 set —
+    // retiring, frontend, backend, smt_contention, bad_spec — partitions all
+    // slots), so it needs no separate dispatched-ops event and the group stays ≤5.
     let (main_leader, main_members) =
-        open_grouped(pid, cpu, CFG_CYCLES, &[CFG_FRONTEND, CFG_BACKEND, CFG_DISPATCHED, CFG_RETIRED])?;
+        open_grouped(pid, cpu, CFG_CYCLES, &[CFG_FRONTEND, CFG_BACKEND, CFG_SMT, CFG_RETIRED])?;
     let (split_leader, split_member) =
         match open_grouped(pid, cpu, CFG_NOT_COMPLETE, &[CFG_LOAD_NOT_COMPLETE]) {
             Some((l, mut m)) => (Some(l), m.pop()),
@@ -93,14 +107,33 @@ fn open_group(pid: libc::pid_t, cpu: i32) -> Option<ThreadGroup> {
         _main_members: main_members,
         split_leader,
         _split_member: split_member,
+        main_last: None,
+        split_last: None,
+        main_dead: false,
+        split_dead: false,
     })
+}
+
+/// Read field 22 (`starttime`, clock ticks) of `/proc/<pid>/task/<tid>/stat`,
+/// to disambiguate a recycled tid (pid_max wrap) from the thread it replaced.
+/// Field 2 (`comm`) may contain spaces/parens, so split after the final ')'.
+fn thread_starttime(pid: u32, tid: libc::pid_t) -> u64 {
+    let Ok(s) = std::fs::read_to_string(format!("/proc/{pid}/task/{tid}/stat")) else {
+        return 0;
+    };
+    let Some(after) = s.rsplit_once(')').map(|(_, r)| r) else {
+        return 0;
+    };
+    after.split_whitespace().nth(19).and_then(|f| f.parse().ok()).unwrap_or(0)
 }
 
 pub struct TopdownCollector {
     supported: bool,
     pid: u32,
-    /// Threads we've already opened a group for (avoid reopening each sample).
-    seen: HashSet<libc::pid_t>,
+    /// Scopes we've already opened a group for (avoid reopening each sample).
+    /// Threads are keyed `(tid, starttime)` so a recycled tid is reopened as a
+    /// new thread; system-wide CPUs are keyed `(cpu, 0)`.
+    seen: HashSet<(i64, u64)>,
     groups: Vec<ThreadGroup>,
 }
 
@@ -118,7 +151,7 @@ impl TopdownCollector {
     fn scan_threads(&mut self) {
         if pmu::system_wide() {
             for cpu in pmu::online_cpus() {
-                if !self.seen.insert(cpu) {
+                if !self.seen.insert((cpu as i64, 0)) {
                     continue;
                 }
                 if let Some(group) = open_group(-1, cpu) {
@@ -127,17 +160,46 @@ impl TopdownCollector {
             }
             return;
         }
-        let dir = format!("/proc/{}/task", self.pid);
-        let Ok(entries) = std::fs::read_dir(&dir) else { return };
-        for entry in entries.flatten() {
-            let Ok(tid) = entry.file_name().to_string_lossy().parse::<libc::pid_t>() else {
-                continue;
-            };
-            if !self.seen.insert(tid) {
-                continue; // already handled (success or failure)
+        if let Ok(entries) = std::fs::read_dir(format!("/proc/{}/task", self.pid)) {
+            for entry in entries.flatten() {
+                let Ok(tid) = entry.file_name().to_string_lossy().parse::<libc::pid_t>() else {
+                    continue;
+                };
+                let starttime = thread_starttime(self.pid, tid);
+                if !self.seen.insert((tid as i64, starttime)) {
+                    continue; // already handled (success or failure)
+                }
+                if let Some(group) = open_group(tid, -1) {
+                    self.groups.push(group);
+                }
             }
-            if let Some(group) = open_group(tid, -1) {
-                self.groups.push(group);
+        }
+        self.poll();
+    }
+
+    /// Cache every live group's counters. Counters are cumulative, so the latest
+    /// read wins; an exited thread keeps its last poll (instead of dropping out
+    /// of the sums in `finish`).
+    fn poll(&mut self) {
+        // Prune groups whose main fd died before we ever read it (a thread that
+        // exited within the first sample interval) — they have no data and would
+        // otherwise linger. Groups with a cached read are kept (their last good
+        // cumulative values still count) but marked dead so we stop polling them.
+        self.groups.retain(|g| !(g.main_dead && g.main_last.is_none()));
+        for group in &mut self.groups {
+            if !group.main_dead {
+                match pmu::read_values(&mut group.main_leader, 5) {
+                    Some(r) => group.main_last = Some(r.vals),
+                    None => group.main_dead = true,
+                }
+            }
+            if let Some(leader) = group.split_leader.as_mut() {
+                if !group.split_dead {
+                    match pmu::read_values(leader, 2) {
+                        Some(r) => group.split_last = Some(r.vals),
+                        None => group.split_dead = true,
+                    }
+                }
             }
         }
     }
@@ -171,30 +233,40 @@ impl Collector for TopdownCollector {
     }
 
     fn finish(&mut self) -> Result<Vec<Metric>> {
-        // Aggregate raw counts across all per-thread groups, then derive the
-        // whole-process ratios from the sums.
-        let (mut cycles, mut frontend, mut backend, mut dispatched, mut retired) =
+        // Capture any still-live threads, then aggregate raw counts across all
+        // per-thread groups (using each group's last cached read so threads that
+        // already exited still count), and derive whole-process ratios.
+        self.poll();
+        let (mut cycles, mut frontend, mut backend, mut smt, mut retired) =
             (0.0, 0.0, 0.0, 0.0, 0.0);
         let (mut not_complete, mut load_not_complete) = (0.0, 0.0);
+        // Parallel sums restricted to threads whose best-effort L2 split group
+        // also read: the memory/core fraction (over `not_complete`) and the
+        // backend slots it multiplies must come from the *same* thread set, or
+        // the product mixes two populations when the split fails to open on some
+        // threads under PMC pressure.
+        let (mut cycles_split, mut backend_split) = (0.0, 0.0);
         let mut threads = 0;
+        let mut split_threads = 0;
 
-        for group in &mut self.groups {
-            if let Some(v) = pmu::read_values(&mut group.main_leader, 5) {
+        for group in &self.groups {
+            if let Some(v) = &group.main_last {
                 cycles += v[0];
                 frontend += v[1];
                 backend += v[2];
-                dispatched += v[3];
+                smt += v[3];
                 retired += v[4];
                 threads += 1;
 
-                // Only fold in this thread's L2 split when its main group also
-                // read — otherwise the mem/core ratio is summed over a different
-                // set of threads than `backend`, skewing the split.
-                if let Some(leader) = group.split_leader.as_mut() {
-                    if let Some(v) = pmu::read_values(leader, 2) {
-                        not_complete += v[0];
-                        load_not_complete += v[1];
-                    }
+                // Fold this thread's L2 split (and the matching backend/cycles)
+                // only when its split group also read, so the mem/core ratio and
+                // the backend it scales share one thread population.
+                if let Some(s) = &group.split_last {
+                    not_complete += s[0];
+                    load_not_complete += s[1];
+                    cycles_split += v[0];
+                    backend_split += v[2];
+                    split_threads += 1;
                 }
             }
         }
@@ -222,28 +294,47 @@ impl Collector for TopdownCollector {
                 label: "Backend bound".into(),
                 value: MetricValue::Percent(backend_pct),
             },
+            Metric {
+                key: "topdown_smt_pct",
+                label: "SMT contention".into(),
+                value: MetricValue::Percent(pct(smt)),
+            },
         ];
 
         // L2 backend split: of backend-bound slots, the fraction stalled on a
-        // load (memory) vs other execution resources (core).
-        if not_complete > 0.0 {
+        // load (memory) vs other execution resources (core). Both the fraction
+        // and the backend % it scales are taken over the SAME thread set (those
+        // with a split read), and only when the split covered most main threads
+        // — otherwise the split's population is too partial to represent the
+        // whole-process backend, so we gap it rather than mislead.
+        let split_slots = SLOTS_PER_CYCLE * cycles_split;
+        if not_complete > 0.0
+            && split_slots > 0.0
+            && split_threads * 2 >= threads
+        {
             let mem_frac = (load_not_complete / not_complete).clamp(0.0, 1.0);
+            // backend % computed over the split population, not the whole one.
+            let backend_split_pct = (backend_split / split_slots * 100.0).clamp(0.0, 100.0);
             out.push(Metric {
                 key: "topdown_backend_mem_pct",
                 label: "  ↳ memory bound".into(),
-                value: MetricValue::Percent(backend_pct * mem_frac),
+                value: MetricValue::Percent(backend_split_pct * mem_frac),
             });
             out.push(Metric {
                 key: "topdown_backend_core_pct",
                 label: "  ↳ core bound".into(),
-                value: MetricValue::Percent(backend_pct * (1.0 - mem_frac)),
+                value: MetricValue::Percent(backend_split_pct * (1.0 - mem_frac)),
             });
         }
 
+        // Bad speculation = the slots not accounted for by the other four
+        // categories (dispatched ops that never retired). The five L1 buckets
+        // partition every dispatch slot, so this is exact from the same group.
+        let badspec = (slots - frontend - backend - smt - retired).max(0.0);
         out.push(Metric {
             key: "topdown_badspec_pct",
             label: "Bad speculation".into(),
-            value: MetricValue::Percent(pct((dispatched - retired).max(0.0))),
+            value: MetricValue::Percent(pct(badspec)),
         });
         Ok(out)
     }

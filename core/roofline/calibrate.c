@@ -2,8 +2,12 @@
  * and memory bandwidth on this host. Shared by both collectors — the snapshot's
  * whole-program point and the profile's per-kernel points plot against these.
  *
- * Prints one JSON line: {"peak_gflops":..,"peak_bw_gbs":..,"cpu":"..."}
- * Build with -O3 -march=native -ffast-math -fopenmp.
+ * Self-tuning: the driver (roofline.py) compiles this with `-DFMA_ACC=N` for a
+ * few N and the host-tuned flags (-mcpu=native on aarch64, -march=native on x86),
+ * runs each in "compute" mode, and keeps the best — so no platform needs hand-
+ * tuning. argv[1] = "compute" | "bw" | (default) both.
+ *
+ * Prints one JSON line: {"peak_gflops":..,"peak_bw_gbs":..,"fma_acc":N,"cpu":".."}
  */
 #define _POSIX_C_SOURCE 200809L
 #include <stdio.h>
@@ -33,6 +37,90 @@
 #define TRIAD_BYTES 24.0
 #else
 #define TRIAD_BYTES 32.0
+#endif
+
+/* ---- register-resident FMA kernel (peak compute) -------------------------
+ * The accumulators live in vector registers (no array load/store in the hot
+ * loop) and run FMA_ACC INDEPENDENT FMA chains, so the loop saturates the core's
+ * FMA units instead of the L1 load/store ports — the true achievable FLOP peak.
+ * Vxx_FMA(a,b,c) computes a*b + c.
+ *
+ * Platform coverage & LIMITATIONS (compute peak):
+ *   - x86 AVX-512  (Intel Xeon SP / recent client, AMD Zen4/5): 8 DP / 16 SP
+ *     lanes. Built and RUN on AMD Zen5.
+ *   - x86 AVX2+FMA (Intel Haswell+, AMD Zen1-3): 4 DP / 8 SP lanes. Compile-
+ *     checked only (identical kernel, different width) — not run on that HW.
+ *   - ARM NEON (any aarch64): FIXED 128-bit = 2 DP / 4 SP lanes. RUN on a
+ *     dual-socket NVIDIA Grace (Neoverse V2, 144 cores; Vista node i618-112):
+ *     ~2960 GFLOP/s DP and ~1.15 TB/s — in line with published Grace DGEMM
+ *     (~3 TFLOPS) and its LPDDR5X bandwidth. IMPORTANT: it must be built with
+ *     `-mcpu=native` (the tuning/scheduling), NOT `-march=native` alone, which
+ *     left the FMA peak ~30% low and noisy (roofline.py's _build does this).
+ *     FMA_ACC=16 is the sweet spot — more accumulators spill past the 32 NEON
+ *     registers and REGRESS. Caveat: SVE on V2 is 128-bit so NEON loses nothing
+ *     here, but NEON WILL UNDER-REPORT on wide-SVE parts (e.g. A64FX 512-bit
+ *     SVE), which need an SVE (vector-length-agnostic) path added here. Whether
+ *     the kernel fully saturates V2's FP pipes vs. a tuned SVE DGEMM is unverified.
+ *   - scalar fallback (no SIMD intrinsics): leans on compiler auto-vectorization,
+ *     so it is functional but the least precise and may under-report the peak.
+ * The bandwidth triad (below) has matching x86 NT-store / ARM STNP / scalar paths. */
+#if defined(__AVX512F__)
+#define VDP __m512d
+#define VDP_LANES 8
+#define VDP_SET _mm512_set1_pd
+#define VDP_FMA _mm512_fmadd_pd
+#define VDP_SUM _mm512_reduce_add_pd
+#define VSP __m512
+#define VSP_LANES 16
+#define VSP_SET _mm512_set1_ps
+#define VSP_FMA _mm512_fmadd_ps
+#define VSP_SUM _mm512_reduce_add_ps
+#define HAVE_FMA_KERNEL 1
+#elif defined(__AVX__) && defined(__FMA__)
+static inline double hsum256d(__m256d v) {
+    __m128d lo = _mm256_castpd256_pd128(v), hi = _mm256_extractf128_pd(v, 1);
+    lo = _mm_add_pd(lo, hi);
+    return _mm_cvtsd_f64(_mm_add_sd(lo, _mm_unpackhi_pd(lo, lo)));
+}
+static inline float hsum256s(__m256 v) {
+    __m128 lo = _mm256_castps256_ps128(v), hi = _mm256_extractf128_ps(v, 1);
+    lo = _mm_add_ps(lo, hi);
+    lo = _mm_add_ps(lo, _mm_movehl_ps(lo, lo));
+    return _mm_cvtss_f32(_mm_add_ss(lo, _mm_shuffle_ps(lo, lo, 1)));
+}
+#define VDP __m256d
+#define VDP_LANES 4
+#define VDP_SET _mm256_set1_pd
+#define VDP_FMA _mm256_fmadd_pd
+#define VDP_SUM hsum256d
+#define VSP __m256
+#define VSP_LANES 8
+#define VSP_SET _mm256_set1_ps
+#define VSP_FMA _mm256_fmadd_ps
+#define VSP_SUM hsum256s
+#define HAVE_FMA_KERNEL 1
+#elif defined(__aarch64__)
+#define VDP float64x2_t
+#define VDP_LANES 2
+#define VDP_SET vdupq_n_f64
+#define VDP_FMA(a, b, c) vfmaq_f64(c, a, b)     /* c + a*b = a*b + c */
+#define VDP_SUM vaddvq_f64
+#define VSP float32x4_t
+#define VSP_LANES 4
+#define VSP_SET vdupq_n_f32
+#define VSP_FMA(a, b, c) vfmaq_f32(c, a, b)
+#define VSP_SUM vaddvq_f32
+#define HAVE_FMA_KERNEL 1
+#endif
+
+/* Independent FMA chains. Enough chains hide the FMA latency across the FP units,
+ * but the sweet spot is part-dependent: it must fit the VECTOR REGISTER FILE or
+ * spills cause a sharp regression. x86 AVX2/SSE have 16 vector regs → ~12 is best
+ * and 16 already falls off a cliff; AVX-512 and ARM (NEON/SVE) have 32 → ~16-24.
+ * roofline.py sweeps -DFMA_ACC across that range and keeps the best, so no
+ * platform needs hand-tuning. Overridable on the command line; 16 is the default. */
+#ifndef FMA_ACC
+#define FMA_ACC 16
 #endif
 
 static double now(void)
@@ -97,44 +185,66 @@ static void triad(double *restrict a, const double *restrict b,
 #endif
 }
 
-/* Peak FP: a vectorizable FMA over an L1-resident array (x[i]=x[i]*b+c), many
- * reps; b<1 keeps values bounded. Independent across i → the compiler emits
- * packed FMA (AVX/AVX-512/NEON); aggregate flops/wall over all threads.
- * Measured at BOTH precisions: SP packs 2x the lanes of DP, so the FP32 peak is
- * ~2x the FP64 peak — an SP-heavy app must be judged against the FP32 ceiling. */
+/* Peak FP: FMA_ACC independent FMA chains on register-resident vector
+ * accumulators (a = a*b + c; b<1 keeps values bounded). No array load/store in
+ * the hot loop, so it saturates the FMA units, not the L1 ports — the true
+ * achievable peak. Aggregate flops/wall over all threads. Measured at BOTH
+ * precisions: SP packs 2x the lanes of DP, so the FP32 peak is ~2x the FP64
+ * peak — an SP-heavy app must be judged against the FP32 ceiling. */
 static double g_sink = 0.0;
 
 static double peak_gflops_dp(void)
 {
-    enum { N = 2048 };                          /* 16 KiB — L1-resident */
-    const long reps = 4000000L;
+    const long reps = 80000000L;
     int nth = 1;
 #ifdef _OPENMP
     nth = omp_get_max_threads();
 #endif
     double best = 0.0;
-    for (int rep = 0; rep < 3; rep++) {
+    for (int trial = 0; trial < 3; trial++) {
         double t0 = now();
 #ifdef _OPENMP
         #pragma omp parallel
 #endif
         {
-            double x[N];
-            for (int i = 0; i < N; i++) x[i] = 0.001 * i + 0.1;
-            const double b = 0.99999, c = 1.0;
+#if defined(HAVE_FMA_KERNEL)
+            VDP bb = VDP_SET(0.9999999), cc = VDP_SET(1e-7);
+            VDP a[FMA_ACC];
+            for (int j = 0; j < FMA_ACC; j++) a[j] = VDP_SET(1.0 + 0.001 * j);
             for (long r = 0; r < reps; r++) {
-                #pragma omp simd
-                for (int i = 0; i < N; i++) x[i] = x[i] * b + c;
+#if defined(__GNUC__)
+                #pragma GCC unroll 64    /* fully unrolls any FMA_ACC<=64 (sweep uses <=32) */
+#endif
+                for (int j = 0; j < FMA_ACC; j++) a[j] = VDP_FMA(a[j], bb, cc);
             }
             double s = 0.0;
-            for (int i = 0; i < N; i++) s += x[i];
+            for (int j = 0; j < FMA_ACC; j++) s += VDP_SUM(a[j]);
+            double lanes = VDP_LANES;
+#else   /* no FMA intrinsics: independent scalar accumulators, compiler-vectorized */
+            double a[FMA_ACC];
+            for (int j = 0; j < FMA_ACC; j++) a[j] = 1.0 + 0.001 * j;
+            const double bb = 0.9999999, cc = 1e-7;
+            for (long r = 0; r < reps; r++)
+                #pragma omp simd
+                for (int j = 0; j < FMA_ACC; j++) a[j] = a[j] * bb + cc;
+            double s = 0.0;
+            for (int j = 0; j < FMA_ACC; j++) s += a[j];
+            double lanes = 1.0;
+#endif
 #ifdef _OPENMP
             #pragma omp atomic
 #endif
             g_sink += s;                        /* defeat DCE */
+            (void)lanes;
         }
         double dt = now() - t0;
-        double gf = (2.0 * (double)N * reps * nth) / dt / 1e9;
+        double lanes =
+#if defined(HAVE_FMA_KERNEL)
+            VDP_LANES;
+#else
+            1.0;
+#endif
+        double gf = ((double)FMA_ACC * lanes * 2.0 * (double)reps * nth) / dt / 1e9;
         if (gf > best) best = gf;
     }
     return best;
@@ -142,35 +252,53 @@ static double peak_gflops_dp(void)
 
 static double peak_gflops_sp(void)
 {
-    enum { N = 4096 };                          /* 16 KiB of float — L1-resident */
-    const long reps = 4000000L;
+    const long reps = 80000000L;
     int nth = 1;
 #ifdef _OPENMP
     nth = omp_get_max_threads();
 #endif
     double best = 0.0;
-    for (int rep = 0; rep < 3; rep++) {
+    for (int trial = 0; trial < 3; trial++) {
         double t0 = now();
 #ifdef _OPENMP
         #pragma omp parallel
 #endif
         {
-            float x[N];
-            for (int i = 0; i < N; i++) x[i] = 0.001f * i + 0.1f;
-            const float b = 0.99999f, c = 1.0f;
+#if defined(HAVE_FMA_KERNEL)
+            VSP bb = VSP_SET(0.9999999f), cc = VSP_SET(1e-7f);
+            VSP a[FMA_ACC];
+            for (int j = 0; j < FMA_ACC; j++) a[j] = VSP_SET(1.0f + 0.001f * j);
             for (long r = 0; r < reps; r++) {
-                #pragma omp simd
-                for (int i = 0; i < N; i++) x[i] = x[i] * b + c;
+#if defined(__GNUC__)
+                #pragma GCC unroll 64    /* fully unrolls any FMA_ACC<=64 (sweep uses <=32) */
+#endif
+                for (int j = 0; j < FMA_ACC; j++) a[j] = VSP_FMA(a[j], bb, cc);
             }
             float s = 0.0f;
-            for (int i = 0; i < N; i++) s += x[i];
+            for (int j = 0; j < FMA_ACC; j++) s += VSP_SUM(a[j]);
+#else
+            float a[FMA_ACC];
+            for (int j = 0; j < FMA_ACC; j++) a[j] = 1.0f + 0.001f * j;
+            const float bb = 0.9999999f, cc = 1e-7f;
+            for (long r = 0; r < reps; r++)
+                #pragma omp simd
+                for (int j = 0; j < FMA_ACC; j++) a[j] = a[j] * bb + cc;
+            float s = 0.0f;
+            for (int j = 0; j < FMA_ACC; j++) s += a[j];
+#endif
 #ifdef _OPENMP
             #pragma omp atomic
 #endif
             g_sink += s;                        /* defeat DCE */
         }
         double dt = now() - t0;
-        double gf = (2.0 * (double)N * reps * nth) / dt / 1e9;
+        double lanes =
+#if defined(HAVE_FMA_KERNEL)
+            VSP_LANES;
+#else
+            1.0;
+#endif
+        double gf = ((double)FMA_ACC * lanes * 2.0 * (double)reps * nth) / dt / 1e9;
         if (gf > best) best = gf;
     }
     return best;
@@ -241,15 +369,23 @@ static void cpu_model(char *out, size_t n)
     fclose(f);
 }
 
-int main(void)
+/* Mode (argv[1]): "compute" → FP peaks only, "bw" → bandwidth only, else both.
+ * The driver (roofline.py) sweeps -DFMA_ACC and runs "compute" for each variant
+ * (cheap), then "bw" once (accumulator-independent), keeping the best of each. */
+int main(int argc, char **argv)
 {
-    double gf_dp = peak_gflops_dp();
-    double gf_sp = peak_gflops_sp();
-    double bw = peak_bw_gbs();
+    const char *mode = argc > 1 ? argv[1] : "all";
+    int do_c = strcmp(mode, "bw") != 0;
+    int do_b = strcmp(mode, "compute") != 0;
+    double gf_dp = do_c ? peak_gflops_dp() : 0.0;
+    double gf_sp = do_c ? peak_gflops_sp() : 0.0;
+    double bw = do_b ? peak_bw_gbs() : 0.0;
     char cpu[256];
     cpu_model(cpu, sizeof(cpu));
-    /* "peak_gflops" kept as an alias for DP (backward compat). */
+    /* "peak_gflops" kept as an alias for DP (backward compat). Unmeasured fields
+     * are 0 and ignored by the driver. */
     printf("{\"peak_gflops\": %.1f, \"peak_gflops_dp\": %.1f, \"peak_gflops_sp\": %.1f, "
-           "\"peak_bw_gbs\": %.1f, \"cpu\": \"%s\"}\n", gf_dp, gf_dp, gf_sp, bw, cpu);
+           "\"peak_bw_gbs\": %.1f, \"fma_acc\": %d, \"cpu\": \"%s\"}\n",
+           gf_dp, gf_dp, gf_sp, bw, FMA_ACC, cpu);
     return 0;
 }

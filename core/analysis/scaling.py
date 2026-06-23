@@ -43,6 +43,10 @@ def render(results):
     if not rows:
         sys.exit("scale: no results")
     base_n, base_t = rows[0][0], rows[0][1]
+    if base_t <= 0:                        # no runtime for the baseline → speedups meaningless
+        print("\n══ Scaling ══")
+        print("  (scaling unavailable — no runtime recorded for the smallest run)")
+        return
     print("\n══ Scaling ══")
     print("  %-30s %6s %10s %9s %11s" % ("result", "ranks", "time(s)", "speedup", "efficiency"))
     for n, t, d in rows:

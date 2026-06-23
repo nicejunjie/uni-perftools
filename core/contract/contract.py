@@ -4,6 +4,7 @@ Imported by core/cli (writes results) and core/analysis (reads them) so the two
 never drift. See SCHEMA.md for the on-disk format.
 """
 import os
+import re
 import glob
 
 SCHEMA_VERSION = 1
@@ -15,14 +16,22 @@ def prof_name(rank):
     return "prof.%d.json" % rank
 
 
+def _prof_rank(path):
+    """Embedded rank integer from a prof.<rank>.json path (-1 if absent), so we
+    sort numerically — lexical sort would put prof.10.json before prof.2.json."""
+    m = re.search(r"prof\.(\d+)\.json$", path)
+    return int(m.group(1)) if m else -1
+
+
 def prof_glob(result_dir):
-    return sorted(glob.glob(os.path.join(result_dir, "prof.*.json")))
+    return sorted(glob.glob(os.path.join(result_dir, "prof.*.json")), key=_prof_rank)
 
 
 def rank_from_env(env=None):
     """Global MPI rank from the launcher environment, else 0."""
     e = env if env is not None else os.environ
-    for k in ("OMPI_COMM_WORLD_RANK", "PMI_RANK", "MV2_COMM_WORLD_RANK", "PMIX_RANK"):
+    for k in ("OMPI_COMM_WORLD_RANK", "PMI_RANK", "MV2_COMM_WORLD_RANK", "PMIX_RANK",
+              "SLURM_PROCID", "ALPS_APP_PE"):
         if e.get(k):
             return int(e[k])
     return 0
@@ -61,6 +70,11 @@ def category_of(group):
 
 # ---- result-directory discovery ------------------------------------------
 def latest_result(cwd="."):
+    def _mtime(p):
+        try:
+            return os.path.getmtime(p)
+        except OSError:
+            return 0
     cand = sorted(glob.glob(os.path.join(cwd, "perf.*")),
-                  key=lambda p: os.path.getmtime(p) if os.path.exists(p) else 0)
+                  key=lambda p: (_mtime(p), p))
     return cand[-1] if cand else None

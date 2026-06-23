@@ -9,10 +9,8 @@
 
 mod collector;
 mod derive;
-mod insights;
 mod metric;
 
 pub use collector::{Collector, Target};
 pub use derive::derive;
-pub use insights::{insights, Insight};
 pub use metric::{Metric, MetricValue, Snapshot};

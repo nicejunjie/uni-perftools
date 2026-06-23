@@ -139,6 +139,12 @@ def scoped(cmd, env_vars):
         for x in kv:
             inj += ["-x", x]
         return [cmd[0]] + inj + cmd[1:]
+    if launcher == "srun":
+        # srun propagates env to ranks via --export (ALL keeps the inherited env).
+        return [cmd[0], "--export=ALL," + ",".join(kv)] + cmd[1:]
+    if launcher:
+        sys.stderr.write("[upat] warning: unrecognized launcher '%s' — env (LD_PRELOAD/"
+                         "UPAT_*) may not propagate to ranks\n" % launcher)
     return ["env"] + kv + cmd
 
 
@@ -179,7 +185,11 @@ def do_collect(args):
               open(os.path.join(result, contract.MANIFEST), "w"), indent=2)
 
     sys.stderr.write("[upat] collecting: %s\n" % " ".join(args.cmd))
-    rc = subprocess.run(full).returncode
+    try:
+        rc = subprocess.run(full).returncode
+    except FileNotFoundError:
+        sys.stderr.write("upat: cannot exec %s\n" % full[0])
+        sys.exit(127)
 
     # Recalibrate the roofline ceilings on THIS host and store them with the run,
     # so the report reflects the machine the workload ran on (not a stale build

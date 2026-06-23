@@ -107,7 +107,13 @@ def _render_snapshot(snap, out):
         out.append("    %-26s %s" % ("Elapsed time", disp("elapsed_time")))
     if disp("gflops"):
         peak, g = roofline.peak_compute(pk, "dp"), val("gflops")
-        extra = " (%.0f%% of FP64 peak)" % (g / peak * 100.0) if (peak and g) else ""
+        extra = ""
+        if peak and g:
+            p = g / peak * 100.0
+            # Keep precision for small fractions — rounding 0.18% to "0%" reads
+            # like missing data on memory-bound code.
+            pct = ("%.0f%%" % p if p >= 10 else "%.1f%%" % p if p >= 1 else "%.2f%%" % p)
+            extra = " (%s of FP64 peak)" % pct
         out.append("    %-26s %s%s" % ("FP throughput", disp("gflops"), extra))
     if disp("cpu_freq_ghz"):
         out.append("    %-26s %s" % ("Avg CPU frequency", disp("cpu_freq_ghz")))

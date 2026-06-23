@@ -339,13 +339,21 @@ def symbolize_roofline(ranks, samp):
     return {"hz": samp.hz if samp else 0, "functions": funcs}
 
 
+def _prof_rank(path):
+    """Embedded rank integer from a prof.<rank>.json path (-1 if absent), so we
+    sort numerically (matching contract.prof_glob) — lexical sort would put
+    prof.10.json before prof.2.json."""
+    m = re.search(r"prof\.(\d+)\.json$", path)
+    return int(m.group(1)) if m else -1
+
+
 def load(paths):
     files = []
     for p in paths:
         if os.path.isdir(p):
-            files += sorted(glob.glob(os.path.join(p, "*.json")))
+            files += sorted(glob.glob(os.path.join(p, "*.json")), key=_prof_rank)
         else:
-            files += sorted(glob.glob(p)) if any(c in p for c in "*?[") else [p]
+            files += sorted(glob.glob(p), key=_prof_rank) if any(c in p for c in "*?[") else [p]
     ranks = []
     for fn in files:
         with open(fn) as f:

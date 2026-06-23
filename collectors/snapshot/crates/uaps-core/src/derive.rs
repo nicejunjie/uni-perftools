@@ -42,6 +42,9 @@ pub fn derive(snapshot: &mut Snapshot) {
     let fills_all = snapshot.numeric("mem_fills_all");
     let fills_dram = snapshot.numeric("mem_fills_dram");
     let fills_remote = snapshot.numeric("mem_fills_remote");
+    // L2 fills sourced from DRAM incl. the hardware prefetcher (AMD
+    // l2_fill_rsp_src.dram_io_*) — the true DRAM read traffic for bandwidth.
+    let dram_reads = snapshot.numeric("mem_dram_reads");
     let elapsed = snapshot.numeric("elapsed_time");
     let cpu_time = snapshot.numeric("cpu_time");
     let dtlb_acc = snapshot.numeric("dtlb_accesses");
@@ -61,19 +64,23 @@ pub fn derive(snapshot: &mut Snapshot) {
     }
     if let (Some(i), Some(m)) = (insns, dtlb_miss) {
         if i > 0.0 {
-            derived.push(float("dtlb_mpki", "data-TLB misses", m / i * 1000.0, "per 1000 instructions"));
+            derived.push(float("dtlb_mpki", "data-TLB misses", m / i * 1000.0, "per 1k instructions"));
         }
     }
     if let (Some(i), Some(m)) = (insns, itlb_miss) {
         if i > 0.0 {
             derived.push(float("itlb_mpki", "instruction-TLB misses", m / i * 1000.0,
-                               "per 1000 instructions"));
+                               "per 1k instructions"));
         }
     }
 
-    // Achieved DRAM bandwidth = demand DRAM fills × cache line / elapsed. Pairs with
-    // the roofline (the point's bandwidth) and explains the memory-bound %.
-    if let (Some(dram), Some(el)) = (fills_dram, elapsed) {
+    // Achieved DRAM read bandwidth = DRAM read fills × cache line / elapsed.
+    // Prefer L2-sourced-from-DRAM fills (demand + hardware prefetch): the L2
+    // prefetcher drives most streaming traffic, which the demand L1-fill counter
+    // misses (undercounts ~3× on STREAM/HPCG). Fall back to demand-from-DRAM (and
+    // ARM LLC read misses) when the L2 counter isn't available. Pairs with the
+    // roofline. (Reads only — writebacks need the uncore DF/UMC counters.)
+    if let (Some(dram), Some(el)) = (dram_reads.or(fills_dram), elapsed) {
         if el > 0.0 {
             derived.push(float("dram_bandwidth_gbs", "DRAM bandwidth",
                                dram * 64.0 / el / 1e9, "GB/s"));
@@ -102,7 +109,7 @@ pub fn derive(snapshot: &mut Snapshot) {
     }
     if let (Some(i), Some(miss)) = (insns, cache_miss) {
         if i > 0.0 {
-            derived.push(float("llc_mpki", "last-level cache misses", miss / i * 1000.0, "per 1000 instructions"));
+            derived.push(float("llc_mpki", "last-level cache misses", miss / i * 1000.0, "per 1k instructions"));
         }
     }
     if let (Some(b), Some(bm)) = (branches, branch_miss) {
@@ -113,7 +120,7 @@ pub fn derive(snapshot: &mut Snapshot) {
     // Measured memory hierarchy (AMD demand-fill data sources).
     if let (Some(i), Some(dram)) = (insns, fills_dram) {
         if i > 0.0 {
-            derived.push(float("dram_dpki", "DRAM fills", dram / i * 1000.0, "per 1000 instructions"));
+            derived.push(float("dram_dpki", "DRAM fills", dram / i * 1000.0, "per 1k instructions"));
         }
     }
     if let (Some(all), Some(dram)) = (fills_all, fills_dram) {

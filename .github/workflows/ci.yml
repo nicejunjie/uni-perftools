@@ -1,0 +1,47 @@
+# End-to-end CI: build both collectors and run the C profile tests, the Rust
+# unit tests, and the suite end-to-end tests. This is the general gate that the
+# specialized hwpc-validate.yml (HWPC structural sweep) does not cover — it
+# catches C / Python / report regressions, which is exactly what slipped through
+# before (a roofline render crash, a stale I/O assertion, a broken MPI shim path).
+#
+# Runs on GitHub's VM runners, which have no usable hardware PMU. That's fine:
+# sci-lib/MPI/IO tracing, the itimer sampler, and the timing-based roofline
+# calibration need no counters, and the perf-dependent checks self-skip or gap.
+name: ci
+
+on:
+  push:
+  pull_request:
+
+jobs:
+  e2e:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - name: Install MPI / BLAS / LAPACK / FFTW
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            libopenmpi-dev openmpi-bin \
+            libblas-dev liblapack-dev libfftw3-dev
+      - name: Relax perf_event_paranoid (best-effort; lets perf-gated checks run)
+        run: sudo sysctl -w kernel.perf_event_paranoid=0 || true
+      - name: Build both collectors
+        run: make
+      - name: Rust unit tests (snapshot)
+        run: cd collectors/snapshot && cargo test
+      - name: Profile (upat) end-to-end tests
+        run: bash collectors/profile/tests/run.sh preload
+      - name: Suite end-to-end tests
+        run: bash tests/run.sh
+
+  # The HWPC engine derives every counter from vendored pmu-events data, so its
+  # correctness is hardware-independent — worth checking on a second arch cheaply.
+  structural-arm:
+    runs-on: ubuntu-24.04-arm
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - name: Structural validation across all vendored CPU models (aarch64)
+        run: make validate-hwpc

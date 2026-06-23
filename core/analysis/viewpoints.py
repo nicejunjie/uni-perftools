@@ -26,10 +26,10 @@ GLOSSARY = {
     "branch mispredict": "fraction of branches predicted wrong — the main cause of 'bad speculation' slots",
     "DRAM bandwidth": "rate of data moved to/from main memory (DRAM = dynamic RAM, the off-chip main memory)",
     "cache-miss rate": "fraction of last-level-cache accesses that missed and had to go to DRAM",
-    "last-level cache misses": "LLC (last-level cache) misses per 1000 instructions — the largest/slowest on-die cache before DRAM",
-    "data-TLB misses": "data TLB misses per 1000 instructions (TLB = translation-lookaside buffer; a miss triggers a page-table walk)",
-    "instruction-TLB misses": "instruction TLB misses per 1000 instructions — page-walk pressure from a large code footprint",
-    "DRAM fills": "demand cache-line fills from DRAM per 1000 instructions",
+    "last-level cache misses": "LLC (last-level cache) misses per 1k instructions — the largest/slowest on-die cache before DRAM",
+    "data-TLB misses": "data TLB misses per 1k instructions (TLB = translation-lookaside buffer; a miss triggers a page-table walk)",
+    "instruction-TLB misses": "instruction TLB misses per 1k instructions — page-walk pressure from a large code footprint",
+    "DRAM fills": "demand cache-line fills from DRAM per 1k instructions",
     "DRAM-bound": "share of demand cache fills that came from DRAM (vs. a closer cache)",
     "NUMA remote access": "share of memory accesses served by another socket's memory (NUMA = non-uniform memory access; remote is slower)",
     "memory-bound (slots)": "estimated share of pipeline slots stalled waiting on the memory hierarchy",
@@ -65,7 +65,7 @@ def _gloss(out, *terms):
     for t in terms:
         d = GLOSSARY.get(t)
         if d:
-            out.append("    # %s — %s" % (t, d))
+            roofline.comment(out, "%s — %s" % (t, d))
 
 
 def _rule(header):
@@ -351,21 +351,31 @@ def roofline_view(snap, profile, out):
     pk = roofline.peaks()
     points = []
     g = _m(snap, "gflops")
-    fills = _m(snap, "mem_fills_dram")
+    # DRAM read traffic incl. the hardware prefetcher (mem_dram_reads); fall back
+    # to demand-from-DRAM fills where the L2 counter is absent. Demand-only badly
+    # undercounts streaming traffic, which would inflate the arithmetic intensity.
+    fills = _m(snap, "mem_dram_reads") or _m(snap, "mem_fills_dram")
     elapsed = _m(snap, "elapsed_time")
+    bw_gbs = ai = None
     if g and fills and elapsed:
         dram_bytes = fills * 64.0
         flops = g * 1e9 * elapsed
         if dram_bytes > 0:
+            bw_gbs = dram_bytes / elapsed / 1e9
+            ai = flops / dram_bytes
             # whole-program FP-counter precision is vendor-dependent (Intel = DP
             # only; AMD = mixed SP+DP) → judged against the DP ceiling.
-            points.append({"label": "whole-program (measured)", "ai": flops / dram_bytes,
+            points.append({"label": "whole-program (measured)", "ai": ai,
                            "gflops": g, "prec": "dp"})
     out.append("\n══ Roofline (whole program) ══")
     roofline.render(points, pk, out)
     if not points:
         out.append("    (whole-program point needs FP + DRAM counters — check perf_event_paranoid)")
         return
+    # The measured point's coordinates, spelled out (application FLOP rate +
+    # achieved DRAM bandwidth + their ratio).
+    out.append("    measured application:  %.1f GFLOP/s   %.1f GB/s DRAM   AI %.3f FLOP/byte"
+               % (g, bw_gbs, ai))
     c = roofline.classify(points[0]["ai"], points[0]["gflops"], pk, "dp")
     if c:
         if c[2] == "latency":
@@ -468,7 +478,7 @@ def microarch_view(snap, out):
     if all(v is not None for v in four):
         if _m(snap, "smt_active"):
             out.append("    %-18s %5.1f%%" % ("SMT contention", max(0.0, 100.0 - sum(four))))
-            out.append("      (retiring + frontend + backend + bad-spec + SMT = 100% of slots)")
+            roofline.comment(out, "retiring + frontend + backend + bad-spec + SMT = 100% of slots")
         else:
             out.append("    %-18s %5s" % ("SMT contention", "NA"))
     # branch mispredict is NOT part of the slot partition above — it's a rate over
@@ -554,16 +564,24 @@ def scheduling_view(snap, out):
         return
     el = _m(snap, "elapsed_time") or 0.0
     out.append("\n══ Scheduling / OS ══")
-    cs = _m(snap, "ctx_switches")
-    if cs is not None:
-        rate = "   (%.0f/s)" % (cs / el) if el else ""
-        out.append("    %-22s %d%s" % ("context switches", int(cs), rate))
-    for k, lbl, note in [("cpu_migrations", "CPU migrations", ""),
-                         ("page_faults", "page faults", ""),
-                         ("page_faults_maj", "major page faults", "   (disk-backed)")]:
+
+    def _persec(v):
+        return "%.0f/s" % (v / el) if el else "%d" % int(v)
+
+    # Per-second rates (comparable across run lengths), with the raw total in
+    # parentheses for context. These are scheduling/OS events — time-normalized,
+    # not instruction-normalized like the cache/TLB counters above.
+    for k, lbl in [("ctx_switches", "context switches"),
+                   ("cpu_migrations", "CPU migrations"),
+                   ("page_faults", "page faults (minor+major)")]:
         v = _m(snap, k)
         if v is not None:
-            out.append("    %-22s %d%s" % (lbl, int(v), note))
+            out.append("    %-26s %12s   (%d total)" % (lbl, _persec(v), int(v)))
+    mj = _m(snap, "page_faults_maj")
+    if mj is not None:
+        # Major faults hit disk — call them out absolutely; even a few hurt.
+        out.append("    %-26s %12d   %s" % ("major page faults", int(mj),
+                   "(disk-backed — should be ~0)" if mj else "(none — no disk paging)"))
 
 
 # ----------------------------------------------------------- load imbalance
