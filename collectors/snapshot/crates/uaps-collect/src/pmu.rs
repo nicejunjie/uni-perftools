@@ -11,6 +11,16 @@
 //! the core PMUs at once, and one PMC may be unavailable (e.g. NMI watchdog).
 //! Co-locate events whose ratio must be exact (instructions+cycles, etc.) in
 //! the same group.
+//!
+//! LIMITATION (per-process mode): because we do NOT use `inherit`, counters do
+//! not follow `fork`/`exec`, and we only scan the launched child's
+//! `/proc/<pid>/task`. A *wrapped* launch — `numactl ./app`, `taskset -c .. ./app`,
+//! a shell or `env` wrapper, or anything that does the real work in a child
+//! process — measures the near-idle wrapper, not the workload. Use system-wide
+//! mode (`-a`, automatic for MPI) for those; it counts every process on the node.
+//! Also, a thread that starts AND finishes within one ~20 ms `scan()` interval is
+//! never attached and its slots are missed (self-consistent for ratios, but biases
+//! absolute counts on very fine-grained threading).
 
 use std::collections::HashSet;
 use std::fs::File;
@@ -39,6 +49,25 @@ pub fn set_system_wide(on: bool) {
 }
 pub fn system_wide() -> bool {
     SYSTEM_WIDE.load(Ordering::Relaxed)
+}
+
+/// Warn (once) when perf_event_open fails on fd exhaustion, so it isn't
+/// indistinguishable from a permissions/"counter unavailable" gap.
+static FD_WARNED: AtomicBool = AtomicBool::new(false);
+
+/// Raise the open-file soft limit to the hard limit. System-wide/MPI mode opens
+/// roughly 7-9 perf event groups *per online CPU*, each with several fds: on a
+/// 128-192 core node that is several thousand fds, well past the usual 1024 soft
+/// limit. Without this, perf_event_open fails with EMFILE and the snapshot
+/// silently degrades to gaps. Best-effort; safe to ignore failures.
+pub fn raise_fd_limit() {
+    unsafe {
+        let mut rl: libc::rlimit = std::mem::zeroed();
+        if libc::getrlimit(libc::RLIMIT_NOFILE, &mut rl) == 0 && rl.rlim_cur < rl.rlim_max {
+            rl.rlim_cur = rl.rlim_max;
+            let _ = libc::setrlimit(libc::RLIMIT_NOFILE, &rl);
+        }
+    }
 }
 
 /// Online CPU ids from /sys/devices/system/cpu/online ("0-31" / "0,2-4"), else 0..nproc.
@@ -92,6 +121,17 @@ pub fn open_event(etype: u32, config: u64, pid: libc::pid_t, cpu: i32, group_fd:
     // or (-1,cpu) system-wide; group_fd links members to their leader.
     let fd = unsafe { sys::perf_event_open(&mut attr, pid, cpu, group_fd, 0) };
     if fd < 0 {
+        // EMFILE/ENFILE means we ran out of fds, NOT that the counter is
+        // unavailable — surface it once so a large-node run isn't silently gapped.
+        let err = std::io::Error::last_os_error();
+        if matches!(err.raw_os_error(), Some(libc::EMFILE) | Some(libc::ENFILE))
+            && !FD_WARNED.swap(true, Ordering::Relaxed)
+        {
+            eprintln!(
+                "uaps: warning: out of file descriptors opening perf counters ({err}); \
+                 metrics will be incomplete. Raise the open-file limit (ulimit -n)."
+            );
+        }
         None
     } else {
         // SAFETY: fresh owned fd from the kernel.

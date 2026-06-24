@@ -324,8 +324,15 @@ static void emit_maps(FILE *f)
         if (perms[2] != 'x') continue;
         char *p = path; while (*p == ' ') p++;
         if (p[0] != '/') continue;
-        fprintf(f, "%s\n      {\"path\":\"%s\",\"start\":%lu,\"end\":%lu,\"off\":%lu}",
-                first ? "" : ",", p, start, end, off);
+        /* Escape the path as a JSON string: a raw %s breaks the whole prof.*.json
+         * (silently dropping the run) if a mapped path contains a '"' or '\\' —
+         * rare but legal. Mirrors sampler.c's emit_maps() / emit.c's json_str(). */
+        fprintf(f, "%s\n      {\"path\":\"", first ? "" : ",");
+        for (char *q = p; *q; q++) {
+            if (*q == '"' || *q == '\\') fputc('\\', f);
+            fputc(*q, f);
+        }
+        fprintf(f, "\",\"start\":%lu,\"end\":%lu,\"off\":%lu}", start, end, off);
         first = 0;
     }
     fclose(m);

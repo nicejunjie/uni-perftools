@@ -327,9 +327,15 @@ impl Collector for TopdownCollector {
             });
         }
 
-        // Bad speculation = the slots not accounted for by the other four
-        // categories (dispatched ops that never retired). The five L1 buckets
-        // partition every dispatch slot, so this is exact from the same group.
+        // Bad speculation as a REMAINDER of the other four categories. The four
+        // buckets nominally partition the non-bad-spec slots, but they are
+        // independent counters and retired is op-granular while slots are
+        // dispatch-granular, so this remainder absorbs all of their measurement
+        // skew — it can read high on a workload with little real bad speculation.
+        // The canonical directly-measured formula (de_src_op_disp.all - ex_ret_ops)
+        // needs a 5th co-grouped event, exceeding the PMC budget here; the
+        // data-driven HwpcCollector uses it and supersedes this fallback whenever
+        // the CPU model resolves. Clamped so counter skew can't yield a negative.
         let badspec = (slots - frontend - backend - smt - retired).max(0.0);
         out.push(Metric {
             key: "topdown_badspec_pct",

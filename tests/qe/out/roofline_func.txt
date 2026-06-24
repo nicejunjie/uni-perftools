@@ -4,36 +4,43 @@
 
     GFLOP/s
             │                    ································
-            │                 ··///‾‾‾‾‾‾‾‾‾‾‾‾‾‾‾‾‾‾‾‾‾‾‾‾‾‾‾‾‾‾
-       1000 │              ··///                                 
-            │           ··///                                    
-            │        ··///                                       
-            │    ···///                                          
-        100 │ ··////                                             
-            │///                                                 
+            │                ···///‾‾‾‾‾‾‾‾‾‾‾‾‾‾‾‾‾‾‾‾‾‾‾‾‾‾‾‾‾‾
+       1000 │             ··////                                 
+            │          ··///                                     
+            │      ··////                                        
+            │   ··///                                            
+        100 │·////                                     E         
+            │/                                                   
+            │                                     D        A  B  
+         10 │                             G   F                  
+            │                        H                           
             │                                                    
-            │                                                    
-         10 │                       ●                            
-            │                                                    
-            │                                                    
-            │                                                    
+            │                                 C                  
+          1 │                                                    
             └────────────────────────────────────────────────────
              1           10           100        1000       10000  AI (FLOP/byte)
-             ● measured   / bandwidth roof   ‾ compute ceiling   · theoretical roof
+             / bandwidth roof   ‾ compute ceiling   · theoretical roof
+      A n1bv_32
+      B n1fv_32
+      C __pthread_rwlock_rdunlock
+      D vloc_psi_k_acc_
+      E zgemm_kernel_n_COOPERLAKE
+      F init_us_2_acc_
+      G usnldiag_
+      H do_sin
 
       function                 self(s)   time%     AI   GFLOP/s  %peak  bound
     ─────────────────────────────────────────────────────────────────────────
-      epoll_wait                 1.528   34.5%    inf       0.0     0%  compute
-      __GI___poll                1.461   33.0%    inf       0.0     0%  compute
-      n1bv_32                    0.236    5.3%    inf      22.8     1%  compute
-      n1fv_32                    0.187    4.2%    inf      22.1     1%  compute
-      __pthread_rwlock_rdunloc   0.153    3.5%    inf       0.1     0%  compute
-      0x7828fe669c4b             0.065    1.5%    inf       8.0     0%  compute
-      vloc_psi_k_acc_            0.057    1.3%    inf      19.1     1%  compute
-      __fft_scalar_fftw3_MOD_c   0.049    1.1%    inf      21.2     1%  compute
-      libc_feholdsetround_sse_   0.037    0.8%    inf       2.9     0%  compute
-      apply                      0.028    0.6%    inf      10.5     0%  compute
-      n1bv_8                     0.026    0.6%    inf       3.2     0%  compute
-      __fft_helper_subroutines   0.023    0.5%    inf       0.0     0%  compute
+      epoll_wait                 1.487   34.6%    inf       0.0     0%  compute
+      __GI___poll                1.422   33.0%    inf       0.0     0%  compute
+    A n1bv_32                    0.237    5.5% 4326.6      23.4     1%  latency
+    B n1fv_32                    0.165    3.8% 6453.1      25.0     1%  latency
+      n1_32                      0.128    3.0%    inf       4.8     0%  compute
+    C __pthread_rwlock_rdunloc   0.126    2.9%  375.0       1.9     0%  latency
+      0x7fa23f4fdc4b             0.082    1.9%    inf       2.0     0%  compute
+    D vloc_psi_k_acc_            0.044    1.0%  811.7      23.6     1%  latency
+      __fft_scalar_fftw3_MOD_c   0.043    1.0%    inf      23.3     1%  compute
+      libc_feholdsetround_sse_   0.039    0.9%    inf       3.1     0%  compute
+      zgemm_kernel_l_COOPERLAK   0.024    0.6%    inf      50.4     2%  compute
     ─────────────────────────────────────────────────────────────────────────
     (AI=inf → no DRAM traffic sampled = cache-resident/compute-bound; precision assumed DP)

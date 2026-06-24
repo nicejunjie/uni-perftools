@@ -276,6 +276,10 @@ fn run(
 ) -> Result<()> {
     let (program, args) = argv.split_first().expect("clap guarantees at least one arg");
 
+    // Node-level counting opens thousands of perf fds on a many-core node; lift the
+    // soft fd limit up front so counters don't fail with EMFILE and gap silently.
+    uaps_collect::raise_fd_limit();
+
     // APS-style auto-detect: if the target is an MPI launcher, enable MPI mode
     // even without --mpi (so `uaps run -- mpirun -n N ./app` just works).
     let launcher = Path::new(program)
@@ -322,9 +326,16 @@ fn run(
     let is_openmpi = matches!(launcher.as_str(), "mpirun" | "mpiexec" | "orterun");
     if mpi {
         let shim = resolve_mpi_shim()?;
-        let dir = std::env::temp_dir().join(format!("uaps_mpi_{}", std::process::id()));
+        // Each rank writes its file here, then MpiCollector reads them back. This
+        // MUST live on a filesystem visible to every compute node: /tmp is usually
+        // node-local, so the launcher-node collector would silently see only the
+        // ranks that landed on its node and undercount the job. The working
+        // directory is the job's (shared) submit dir on virtually all clusters;
+        // fall back to a temp dir only if the cwd is somehow unavailable.
+        let base = std::env::current_dir().unwrap_or_else(|_| std::env::temp_dir());
+        let dir = base.join(format!(".uaps_mpi_{}", std::process::id()));
         std::fs::create_dir_all(&dir)
-            .with_context(|| format!("failed to create MPI temp dir {}", dir.display()))?;
+            .with_context(|| format!("failed to create MPI output dir {}", dir.display()))?;
         let mut preload = std::env::var("LD_PRELOAD").unwrap_or_default();
         if !preload.is_empty() {
             preload.push(':');

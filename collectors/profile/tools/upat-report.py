@@ -182,74 +182,96 @@ ENTRY_FRAMES = {
 
 
 class Samp:
-    """Symbolized sampling data with leaf (self) and, if stacks were captured,
-    inclusive attribution."""
+    """Symbolized sampling data, reduced to CROSS-RANK aggregates as each rank is
+    folded in — never one Counter per rank (that is O(nranks) resident and OOMs at
+    tens of thousands of ranks). The suite imbalance metric needs only per-key
+    (sum, max) over ranks, so that is all we keep. Each `*_g*` map is
+    key -> [sum, max]; `*_tot` is a [sum, max] over per-rank grand totals (for the
+    Total rows); `fn_line` and `leaf_self` are plain aggregates."""
     def __init__(self):
         self.hz = 0
         self.total = 0
         self.nranks = 0
         self.stacks = False
-        self.leaf = []        # per-rank Counter[(group, func, file:line)]  (self)
-        self.dom = []         # per-rank Counter[group]                     (dominant)
-        self.incf = []        # per-rank Counter[func]                      (inclusive)
+        self.leaf_gffl = {}   # (group, func, file:line) -> [sum, max]   (self, finest)
+        self.leaf_gf = {}     # (group, func)            -> [sum, max]   (self, per-func)
+        self.leaf_g = {}      # group                    -> [sum, max]   (self, per-group)
+        self.leaf_tot = [0, 0]                                          # self grand total
+        self.fn_line = collections.defaultdict(collections.Counter)     # (g,f)->fileline->count
+        self.leaf_self = {}   # func -> {group, file, self}  (for the roofline JSON)
+        self.incf_gf = {}     # (group, func) -> [sum, max]            (inclusive)
+        self.dom_g = {}       # group         -> [sum, max]            (dominant)
+        self.dom_tot = [0, 0]                                          # dominant grand total
         self.folded = collections.Counter()  # "a;b;c" -> samples
+
+
+def _imb_add(d, key, v):
+    """Fold one rank's value `v` for `key` into a cross-rank [sum, max]."""
+    a = d.get(key)
+    if a is None:
+        d[key] = [v, v]
+    else:
+        a[0] += v
+        if v > a[1]:
+            a[1] = v
 
 
 def symbolize_samples(ranks):
     s = Samp()
     s.nranks = len(ranks)
     app_base = os.path.basename(ranks[0].get("application", "")) if ranks else ""
+
+    # Pass 1: collect addresses across ALL ranks (deduped per module) so addr2line
+    # runs once per module, without retaining any per-rank frame data.
     addrs = collections.defaultdict(set)
-    raw = []   # per rank: list of (count, [(path,addr), ...]) leaf-first
     for r in ranks:
         sm = r.get("sampling")
         if not sm:
-            raw.append(None); continue
+            continue
         s.hz = sm.get("hz", s.hz)
         maps = sm.get("maps", [])
-
-        def frames_of(pcs):
-            fr = []
-            for pc in pcs:
+        if sm.get("stacks"):
+            for st in sm["stacks"]:
+                for pc in st["pc"]:
+                    m = map_lookup(maps, pc)
+                    if m:
+                        addrs[m["path"]].add(file_vaddr(m, pc))
+        else:
+            for pc, _cnt in sm.get("samples", []):
                 m = map_lookup(maps, pc)
                 if m:
-                    a = file_vaddr(m, pc); addrs[m["path"]].add(a); fr.append((m["path"], a))
-                else:
-                    fr.append((None, pc))
-            return fr
-
-        items = []
-        if sm.get("stacks"):
-            s.stacks = True
-            for st in sm["stacks"]:
-                items.append((st["n"], frames_of(st["pc"])))
-        else:
-            for pc, cnt in sm.get("samples", []):
-                items.append((cnt, frames_of([pc])))
-        raw.append(items)
+                    addrs[m["path"]].add(file_vaddr(m, pc))
 
     sym = {}
     for path, aset in addrs.items():
         for a, v in addr2line(path, aset).items():
             sym[(path, a)] = v
 
-    def info(fr):
-        path, a = fr
-        fn, fl = sym.get((path, a), ("0x%x" % a, "?")) if path else ("0x%x" % a, "?")
-        return group_of(path, fn, app_base), fn, fl
+    def info(maps, pc):
+        m = map_lookup(maps, pc)
+        if m:
+            a = file_vaddr(m, pc)
+            fn, fl = sym.get((m["path"], a), ("0x%x" % a, "?"))
+            return group_of(m["path"], fn, app_base), fn, fl
+        return group_of(None, "0x%x" % pc, app_base), "0x%x" % pc, "?"
 
-    for items in raw:
-        if items is None:
-            s.leaf.append(None); s.dom.append(None); s.incf.append(None); continue
+    # Pass 2: attribute each rank, fold into the cross-rank aggregates, discard.
+    for r in ranks:
+        sm = r.get("sampling")
+        if not sm:
+            continue
+        maps = sm.get("maps", [])
         leaf, dom, incf = collections.Counter(), collections.Counter(), collections.Counter()
-        for cnt, frames in items:
-            g0, f0, l0 = info(frames[0])
-            leaf[(g0, f0, l0)] += cnt
-            s.total += cnt
-            if s.stacks:
+        if sm.get("stacks"):
+            s.stacks = True
+            for st in sm["stacks"]:
+                cnt = st["n"]
+                frames = [info(maps, pc) for pc in st["pc"]]
+                g0, f0, l0 = frames[0]
+                leaf[(g0, f0, l0)] += cnt
+                s.total += cnt
                 best, seenf, names = "ETC", set(), []
-                for fr in frames:
-                    g, fn, _ = info(fr)
+                for g, fn, _ in frames:
                     if GROUP_PRIO.get(g, 0) > GROUP_PRIO.get(best, 0):
                         best = g
                     if fn not in seenf and fn not in ENTRY_FRAMES:
@@ -257,7 +279,45 @@ def symbolize_samples(ranks):
                     names.append(fn)
                 dom[best] += cnt
                 s.folded[";".join(reversed(names))] += cnt
-        s.leaf.append(leaf); s.dom.append(dom); s.incf.append(incf)
+        else:
+            for pc, cnt in sm.get("samples", []):
+                g0, f0, l0 = info(maps, pc)
+                leaf[(g0, f0, l0)] += cnt
+                s.total += cnt
+
+        # --- fold this rank's leaf into the self aggregates ---
+        rank_g, rank_gf, rank_tot = collections.Counter(), collections.Counter(), 0
+        for (g, f, fl), n in leaf.items():
+            _imb_add(s.leaf_gffl, (g, f, fl), n)
+            s.fn_line[(g, f)][fl] += n
+            e = s.leaf_self.get(f)
+            if e is None:
+                s.leaf_self[f] = {"group": g, "file": fl, "self": n}
+            else:
+                e["self"] += n
+            rank_g[g] += n
+            rank_gf[(g, f)] += n
+            rank_tot += n
+        for g, v in rank_g.items():
+            _imb_add(s.leaf_g, g, v)
+        for k, v in rank_gf.items():
+            _imb_add(s.leaf_gf, k, v)
+        if rank_tot:
+            s.leaf_tot[0] += rank_tot
+            if rank_tot > s.leaf_tot[1]:
+                s.leaf_tot[1] = rank_tot
+
+        # --- fold inclusive + dominant-group (stack mode only) ---
+        for k, n in incf.items():
+            _imb_add(s.incf_gf, k, n)
+        dom_tot = 0
+        for g, n in dom.items():
+            _imb_add(s.dom_g, g, n)
+            dom_tot += n
+        if dom_tot:
+            s.dom_tot[0] += dom_tot
+            if dom_tot > s.dom_tot[1]:
+                s.dom_tot[1] = dom_tot
     return s
 
 
@@ -328,14 +388,11 @@ def symbolize_roofline(ranks, samp):
                     e["flops"] += cnt * w
                     e["fp_samp"] += cnt
     # exclusive (self) time samples per function, from the time sampler's leaf data
-    if samp and samp.leaf:
-        for c in samp.leaf:
-            if not c:
-                continue
-            for (g, fn, fl), cnt in c.items():
-                e = funcs.setdefault(fn, {"group": g, "file": fl,
-                                          "flops": 0.0, "bytes": 0.0, "fp_samp": 0, "self": 0})
-                e["self"] += cnt
+    if samp and samp.leaf_self:
+        for fn, ls in samp.leaf_self.items():
+            e = funcs.setdefault(fn, {"group": ls["group"], "file": ls["file"],
+                                      "flops": 0.0, "bytes": 0.0, "fp_samp": 0, "self": 0})
+            e["self"] += ls["self"]
     return {"hz": samp.hz if samp else 0, "functions": funcs}
 
 
@@ -351,15 +408,32 @@ def load(paths):
     files = []
     for p in paths:
         if os.path.isdir(p):
-            files += sorted(glob.glob(os.path.join(p, "*.json")), key=_prof_rank)
+            # Glob inside the dir ourselves rather than expanding tens of thousands
+            # of paths onto the caller's argv (E2BIG past ~60k ranks). Match only
+            # prof.*.json so snap.json/manifest.json are never parsed as profiles.
+            files += sorted(glob.glob(os.path.join(p, "prof.*.json")), key=_prof_rank)
         else:
             files += sorted(glob.glob(p), key=_prof_rank) if any(c in p for c in "*?[") else [p]
     ranks = []
+    bad = 0
     for fn in files:
-        with open(fn) as f:
-            ranks.append(json.load(f))
+        # A rank killed mid-run (OOM, segfault, node failure) leaves a truncated
+        # prof.<rank>.json — the normal failure mode at scale. Skip and count it
+        # rather than aborting the whole report; one dead rank out of thousands
+        # must not lose the other thousands.
+        try:
+            with open(fn) as f:
+                ranks.append(json.load(f))
+        except (OSError, ValueError) as e:
+            bad += 1
+            if bad <= 10:
+                sys.stderr.write("upat-report: skipping unreadable %s (%s)\n"
+                                 % (os.path.basename(fn), e.__class__.__name__))
+    if bad:
+        sys.stderr.write("upat-report: %d of %d rank file(s) unreadable, skipped\n"
+                         % (bad, len(files)))
     if not ranks:
-        sys.exit("upat-report: no input files matched")
+        sys.exit("upat-report: no readable input files matched")
     return ranks
 
 
@@ -377,12 +451,15 @@ def cpu_ref(ranks):
 
 def reduce_rows(ranks, imbalance, keep_shapes=False):
     nranks = len(ranks)
-    # key -> per-rank accumulation. By default the [shape] suffix is stripped so
-    # one function aggregates across input sizes; --detail keeps shapes.
+    # key -> running cross-rank aggregate. The suite imbalance metric (max-avg)/max
+    # needs only per-key {sum, max, min, active-count}, so we fold each rank in and
+    # discard it — never an O(nranks) list per function (which is O(nranks x funcs)
+    # total and OOMs at tens of thousands of ranks). By default the [shape] suffix
+    # is stripped so one function aggregates across input sizes; --detail keeps it.
     agg = {}
     for r in ranks:
         # sum within this rank first (so shape-stripped entries collapse to one
-        # per-rank value before the cross-rank imbalance lists are built)
+        # per-rank value before it is folded into the cross-rank aggregate)
         per = {}
         for fn in r["functions"]:
             name = fn["function"] if keep_shapes else base_name(fn["function"])
@@ -390,28 +467,33 @@ def reduce_rows(ranks, imbalance, keep_shapes=False):
             d = per.setdefault(key, [0.0, 0.0, 0.0, 0])
             d[0] += fn["count"]; d[1] += fn["t_incl"]; d[2] += fn["t_excl"]; d[3] += fn["bytes"]
         for key, (c, inc, exc, by) in per.items():
-            a = agg.setdefault(key, {"group": key[0], "name": key[1],
-                                     "counts": [], "incl": [], "excl": [], "bytes": 0})
-            a["counts"].append(c)
-            a["incl"].append(inc)
-            a["excl"].append(exc)
-            a["bytes"] += by
+            a = agg.get(key)
+            if a is None:
+                agg[key] = {"group": key[0], "name": key[1], "n": 1, "bytes": by,
+                            "c_sum": c, "c_max": c, "c_min": c,
+                            "i_sum": inc, "e_sum": exc, "e_max": exc, "e_min": exc}
+            else:
+                a["n"] += 1; a["bytes"] += by
+                a["c_sum"] += c; a["i_sum"] += inc; a["e_sum"] += exc
+                if c > a["c_max"]: a["c_max"] = c
+                if c < a["c_min"]: a["c_min"] = c
+                if exc > a["e_max"]: a["e_max"] = exc
+                if exc < a["e_min"]: a["e_min"] = exc
     rows = []
     for a in agg.values():
-        active = len(a["counts"])
+        active = a["n"]
         denom = nranks if imbalance == "world" else active
         # in world mode, ranks that never called it contribute 0 to min/avg
-        cmin = 0 if (imbalance == "world" and active < nranks) else min(a["counts"])
-        emin = 0.0 if (imbalance == "world" and active < nranks) else min(a["excl"])
-        imin = 0.0 if (imbalance == "world" and active < nranks) else min(a["incl"])
+        cmin = 0 if (imbalance == "world" and active < nranks) else a["c_min"]
+        emin = 0.0 if (imbalance == "world" and active < nranks) else a["e_min"]
         rows.append({
             "group": a["group"], "name": a["name"],
-            "count": sum(a["counts"]) / denom,
-            "t_incl": sum(a["incl"]) / denom,
-            "t_excl": sum(a["excl"]) / denom,
+            "count": a["c_sum"] / denom,
+            "t_incl": a["i_sum"] / denom,
+            "t_excl": a["e_sum"] / denom,
             "bytes": a["bytes"],
-            "imb_count": pct(cmin, max(a["counts"]), sum(a["counts"]) / denom),
-            "imb_excl": pct(emin, max(a["excl"]), sum(a["excl"]) / denom),
+            "imb_count": pct(cmin, a["c_max"], a["c_sum"] / denom),
+            "imb_excl": pct(emin, a["e_max"], a["e_sum"] / denom),
             "active": active, "nranks": nranks,
         })
     return rows
@@ -692,13 +774,18 @@ def cp_imb(counts, nranks):
     return tot, imb_samp, imb_pct
 
 
-def fmt_flat(title, per_rank, total, nranks, top, labelfn, thr=0.0):
-    agg = collections.defaultdict(lambda: collections.defaultdict(int))
-    for pe, c in enumerate(per_rank):
-        if c:
-            for k, n in c.items():
-                agg[k][pe] += n
-    rows = [(k, cp_imb(list(pe.values()), nranks)) for k, pe in agg.items()]
+def cp_imb_agg(tot, mx, nranks):
+    """Same as cp_imb but from a pre-reduced (sum, max) instead of a per-rank list,
+    so callers fold ranks into [sum, max] and never hold an O(nranks) list per key."""
+    avg = tot / nranks if nranks else 0.0
+    imb_samp = mx - avg
+    imb_pct = (imb_samp / mx * 100.0) if mx > 0 else 0.0
+    return tot, imb_samp, imb_pct
+
+
+def fmt_flat(title, agg, total, nranks, top, labelfn, thr=0.0):
+    # `agg` is a pre-reduced {key: [sum, max]} (built streaming in symbolize_samples).
+    rows = [(k, cp_imb_agg(v[0], v[1], nranks)) for k, v in agg.items()]
     rows.sort(key=lambda x: -x[1][0])
     if thr > 0 and total > 0:
         kept = [x for x in rows if 100.0 * x[1][0] / total >= thr]
@@ -721,45 +808,26 @@ def fmt_flat(title, per_rank, total, nranks, top, labelfn, thr=0.0):
 def fmt_domgroup(s, top):
     if not s.stacks:
         return ""
-    grp = collections.defaultdict(lambda: collections.defaultdict(int))
-    for pe, c in enumerate(s.dom):
-        if c:
-            for g, n in c.items():
-                grp[g][pe] += n
     imb = s.nranks > 1
     out = ["", "Table 1:  Profile by Function Group  (sampling @ %d Hz, %d PEs)" % (s.hz, s.nranks),
            "          time charged to the highest-level group on each sample's stack", "",
            samp_head(imb, "Group"), RULE]
-    pe_tot = collections.defaultdict(int)
-    for g in grp:
-        for pe, n in grp[g].items():
-            pe_tot[pe] += n
-    t = cp_imb(list(pe_tot.values()), s.nranks)
+    t = cp_imb_agg(s.dom_tot[0], s.dom_tot[1], s.nranks)
     out.append("%s  Total" % samp_cols(t[0], s.total, t[1], t[2], imb))
     out.append(RULE)
-    for g in sorted(grp, key=lambda g: -sum(grp[g].values())):
-        gt = cp_imb(list(grp[g].values()), s.nranks)
+    for g in sorted(s.dom_g, key=lambda g: -s.dom_g[g][0]):
+        v = s.dom_g[g]
+        gt = cp_imb_agg(v[0], v[1], s.nranks)
         out.append("%s  %s" % (samp_cols(gt[0], s.total, gt[1], gt[2], imb), g))
     out.append(foot(samp_legend(imb), 70))
     return "\n".join(out)
 
 
-def fmt_groups(per_rank, hz, total, nranks, top, thr=0.0):
-    """CrayPAT-style 'Profile by Function Group and Function' for sampling."""
+def fmt_groups(s, hz, total, nranks, top, thr=0.0):
+    """CrayPAT-style 'Profile by Function Group and Function' for sampling. Reads
+    the streaming self-aggregates (leaf_g / leaf_gf / leaf_tot / fn_line)."""
     if total <= 0:
         return ""
-    # aggregate per (group) and per (group,func); track dominant file:line.
-    grp_pe = collections.defaultdict(lambda: collections.defaultdict(int))   # group->pe->count
-    fn_pe = collections.defaultdict(lambda: collections.defaultdict(int))    # (g,f)->pe->count
-    fn_line = collections.defaultdict(collections.Counter)                   # (g,f)->fileline->count
-    for pe, c in enumerate(per_rank):
-        if not c:
-            continue
-        for (g, f, fl), n in c.items():
-            grp_pe[g][pe] += n
-            fn_pe[(g, f)][pe] += n
-            fn_line[(g, f)][fl] += n
-
     imb = nranks > 1
 
     def line(samp, imbs, imbp, label, indent):
@@ -771,30 +839,28 @@ def fmt_groups(per_rank, hz, total, nranks, top, thr=0.0):
            (" " * (41 if imb else 21)) + "Function=[file:line]",
            RULE]
     # Total row: imbalance over the per-PE grand totals.
-    pe_tot = collections.defaultdict(int)
-    for g in grp_pe:
-        for pe, n in grp_pe[g].items():
-            pe_tot[pe] += n
-    t_tot, t_is, t_ip = cp_imb(list(pe_tot.values()), nranks)
+    t_tot, t_is, t_ip = cp_imb_agg(s.leaf_tot[0], s.leaf_tot[1], nranks)
     out.append(line(t_tot, t_is, t_ip, "Total", ""))
     out.append(RULE)
 
-    groups = sorted(grp_pe, key=lambda g: sum(grp_pe[g].values()), reverse=True)
+    groups = sorted(s.leaf_g, key=lambda g: -s.leaf_g[g][0])
     for g in groups:
-        gt, gis, gip = cp_imb(list(grp_pe[g].values()), nranks)
+        gv = s.leaf_g[g]
+        gt, gis, gip = cp_imb_agg(gv[0], gv[1], nranks)
         out.append(line(gt, gis, gip, g, ""))
-        funcs = [k for k in fn_pe if k[0] == g]
-        funcs.sort(key=lambda k: sum(fn_pe[k].values()), reverse=True)
+        funcs = [k for k in s.leaf_gf if k[0] == g]
+        funcs.sort(key=lambda k: -s.leaf_gf[k][0])
         if thr > 0:
-            kept = [k for k in funcs if 100.0 * sum(fn_pe[k].values()) / total >= thr]
+            kept = [k for k in funcs if 100.0 * s.leaf_gf[k][0] / total >= thr]
         else:
             kept = funcs
         hidden = len(funcs) - len(kept)
         if top:
             kept = kept[:top]
         for k in kept:
-            ft, fis, fip = cp_imb(list(fn_pe[k].values()), nranks)
-            fl = fn_line[k].most_common(1)[0][0]
+            fv = s.leaf_gf[k]
+            ft, fis, fip = cp_imb_agg(fv[0], fv[1], nranks)
+            fl = s.fn_line[k].most_common(1)[0][0]
             label = k[1] if fl in ("?", "") else "%s  [%s]" % (k[1], fl)
             out.append(line(ft, fis, fip, label[:52], "  "))
         n = _hidden_note(hidden, thr)
@@ -805,20 +871,6 @@ def fmt_groups(per_rank, hz, total, nranks, top, thr=0.0):
     return "\n".join(out)
 
 
-def collapse_to_func(per_rank):
-    """Sum leaf (group, func, file:line) samples down to (group, func) so the
-    'self' table is function-level; the per-line breakdown lives in fmt_lines."""
-    out = []
-    for c in per_rank:
-        if not c:
-            out.append(c); continue
-        fc = collections.Counter()
-        for (g, f, _fl), n in c.items():
-            fc[(g, f)] += n
-        out.append(fc)
-    return out
-
-
 def _has_line(fl):
     """True if a symbolized location carries a real source line (file.c:123), not
     just a module/binary name or an unresolved 'file:?' (no debug line info)."""
@@ -826,21 +878,16 @@ def _has_line(fl):
     return i != -1 and fl[i + 1:].isdigit()
 
 
-def fmt_lines(per_rank, hz, total, nranks, top, thr=0.0):
+def fmt_lines(agg, hz, total, nranks, top, thr=0.0):
     """CrayPAT-style line-level hotspots: every row is a single source line
     (function + file:line), ranked by self-sample %. The leaf samples are already
     resolved per (group, function, file:line), so this is just a re-ranking of the
     finest-grained key instead of the per-function collapse fmt_groups does."""
     if total <= 0:
         return ""
-    line_pe = collections.defaultdict(lambda: collections.defaultdict(int))  # (g,f,fl)->pe->n
-    for pe, c in enumerate(per_rank):
-        if not c:
-            continue
-        for k, n in c.items():
-            line_pe[k][pe] += n
     imb = nranks > 1
-    rows = [(k, cp_imb(list(pe.values()), nranks)) for k, pe in line_pe.items()]
+    # `agg` is the pre-reduced finest-grained {(g,f,fl): [sum, max]} self map.
+    rows = [(k, cp_imb_agg(v[0], v[1], nranks)) for k, v in agg.items()]
     rows.sort(key=lambda x: -x[1][0])
     kept = [x for x in rows if 100.0 * x[1][0] / total >= thr] if thr > 0 else rows
     hidden = len(rows) - len(kept)
@@ -886,17 +933,13 @@ def fmt_lines(per_rank, hz, total, nranks, top, thr=0.0):
     return "\n".join(out)
 
 
-def line_hotspots_json(leaf, gtotal, nranks, top=200):
+def line_hotspots_json(agg, gtotal, nranks, top=200):
     """Ranked line-level hotspots for the JSON contract (same data fmt_lines
-    renders), so the suite/HTML report can surface source-line hotspots too."""
-    line_pe = collections.defaultdict(lambda: collections.defaultdict(int))
-    for pe, c in enumerate(leaf):
-        if c:
-            for k, n in c.items():
-                line_pe[k][pe] += n
+    renders), so the suite/HTML report can surface source-line hotspots too.
+    `agg` is the streaming {(g,f,fl): [sum, max]} self map."""
     hot = []
-    for (g, f, fl), pe in line_pe.items():
-        tot, is_, ip = cp_imb(list(pe.values()), nranks)
+    for (g, f, fl), v in agg.items():
+        tot, is_, ip = cp_imb_agg(v[0], v[1], nranks)
         hot.append({"group": g, "function": f, "fileline": fl, "samples": tot,
                     "pct": 100.0 * tot / gtotal if gtotal else 0.0,
                     "imb_samp": is_, "imb_pct": ip})
@@ -967,7 +1010,7 @@ def fmt_perpe(ranks):
     return "\n".join(out)
 
 
-def observations(rows, ranks, hz, total, per_rank):
+def observations(rows, ranks, hz, total):
     obs = []
     nr = len(ranks)
     runtime = max((r.get("runtime_s", 0.0) for r in ranks), default=0.0)
@@ -1065,15 +1108,13 @@ def main():
         groups = {}
         s = symbolize_samples(ranks)
         if s.stacks and s.total:
-            for c in s.dom:
-                if c:
-                    for g, n in c.items():
-                        groups[g] = groups.get(g, 0) + n
+            for g, v in s.dom_g.items():
+                groups[g] = v[0]
         out = {"version": 1, "application": app, "runtime_s": runtime,
                "cpu_time_s": cpu_ref(ranks),    # per-rank-avg CPU time = time% denominator
                "nranks": len(ranks), "functions": rows,
                "groups": groups, "group_total": s.total,
-               "line_hotspots": line_hotspots_json(s.leaf, s.total, len(ranks))}
+               "line_hotspots": line_hotspots_json(s.leaf_gffl, s.total, len(ranks))}
         rf = symbolize_roofline(ranks, s)
         if rf:
             out["roofline_functions"] = rf
@@ -1100,21 +1141,21 @@ def main():
 
     # Table 1 — sampling, grouped by function group (CrayPAT-style).
     s = symbolize_samples(ranks)
-    hz, total, per_rank = s.hz, s.total, s.leaf
+    hz, total = s.hz, s.total
     if total > 0:
         if s.stacks:
             cap = args.top or 15        # the call-tree lists are long; cap unless --top given
             print(fmt_domgroup(s, args.top))
-            print(fmt_flat("Top functions (inclusive)", s.incf, total, s.nranks, cap,
+            print(fmt_flat("Top functions (inclusive)", s.incf_gf, total, s.nranks, cap,
                            lambda k: "%s  [%s]" % (k[1], k[0]), args.threshold))
-            print(fmt_flat("Top functions (self)", collapse_to_func(s.leaf), total,
+            print(fmt_flat("Top functions (self)", s.leaf_gf, total,
                            s.nranks, cap, lambda k: "%s  (%s)" % (k[1], k[0]),
                            args.threshold))
         else:
-            print(fmt_groups(s.leaf, hz, total, s.nranks, args.top, args.threshold))
+            print(fmt_groups(s, hz, total, s.nranks, args.top, args.threshold))
         # CrayPAT-style line-level hotspot ranking (self time), a separate section
         # from the function-level tables above. Works in both leaf and stack modes.
-        print(fmt_lines(s.leaf, hz, total, s.nranks, args.top, args.threshold))
+        print(fmt_lines(s.leaf_gffl, hz, total, s.nranks, args.top, args.threshold))
 
     # Tables 2-3 — exact library tracing (counts/time/imbalance, MPI volume).
     # Imbalance columns only make sense across ranks; drop them for a single rank.
@@ -1136,7 +1177,7 @@ def main():
     print(fmt_heap(ranks))
     print(fmt_perpe(ranks))
     if not args.no_observations:
-        print(observations(rows, ranks, hz, total, per_rank))
+        print(observations(rows, ranks, hz, total))
     print()
 
 

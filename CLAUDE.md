@@ -21,6 +21,21 @@ from (made portable). There is **no umbrella/driver command** — run one tier:
 not both. `upat report` opportunistically folds in a `snap.json` if a `uaps` run
 left one in the result dir.
 
+### Invocation
+
+```sh
+uaps run -- mpirun -n 4 ./app   # snapshot: HWPC + MPI/OpenMP, one screen across ranks
+upat run -- ./app               # deep profile + report (bare `upat ./app` auto-inserts `run`)
+upat report  RESULT             # re-render a result dir (text); --format html for HTML
+upat report  RESULT --detail mpi  # per-facility detail (comm matrix, per-shape calls)
+upat roofline -- ./app          # per-function roofline (event sampling)
+upat scale   R1 R2 ...          # strong/weak scaling across runs
+```
+
+`upat run`/`collect` honor `UPAT_*` env vars (see README.md table): `UPAT_SAMPLE`,
+`UPAT_SAMPLE_HZ`, `UPAT_SAMPLE_STACK`, `UPAT_HEAP`, `UPAT_ROOFLINE`, `UPAT_OUTPUT`,
+`UPAT_QUIET`. The human report goes to **stderr** (stdout belongs to the target).
+
 ## Self-contained project rule (IMPORTANT — applies to everything)
 
 This project must be **fully self-contained**. Everything you create — test
@@ -104,6 +119,51 @@ Two collectors emit a **shared on-disk contract**; one analysis spine reads it.
   FLOP/bandwidth ceilings **per run on the run host** (never reuse a cross-machine
   cache); `roofline.py` places measured points against them.
 - **`core/symbolize/`**: address→`func [file:line]` resolution shared by the tiers.
+- **Profiler interception is generated, not hand-written**: the `upat` C profiler's
+  per-symbol wrappers come from `collectors/profile/gen/gen.py` reading
+  `gen/prototypes/*.txt` (one C signature per line; `fortran` dialect = all-pointer
+  args, `c` dialect = by-value). To trace a new BLAS/LAPACK/MPI/IO symbol you add its
+  prototype line — you don't write C. One generated `.c` serves both the `preload` and
+  `frida` backends via the `WRAP()` macro. The Makefile regenerates on prototype change.
+
+## Scale & robustness invariants (target: thousands of nodes / 10k+ ranks)
+
+These are load-bearing for production scale — don't regress them when editing:
+
+- **Aggregation is streaming, never O(nranks)-resident.** The report path folds each
+  rank into cross-rank `[sum, max]` accumulators (the only inputs the `(max-avg)/max`
+  metric needs) and discards it — see `reduce_rows` and `symbolize_samples` in
+  `collectors/profile/tools/upat-report.py`. Never reintroduce per-rank lists/Counters
+  keyed by function (that's O(nranks·funcs) and OOMs). The comm matrix / size histogram
+  already stream one file at a time (`htmlrep.py`); copy that shape.
+- **Partial inputs are normal at scale.** A rank killed mid-run leaves a truncated
+  `prof.<rank>.json`; `load()` skips+counts unreadable files instead of aborting. Keep
+  per-file `json.load` guarded.
+- **Don't expand N rank paths onto argv** (E2BIG ~60k ranks). `report.py` passes the
+  result *dir* to `upat-report.py`, which globs `prof.*.json` itself.
+- **Per-rank `prof.<rank>.json` storage is O(degree), not O(nranks).** The MPI comm
+  matrix uses a peer-keyed hashmap (`collectors/profile/src/analyzers/mpi.c`), not a
+  dense `[max_peer]` array. The uaps MPI shim accumulates lock-free per-thread.
+- **fds:** node-level/MPI counting opens ~7-9 perf groups *per online CPU*;
+  `uaps_collect::raise_fd_limit()` lifts `RLIMIT_NOFILE` at startup and `EMFILE` is
+  surfaced (not silently gapped).
+- **Rank detection** must match `contract.rank_from_env` (`OMPI/PMI/PMIX/SLURM_PROCID/
+  PALS_RANKID/ALPS_APP_PE`) in both `core/contract/contract.py` and
+  `collectors/profile/src/core/util.c`, else ranks collide on `prof.0.json`.
+- **Roofline byte-source consistency:** the plotted arithmetic-intensity point and the
+  DRAM-bandwidth ceiling must use the *same* traffic source (prefetch-inclusive
+  `mem_dram_reads` / `l2_fill_rsp_src.dram_io_*`), not demand-only fills — mixing them
+  mis-places memory-bound kernels ~3×. See `_whole_program_point` (`htmlrep.py`),
+  `ROOFLINE_EVENTS` (`core/cli/upat`), and `derive.rs`.
+- **Per-process counting misses wrapped/forked work** (no `inherit`): `numactl`/
+  `taskset`/shell wrappers measure the idle parent — use `-a` (auto for MPI). The C
+  profiler suppresses its report write in `fork`-without-`exec` children (`pthread_atfork`
+  in `libprof.c`) so they don't clobber the parent's rank file.
+
+Regenerating the QE validation reports (`tests/qe/out/`) requires the run host (QE
+binary + per-host roofline). The node-level `uaps` snapshots need `cap_perfmon` on the
+`uaps` binary (`sudo setcap cap_perfmon+ep <uaps>`) or `perf_event_paranoid<=0`;
+rebuilding the binary drops the capability, so re-`setcap` after `cargo build`.
 
 The reports are **strictly single-tier** — there is no combined report; only the
 Environment header is shared. The human report goes to **stderr** (the target owns

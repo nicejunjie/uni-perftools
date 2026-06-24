@@ -26,24 +26,45 @@ static double now(void)
     return t.tv_sec + t.tv_nsec * 1e-9;
 }
 
-/* per-function accumulation (keyed by the literal display name) */
+/* Per-function accumulation, keyed by the literal display-name pointer (string
+ * literals are deduplicated within this .so, so pointer identity == same call).
+ *
+ * Each thread accumulates into its OWN block with NO lock on the hot path — under
+ * MPI_THREAD_MULTIPLE a comm-heavy rank can issue millions of tiny calls across
+ * threads, and a global per-call mutex would serialize them against each other and
+ * the app. The lock is taken once per thread (to link its block into the registry)
+ * and once at finalize (to merge). */
 #define MAXFN 48
-static const char *g_fn[MAXFN];
-static double g_ft[MAXFN];
-static long g_fc[MAXFN];
-static int g_nfn;
-static double g_mpi_time, g_init_wall;
+typedef struct tls_acc {
+    const char *fn[MAXFN];
+    double ft[MAXFN];
+    long fc[MAXFN];
+    int nfn;
+    double mpi_time;
+    struct tls_acc *next;
+} tls_acc_t;
+
+static __thread tls_acc_t *t_acc;       /* this thread's block (hot path is lock-free) */
+static tls_acc_t *g_blocks;             /* registry of all threads' blocks */
+static double g_init_wall;
 static int g_started;
 static pthread_mutex_t g_lock = PTHREAD_MUTEX_INITIALIZER;
 
 static void acc(const char *name, double dt)
 {
-    pthread_mutex_lock(&g_lock);
-    g_mpi_time += dt;
-    for (int i = 0; i < g_nfn; i++)
-        if (g_fn[i] == name) { g_ft[i] += dt; g_fc[i]++; pthread_mutex_unlock(&g_lock); return; }
-    if (g_nfn < MAXFN) { g_fn[g_nfn] = name; g_ft[g_nfn] = dt; g_fc[g_nfn] = 1; g_nfn++; }
-    pthread_mutex_unlock(&g_lock);
+    tls_acc_t *a = t_acc;
+    if (!a) {
+        a = calloc(1, sizeof(*a));
+        if (!a) return;                 /* OOM: skip accounting rather than crash the app */
+        pthread_mutex_lock(&g_lock);    /* once per thread, not per call */
+        a->next = g_blocks; g_blocks = a;
+        pthread_mutex_unlock(&g_lock);
+        t_acc = a;
+    }
+    a->mpi_time += dt;
+    for (int i = 0; i < a->nfn; i++)
+        if (a->fn[i] == name) { a->ft[i] += dt; a->fc[i]++; return; }
+    if (a->nfn < MAXFN) { a->fn[a->nfn] = name; a->ft[a->nfn] = dt; a->fc[a->nfn] = 1; a->nfn++; }
 }
 
 static int rank_from_env(void)
@@ -69,16 +90,38 @@ static void write_report(void)
     const char *dir = getenv("UAPS_MPI_OUTDIR");
     if (!dir)
         return;
+
+    /* Merge every thread's block by function-name pointer. */
+    const char *names[MAXFN];
+    double ft[MAXFN] = {0};
+    long fc[MAXFN] = {0};
+    int nfn = 0;
+    double mpi_time = 0.0;
+    pthread_mutex_lock(&g_lock);
+    for (tls_acc_t *b = g_blocks; b; b = b->next) {
+        mpi_time += b->mpi_time;
+        for (int i = 0; i < b->nfn; i++) {
+            int j = 0;
+            while (j < nfn && names[j] != b->fn[i]) j++;
+            if (j == nfn) {
+                if (nfn >= MAXFN) continue;
+                names[nfn] = b->fn[i]; nfn++;
+            }
+            ft[j] += b->ft[i]; fc[j] += b->fc[i];
+        }
+    }
+    pthread_mutex_unlock(&g_lock);
+
     int rank = rank_from_env();
     char path[4096];
     snprintf(path, sizeof path, "%s/rank_%d.txt", dir, rank);
     FILE *f = fopen(path, "w");
     if (!f)
         return;
-    fprintf(f, "rank=%d\nwall=%.9f\nmpi_time=%.9f\n", rank, wall, g_mpi_time);
-    for (int i = 0; i < g_nfn; i++)
-        if (g_fc[i] > 0)
-            fprintf(f, "fn=MPI_%s %.9f %ld\n", g_fn[i], g_ft[i], g_fc[i]);
+    fprintf(f, "rank=%d\nwall=%.9f\nmpi_time=%.9f\n", rank, wall, mpi_time);
+    for (int i = 0; i < nfn; i++)
+        if (fc[i] > 0)
+            fprintf(f, "fn=MPI_%s %.9f %ld\n", names[i], ft[i], fc[i]);
     fclose(f);
 }
 

@@ -40,10 +40,12 @@ VIEW_ORDER = ["roofline", "roofline-func", "microarch", "memory", "vectorization
 PROFILE_REPORT = os.path.join(_ROOT, "collectors", "profile", "tools", "upat-report.py")
 
 
-def _profile_json(profs):
+def _profile_json(result_dir, profs):
     if not profs:
         return None
-    r = subprocess.run([sys.executable, PROFILE_REPORT, "--format", "json"] + profs,
+    # Pass the result dir, not the N expanded prof.*.json paths: the child globs
+    # them itself, avoiding an E2BIG argv at tens of thousands of ranks.
+    r = subprocess.run([sys.executable, PROFILE_REPORT, "--format", "json", result_dir],
                        capture_output=True, text=True)
     try:
         return json.loads(r.stdout)
@@ -144,7 +146,7 @@ def render(result_dir, fmt="text", view="all", collector="upat", detail=None, th
     manifest = _load(os.path.join(result_dir, contract.MANIFEST)) or {}
     snap = _load(os.path.join(result_dir, contract.SNAP))
     profs = contract.prof_glob(result_dir)
-    profile = _profile_json(profs)
+    profile = _profile_json(result_dir, profs)
 
     # uaps and upat are independent cost tiers — a report covers exactly ONE of
     # them, never both. The active tier owns the analysis (insights + sections);
@@ -177,7 +179,7 @@ def render(result_dir, fmt="text", view="all", collector="upat", detail=None, th
             return
         print("\n".join(UPAT_BANNER))
         sys.stdout.flush()
-        subprocess.run([sys.executable, PROFILE_REPORT, "--detail", detail] + profs)
+        subprocess.run([sys.executable, PROFILE_REPORT, "--detail", detail, result_dir])
         return
 
     # focused single viewpoint: print just that section (no banners/insights)
@@ -189,7 +191,7 @@ def render(result_dir, fmt="text", view="all", collector="upat", detail=None, th
                 print("\n".join(out))
         if view == "hotspots" and profs:
             subprocess.run([sys.executable, PROFILE_REPORT, "--no-observations",
-                            "--threshold", str(threshold)] + profs)
+                            "--threshold", str(threshold), result_dir])
         return
 
     do_uaps = collector == "uaps"
@@ -224,6 +226,6 @@ def render(result_dir, fmt="text", view="all", collector="upat", detail=None, th
     if profs:
         sys.stdout.flush()                         # our banner precedes the subprocess tables
         subprocess.run([sys.executable, PROFILE_REPORT, "--no-observations",
-                        "--no-header", "--threshold", str(threshold)] + profs)
+                        "--no-header", "--threshold", str(threshold), result_dir])
     else:
         print("\n(no profile data)")

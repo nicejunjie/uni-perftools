@@ -38,18 +38,32 @@ int libprof_skip_exe(const char *str)
     return 0;
 }
 
+/* Launcher rank env vars, in priority order. Must stay in sync with
+ * core/contract/contract.py:rank_from_env — a launcher missing here makes every
+ * rank fall back to 0 and clobber the same prof.0.json. SLURM_PROCID covers bare
+ * `srun` (no PMI export); PALS_RANKID/ALPS_APP_PE cover HPE/Cray launchers. */
+static const char *const RANK_ENV[] = {
+    "OMPI_COMM_WORLD_RANK", "PMI_RANK", "MV2_COMM_WORLD_RANK", "PMIX_RANK",
+    "SLURM_PROCID", "PALS_RANKID", "ALPS_APP_PE", NULL,
+};
+
+static const char *rank_env_value(void)
+{
+    for (int i = 0; RANK_ENV[i]; i++) {
+        const char *r = getenv(RANK_ENV[i]);
+        if (r) return r;
+    }
+    return NULL;
+}
+
 int check_MPI(void)
 {
-    return getenv("PMI_RANK") || getenv("MV2_COMM_WORLD_RANK") ||
-           getenv("OMPI_COMM_WORLD_RANK") || getenv("PMIX_RANK");
+    return rank_env_value() != NULL;
 }
 
 /* Global MPI rank from the launcher environment (no MPI calls needed). */
 int get_MPI_rank(void)
 {
-    const char *r = getenv("OMPI_COMM_WORLD_RANK");
-    if (!r) r = getenv("PMI_RANK");
-    if (!r) r = getenv("MV2_COMM_WORLD_RANK");
-    if (!r) r = getenv("PMIX_RANK");
+    const char *r = rank_env_value();
     return r ? atoi(r) : 0;
 }

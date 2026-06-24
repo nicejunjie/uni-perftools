@@ -32,7 +32,7 @@ body{font:14px/1.55 -apple-system,Segoe UI,Roboto,Helvetica,sans-serif;margin:0;
 /* header band */
 .hdr{background:linear-gradient(120deg,#0d3b66 0%,#1565c0 100%);color:#fff;margin:0 -22px 0;padding:24px 28px 22px}
 .hdr h1{font-size:20px;margin:0;font-weight:600;letter-spacing:.2px}
-.hdr .cmd{font-family:ui-monospace,SFMono-Regular,Menlo,monospace;font-size:12px;opacity:.9;margin-top:7px;word-break:break-all}
+.hdr .cmd{font-family:ui-monospace,SFMono-Regular,Menlo,monospace;font-size:12px;opacity:.9;margin-top:7px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
 .hdr .meta{font-size:12.5px;opacity:.85;margin-top:8px}
 .hdr .meta b{font-weight:600;opacity:1}
 /* headline insight */
@@ -248,8 +248,9 @@ def _comm_matrix(result_dir, B=256):
     return labels, mat, n > B
 
 
-def _heatmap_html(result_dir):
-    cm = _comm_matrix(result_dir)
+def _heatmap_html(result_dir, cm=None):
+    if cm is None:
+        cm = _comm_matrix(result_dir)
     if not cm:
         return "<p class='note'>(no point-to-point communication recorded)</p>"
     labels, mat, bucketed = cm
@@ -355,12 +356,16 @@ def _page(title, body):
 def _whole_program_point(snap):
     m = _metrics(snap)
     g = m.get("gflops", {}).get("value")
-    fills = m.get("mem_fills_dram", {}).get("value")
-    el = m.get("elapsed_time", {}).get("value")
-    if g and fills and el:
-        b = fills * 64.0
-        if b > 0:
-            return {"label": "whole-program", "ai": g * 1e9 * el / b, "gflops": g}
+    # Arithmetic intensity must use the SAME DRAM-traffic source as the bandwidth
+    # ceiling it is plotted against. dram_bandwidth_gbs is built from the
+    # prefetch-inclusive L2-from-DRAM counter (mem_dram_reads); mem_fills_dram is
+    # demand-only and undercounts streaming traffic ~3x, which placed memory-bound
+    # kernels at an AI ~3x too high (looking far more compute-friendly than they
+    # are). AI [FLOP/byte] = GFLOP/s / (DRAM GB/s) since both are throughputs over
+    # the same elapsed window.
+    bw = m.get("dram_bandwidth_gbs", {}).get("value")
+    if g and bw and bw > 0:
+        return {"label": "whole-program", "ai": g / bw, "gflops": g}
     return None
 
 
@@ -442,8 +447,8 @@ def _hdr_band(title, badge, cmd, env):
         bits.append(E(env["date"]))
     meta = " &nbsp;·&nbsp; ".join(bits)
     return ("<div class='hdr'><h1>%s <span class='badge'>%s</span></h1>"
-            "<div class='cmd'>%s</div><div class='meta'>%s</div></div>"
-            % (E(title), E(badge), E(cmd), meta))
+            "<div class='cmd' title='%s'>%s</div><div class='meta'>%s</div></div>"
+            % (E(title), E(badge), E(cmd), E(cmd), meta))
 
 
 def build(result_dir, manifest, snap, profile, suite, detail=None, threshold=0.1, collector="upat"):
@@ -597,9 +602,10 @@ def build(result_dir, manifest, snap, profile, suite, detail=None, threshold=0.1
     if do_upat:
         body.append("<div class='sec'><h2>Deep profile</h2>")
         body.append(_profile_tables(profile, threshold))
-        if _comm_matrix(result_dir):           # comm matrix figure if MPI ran
+        cm = _comm_matrix(result_dir)          # one streaming pass over all rank files
+        if cm:                                 # comm matrix figure if MPI ran
             body.append("<h2>MPI communication matrix</h2>")
-            body.append(_heatmap_html(result_dir))
+            body.append(_heatmap_html(result_dir, cm))
         body.append("</div>")
 
     # extra insights (beyond the headline) + the full environment, at the bottom

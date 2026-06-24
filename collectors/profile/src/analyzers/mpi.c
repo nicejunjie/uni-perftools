@@ -36,8 +36,15 @@ static int type_size(void *datatype)
 #define NBIN 12
 static pthread_mutex_t L = PTHREAD_MUTEX_INITIALIZER;
 static unsigned long long bins[NBIN];
-static unsigned long long *sent, *recvd;   /* bytes per peer rank */
-static int npeer;
+
+/* Per-peer volume in an open-addressing hash table keyed by peer rank, so memory
+ * is O(distinct peers actually touched) = O(degree), NOT O(highest peer rank).
+ * The old dense array sized to (max_peer+1): a rank-0 gather from rank 9999
+ * allocated a 10000-entry mostly-zero array, and an all-to-all pattern made every
+ * rank O(nranks) => O(nranks^2) across the job. */
+typedef struct { int peer; unsigned long long sent, recvd; } peer_t;
+static peer_t *pmap;            /* slots; .peer < 0 means empty */
+static int pcap, pcount;        /* capacity (power of two), live entries */
 
 static int size_bin(unsigned long long b)
 {
@@ -46,25 +53,44 @@ static int size_bin(unsigned long long b)
     return i;
 }
 
-static int grow(int peer)                   /* returns 1 if [peer] is now valid, 0 on OOM */
+static int peer_rehash(int newcap)          /* returns 0 on OOM */
 {
-    if (peer < npeer) return 1;
-    int nn = peer + 1;
-    unsigned long long *ns = realloc(sent, nn * sizeof(*sent));
-    unsigned long long *nr = realloc(recvd, nn * sizeof(*recvd));
-    if (ns) sent = ns;                      /* commit whichever grew so we don't leak */
-    if (nr) recvd = nr;
-    if (!ns || !nr) return 0;               /* OOM: drop this update rather than write OOB */
-    for (int i = npeer; i < nn; i++) { sent[i] = 0; recvd[i] = 0; }
-    npeer = nn;
+    peer_t *np = malloc((size_t)newcap * sizeof(*np));
+    if (!np) return 0;
+    for (int i = 0; i < newcap; i++) np[i].peer = -1;
+    for (int i = 0; i < pcap; i++) {
+        if (pmap[i].peer < 0) continue;
+        unsigned h = (unsigned)pmap[i].peer * 2654435761u & (unsigned)(newcap - 1);
+        while (np[h].peer >= 0) h = (h + 1) & (unsigned)(newcap - 1);
+        np[h] = pmap[i];
+    }
+    free(pmap);
+    pmap = np; pcap = newcap;
     return 1;
+}
+
+static peer_t *peer_slot(int peer)          /* find-or-insert; NULL on OOM */
+{
+    if (pcount * 4 >= pcap * 3 &&            /* keep load factor < 0.75 (also seeds first alloc) */
+        !peer_rehash(pcap ? pcap * 2 : 64))
+        return NULL;
+    unsigned h = (unsigned)peer * 2654435761u & (unsigned)(pcap - 1);
+    while (pmap[h].peer >= 0) {
+        if (pmap[h].peer == peer) return &pmap[h];
+        h = (h + 1) & (unsigned)(pcap - 1);
+    }
+    pmap[h].peer = peer; pmap[h].sent = pmap[h].recvd = 0; pcount++;
+    return &pmap[h];
 }
 
 static void record(unsigned long long bytes, int dir, int peer)
 {
     pthread_mutex_lock(&L);
     bins[size_bin(bytes)]++;
-    if (dir && peer >= 0 && grow(peer)) (dir > 0 ? sent : recvd)[peer] += bytes;
+    if (dir && peer >= 0) {
+        peer_t *p = peer_slot(peer);        /* OOM: drop this update rather than crash */
+        if (p) { if (dir > 0) p->sent += bytes; else p->recvd += bytes; }
+    }
     pthread_mutex_unlock(&L);
 }
 
@@ -131,22 +157,37 @@ static int fan_reduce(libprof_key_t *k, libprof_delta_t *md, const libprof_desc_
 static int fan_scatterv(libprof_key_t *k, libprof_delta_t *md, const libprof_desc_t *d, void **a, void *r)
 { (void)k;(void)d;(void)r; md->bytes = volume_f(a, 5, 6); record(md->bytes, 0, -1); return 0; }
 
+static int peer_cmp(const void *a, const void *b)
+{
+    int pa = ((const peer_t *)a)->peer, pb = ((const peer_t *)b)->peer;
+    return (pa > pb) - (pa < pb);
+}
+
 static void emit(void *fp)
 {
     FILE *f = fp;
     /* Sparse [peer, bytes] pairs — only peers we actually exchanged with. This
      * keeps each rank's file O(degree) instead of O(nranks): a halo/stencil code
      * at thousands of ranks writes a handful of pairs, not an N-long mostly-zero
-     * row. The postprocess tool reads this (and the legacy dense array). */
+     * row. The postprocess tool reads this (and the legacy dense array). Live hash
+     * entries are sorted by peer so the output is deterministic. */
+    peer_t *live = (pcount && pmap) ? malloc((size_t)pcount * sizeof(*live)) : NULL;
+    int n = 0;
+    if (live)
+        for (int i = 0; i < pcap; i++)
+            if (pmap[i].peer >= 0) live[n++] = pmap[i];
+    if (n > 1) qsort(live, n, sizeof(*live), peer_cmp);
+
     fprintf(f, ",\n  \"mpi_detail\": {\n    \"bins\": [");
     for (int i = 0; i < NBIN; i++) fprintf(f, "%s%llu", i ? "," : "", bins[i]);
-    fprintf(f, "],\n    \"npeer\": %d,\n    \"sent\": [", npeer);
-    for (int i = 0, first = 1; i < npeer; i++)
-        if (sent[i]) { fprintf(f, "%s[%d,%llu]", first ? "" : ",", i, sent[i]); first = 0; }
+    fprintf(f, "],\n    \"npeer\": %d,\n    \"sent\": [", n);
+    for (int i = 0, first = 1; i < n; i++)
+        if (live[i].sent) { fprintf(f, "%s[%d,%llu]", first ? "" : ",", live[i].peer, live[i].sent); first = 0; }
     fprintf(f, "],\n    \"recv\": [");
-    for (int i = 0, first = 1; i < npeer; i++)
-        if (recvd[i]) { fprintf(f, "%s[%d,%llu]", first ? "" : ",", i, recvd[i]); first = 0; }
+    for (int i = 0, first = 1; i < n; i++)
+        if (live[i].recvd) { fprintf(f, "%s[%d,%llu]", first ? "" : ",", live[i].peer, live[i].recvd); first = 0; }
     fprintf(f, "]\n  }");
+    free(live);
 }
 
 static void bind(const char *name, libprof_analyzer_fn fn)

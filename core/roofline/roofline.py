@@ -13,6 +13,7 @@ whole-program point and the profile's per-kernel points.
 """
 import os
 import re
+import glob
 import json
 import math
 import subprocess
@@ -85,8 +86,22 @@ def _stale():
 
 
 def _phys_cores():
-    """Physical core count (not SMT siblings) from /proc/cpuinfo; fall back to
-    half the logical CPUs (typical with SMT) or all of them."""
+    """Physical core count (not SMT siblings). Prefer sysfs topology — each core's
+    thread_siblings_list groups its SMT siblings, so the count of distinct groups is
+    the physical-core count, and this is authoritative on x86 AND ARM. Fall back to
+    /proc/cpuinfo physical/core id (x86), then to logical CPUs adjusted for SMT.
+
+    The old unconditional `logical // 2` fallback was wrong on no-SMT ARM (Grace has
+    1 thread/core), halving the thread count and yielding a ~2x-low ceiling — so we
+    only halve when the kernel reports SMT actually active."""
+    groups = set()
+    for f in glob.glob("/sys/devices/system/cpu/cpu[0-9]*/topology/thread_siblings_list"):
+        try:
+            groups.add(open(f).read().strip())
+        except OSError:
+            pass
+    if groups:
+        return len(groups)
     try:
         cores, cur = set(), {}
         for line in open("/proc/cpuinfo"):
@@ -104,7 +119,12 @@ def _phys_cores():
     except OSError:
         pass
     n = os.cpu_count() or 1
-    return max(1, n // 2)
+    try:
+        if open("/sys/devices/system/cpu/smt/active").read().strip() == "1":
+            return max(1, n // 2)
+    except OSError:
+        pass
+    return max(1, n)
 
 
 def _run_env():
@@ -117,6 +137,10 @@ def _run_env():
     env["OMP_NUM_THREADS"] = str(_phys_cores())
     env["OMP_PROC_BIND"] = "spread"
     env["OMP_PLACES"] = "cores"
+    # Pin the team size exactly: with OMP_DYNAMIC the runtime may hand calibrate.c
+    # fewer threads than requested, and the FLOP ceiling (which scales by the actual
+    # team size) would then be measured below the true machine peak.
+    env["OMP_DYNAMIC"] = "FALSE"
     env.pop("OPENBLAS_NUM_THREADS", None)   # calibrate.c is OpenMP, not BLAS, but be safe
     return env
 

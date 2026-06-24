@@ -30,13 +30,18 @@ mod threads;
 mod topdown;
 #[cfg(target_os = "linux")]
 pub use {
-    perf::PerfCollector, pmu::set_system_wide, pmudb::HwpcCollector, proc::ProcCollector,
-    raw_pmu::RawPmuCollector, sw::SwCollector, threads::ThreadCollector, topdown::TopdownCollector,
+    perf::PerfCollector, pmu::raise_fd_limit, pmu::set_system_wide, pmudb::HwpcCollector,
+    proc::ProcCollector, raw_pmu::RawPmuCollector, sw::SwCollector, threads::ThreadCollector,
+    topdown::TopdownCollector,
 };
 
 /// Enable node-level (system-wide, per-CPU) HW counting. No-op off Linux.
 #[cfg(not(target_os = "linux"))]
 pub fn set_system_wide(_on: bool) {}
+
+/// Raise the open-file limit ahead of opening many perf counters. No-op off Linux.
+#[cfg(not(target_os = "linux"))]
+pub fn raise_fd_limit() {}
 
 // Compiled on every platform so Linux builds keep it valid, but only used as
 // the public collectors off Linux.

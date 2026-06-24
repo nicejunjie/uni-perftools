@@ -200,6 +200,12 @@ static double peak_gflops_dp(void)
 #ifdef _OPENMP
     nth = omp_get_max_threads();
 #endif
+    /* The kernel replicates FMA_ACC*reps FMAs per thread, so the FLOP count scales
+     * by the ACTUAL team size — which can differ from omp_get_max_threads() under
+     * OMP_DYNAMIC, a thread limit, or nesting. Read it inside the region (thread 0
+     * writes; the implicit barrier at region exit makes it visible) instead of
+     * trusting the pre-region max, or every %peak is scaled by the wrong factor. */
+    int got = nth;
     double best = 0.0;
     for (int trial = 0; trial < 3; trial++) {
         double t0 = now();
@@ -207,6 +213,9 @@ static double peak_gflops_dp(void)
         #pragma omp parallel
 #endif
         {
+#ifdef _OPENMP
+            if (omp_get_thread_num() == 0) got = omp_get_num_threads();
+#endif
 #if defined(HAVE_FMA_KERNEL)
             VDP bb = VDP_SET(0.9999999), cc = VDP_SET(1e-7);
             VDP a[FMA_ACC];
@@ -244,7 +253,7 @@ static double peak_gflops_dp(void)
 #else
             1.0;
 #endif
-        double gf = ((double)FMA_ACC * lanes * 2.0 * (double)reps * nth) / dt / 1e9;
+        double gf = ((double)FMA_ACC * lanes * 2.0 * (double)reps * got) / dt / 1e9;
         if (gf > best) best = gf;
     }
     return best;
@@ -257,6 +266,7 @@ static double peak_gflops_sp(void)
 #ifdef _OPENMP
     nth = omp_get_max_threads();
 #endif
+    int got = nth;                 /* actual team size, captured inside the region */
     double best = 0.0;
     for (int trial = 0; trial < 3; trial++) {
         double t0 = now();
@@ -264,6 +274,9 @@ static double peak_gflops_sp(void)
         #pragma omp parallel
 #endif
         {
+#ifdef _OPENMP
+            if (omp_get_thread_num() == 0) got = omp_get_num_threads();
+#endif
 #if defined(HAVE_FMA_KERNEL)
             VSP bb = VSP_SET(0.9999999f), cc = VSP_SET(1e-7f);
             VSP a[FMA_ACC];
@@ -298,7 +311,7 @@ static double peak_gflops_sp(void)
 #else
             1.0;
 #endif
-        double gf = ((double)FMA_ACC * lanes * 2.0 * (double)reps * nth) / dt / 1e9;
+        double gf = ((double)FMA_ACC * lanes * 2.0 * (double)reps * got) / dt / 1e9;
         if (gf > best) best = gf;
     }
     return best;

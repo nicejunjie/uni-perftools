@@ -1,7 +1,15 @@
 /* Statistical sampling profiler. Per-thread POSIX timer -> realtime signal ->
  * handler records the interrupted PC (leaf) and, when UPAT_SAMPLE_STACK>1, the
  * call stack via backtrace(). No malloc/lock on the signal path (all per-thread
- * buffers are preallocated). Symbolization happens in postprocess. */
+ * buffers are preallocated). Symbolization happens in postprocess.
+ *
+ * CAVEAT (stack mode): backtrace() is NOT async-signal-safe — it can take libgcc's
+ * unwinder / glibc's dl_load_lock. If a sample lands while the interrupted thread
+ * holds that lock (mid-dlopen, common in plugin/Python-heavy stacks), stack mode
+ * can deadlock the thread. The unwinder is warmed up off-signal at init to avoid
+ * the first-call malloc, and a fault guard catches SEGV/BUS during unwind, but a
+ * lock-held deadlock is not recoverable. Leaf mode (UPAT_SAMPLE_STACK=1) only
+ * reads the PC and is safe; prefer it for dlopen-heavy targets. */
 #define _GNU_SOURCE
 #include "sampler.h"
 #include "libprof.h"
