@@ -134,6 +134,12 @@ PMU events), real macOS/Windows backends, and `attach` for running processes.
   no launcher-wrapping form (not portable; two ways to launch confuse users). `-a` forces
   the old node-level (launcher-node, system-wide) path. See the top-level CLAUDE.md for
   the full per-rank invariants.
+- **GPU offload is CPU-invisible — detected, flagged, roofline suppressed:** uaps
+  reads only CPU counters, so a GPU-offloaded job's CPU FLOPs are near-zero and the
+  CPU roofline is meaningless. `gpu::detect` spots it from `/proc/<pid>` (open
+  `/dev/nvidia*` / `/dev/kfd`, or a `renderD*` node with a mapped CUDA/ROCm/L0/OpenCL
+  runtime), pushes a `gpu_offload` metric, and the aggregator warns + the renderer
+  suppresses the roofline. It does NOT measure GPU work — use nsight/rocprof/VTune.
 - **AMD host:** primary development is on an AMD CPU, but the engine is validated
   cross-arch (AMD Zen 3–5, ARM Neoverse V2). Generic events (`perf.rs`) are
   portable; vendor *raw* events (`raw_pmu.rs`) and top-down are per-vendor.

@@ -349,6 +349,15 @@ def roofline_view(snap, profile, out):
     and only cover a few hand-coded formulas. That belongs to a two-pass profile
     feature (survey hot functions → characterize each with counters), where it
     works for library, user, and system code alike."""
+    # GPU offload: uaps reads only CPU counters, so a CPU-only roofline would
+    # misrepresent a GPU-offloaded job (near-zero CPU FLOPs → bogus "idle"/"memory-
+    # bound" placement). Suppress it and say why, rather than plot a wrong point.
+    if _m(snap, "gpu_offload"):
+        out.append("\n══ Roofline (whole program) ══")
+        out.append("    (suppressed — GPU offload detected. uaps measures only CPU counters, so a")
+        out.append("     CPU-only roofline misrepresents a GPU-offloaded job. Profile the device")
+        out.append("     kernels with a GPU tool — nsight / rocprof / VTune.)")
+        return
     pk = roofline.peaks()
     points = []
     g = _m(snap, "gflops")
@@ -825,7 +834,9 @@ def vectorization_view(snap, profile, out):
         lines.append("    vectorized FP ops %.1f%% (hardware counter)" % vec_pct)
         if vec_pct < 60 and (retiring or 0) > 30:
             lines.append("    → low SIMD utilization in compute-heavy code — see vec report below.")
-    elif g and pk and pk.get("peak_gflops"):
+    elif g and pk and pk.get("peak_gflops") and not _m(snap, "gpu_offload"):
+        # (skip the CPU vector-peak proxy under GPU offload — CPU GFLOP/s is near
+        #  zero there, so "FP efficiency" would read as bogus under-vectorization.)
         eff = g / pk["peak_gflops"] * 100.0
         lines.append("    FP efficiency %.1f%% of vector peak (%.0f / %.0f GFLOP/s)"
                      % (eff, g, pk["peak_gflops"]))

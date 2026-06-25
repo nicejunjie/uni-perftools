@@ -139,7 +139,9 @@ pub fn aggregate(dir: &Path) -> Result<(Snapshot, usize)> {
     // Keys that are per-rank representative, not additive: take the MAX across
     // ranks (job wall = slowest rank; threads/rank = busiest rank; world size is
     // identical on every rank), not the sum.
-    const MAX_KEYS: &[&str] = &["elapsed_time", "max_threads", "mpi_world_size"];
+    // `gpu_offload` is a per-rank boolean (1 = this rank drove a GPU); MAX makes the
+    // aggregate flag the job whenever ANY rank offloaded to a GPU.
+    const MAX_KEYS: &[&str] = &["elapsed_time", "max_threads", "mpi_world_size", "gpu_offload"];
 
     let mut agg = Snapshot::default();
     // Rank count is always available (the imbalance denominator and the report's
@@ -208,6 +210,13 @@ pub fn aggregate(dir: &Path) -> Result<(Snapshot, usize)> {
     // nodes (a staged binary without its DB), or perf is disabled there.
     let hwpc_ranks = ranks.iter().filter(|r| r.contains_key("gflops")).count();
     if let Some(w) = partial_hwpc_warning(hwpc_ranks, n) {
+        eprintln!("{w}");
+    }
+
+    // GPU offload: a CPU-only roofline misrepresents a GPU-offloaded job — warn loudly
+    // (the renderer suppresses the roofline itself on this same `gpu_offload` flag).
+    let gpu_ranks = ranks.iter().filter(|r| r.contains_key("gpu_offload")).count();
+    if let Some(w) = gpu_offload_warning(gpu_ranks, n) {
         eprintln!("{w}");
     }
 
@@ -288,6 +297,27 @@ fn partial_hwpc_warning(hwpc_ranks: usize, n: usize) -> Option<String> {
             n - hwpc_ranks
         ))
     }
+}
+
+/// Warning when GPU offload was detected on some/all ranks. uaps reads only CPU
+/// counters, so for a GPU-offloaded job the FP/roofline numbers reflect CPU work
+/// alone and miss all device compute — hence the roofline is suppressed. `None`
+/// when no rank used a GPU. Pure + testable; the caller prints it.
+fn gpu_offload_warning(gpu_ranks: usize, n: usize) -> Option<String> {
+    if gpu_ranks == 0 || n == 0 {
+        return None;
+    }
+    let scope = if gpu_ranks == n {
+        format!("all {n} ranks")
+    } else {
+        format!("{gpu_ranks} of {n} ranks")
+    };
+    Some(format!(
+        "uaps: WARNING: GPU offload detected on {scope} — uaps measures only CPU counters, so the \
+         FP / GFLOPS / roofline numbers reflect CPU work alone and MISS all GPU compute. The \
+         whole-program roofline is SUPPRESSED (a CPU-only roofline would misrepresent a \
+         GPU-offloaded job). Profile device kernels with a GPU tool (nsight / rocprof / VTune)."
+    ))
 }
 
 /// Warning when only `found` of `expected` ranks reported back — the rest crashed/
@@ -405,6 +435,16 @@ mod tests {
     fn empty_dir_is_an_error_not_a_panic() {
         let sc = Scratch::new();
         assert!(aggregate(&sc.0).is_err());
+    }
+
+    #[test]
+    fn gpu_offload_warning_fires_when_any_rank_used_a_gpu() {
+        assert!(gpu_offload_warning(0, 4).is_none(), "no GPU rank → silent");
+        assert!(gpu_offload_warning(0, 0).is_none());
+        let all = gpu_offload_warning(4, 4).expect("should warn");
+        assert!(all.contains("all 4 ranks") && all.contains("SUPPRESSED"), "{all}");
+        let some = gpu_offload_warning(1, 4).expect("should warn");
+        assert!(some.contains("1 of 4 ranks"), "{some}");
     }
 
     #[test]

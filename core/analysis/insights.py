@@ -48,6 +48,14 @@ def suite_insights(snap, profile):
                                           f.get("imb_excl", 0) > worst_imb.get("imb_excl", 0)):
             worst_imb = f
 
+    # GPU offload makes the CPU-only verdict misleading (the real compute is on the
+    # device), so lead with it — it reframes every CPU metric below as host-side only.
+    gpu = _snap(metrics, "gpu_offload")
+    if gpu:
+        out.append("GPU offload detected — uaps measures only CPU counters, so the metrics below "
+                   "are host-side CPU work and MISS all device compute (the roofline is suppressed). "
+                   "Profile GPU kernels with nsight / rocprof / VTune.")
+
     mem = _snap(metrics, "memory_bound")
     vec = _snap(metrics, "vectorization_pct")
     numa = _snap(metrics, "numa_remote_pct")

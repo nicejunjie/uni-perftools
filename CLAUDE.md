@@ -211,6 +211,17 @@ These are load-bearing for production scale — don't regress them when editing:
   **warns when ranks span >1 CPU model AND a roofline exists** — the aggregated
   roofline/GFLOPS/top-down would mix heterogeneous FLOP+bandwidth ceilings, so the
   single job-level point is not physically meaningful (group ranks by node type).
+- **GPU offload makes the CPU-only roofline meaningless** — uaps reads only CPU
+  counters, so a job that offloads compute to a GPU shows near-zero CPU FLOPs that
+  would misplace it as "idle"/"memory-bound". `gpu::detect` (`uaps-collect`) flags it
+  from `/proc/<pid>` during collection: an open compute device node (`/dev/nvidia*`,
+  `/dev/kfd` → unambiguous) or a `/dev/dri/renderD*` render node **with** a mapped
+  compute runtime (CUDA/ROCm/Level-Zero/OpenCL — the runtime requirement avoids
+  desktop-graphics false positives). It pushes a `gpu_offload` metric (vendor in the
+  label); `aggregate.rs` MAXes it (any rank → flagged) and `gpu_offload_warning` warns,
+  and the shared renderer (`roofline_view`/`htmlrep`) **suppresses the roofline** with a
+  "profile the device separately" note (and leads the insights with it). Best-effort +
+  sticky (checked each sample until found); a GPU job that exits between samples is missed.
 - **Per-process counting misses wrapped/forked work** (no `inherit`): `numactl`/
   `taskset`/shell wrappers measure the idle parent (each rank's app must `exec`, not
   fork). The C profiler suppresses its report write in `fork`-without-`exec` children

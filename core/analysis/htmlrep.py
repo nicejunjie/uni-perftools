@@ -571,7 +571,14 @@ def build(result_dir, manifest, snap, profile, suite, detail=None, threshold=0.1
             left.append("<div class='sec'><h2>Memory &amp; microarchitecture</h2>%s</div>" % _mlist(mem))
 
         # --- roofline figure → right (anchors the column, scales to fit) ---
-        if pk:
+        # Suppressed under GPU offload: a CPU-only roofline misrepresents a job whose
+        # compute runs on the device (uaps reads only CPU counters).
+        if val("gpu_offload"):
+            right.append("<div class='sec'><h2>Roofline</h2><p class='note'>Suppressed — "
+                         "GPU offload detected. uaps measures only CPU counters, so a CPU-only "
+                         "roofline would misrepresent this job. Profile the device kernels with a "
+                         "GPU tool (nsight / rocprof / VTune).</p></div>")
+        elif pk:
             right.append("<div class='sec fig'><h2 style='text-align:left'>Roofline</h2>%s</div>"
                          % _roofline_svg(pk, _whole_program_point(snap)))
 

@@ -74,12 +74,19 @@ fn collect_process(
             .with_context(|| format!("collector `{}` failed to start", collector.name()))?;
     }
     let interval = Duration::from_millis(interval_ms.max(1));
+    // GPU offload: uaps reads only CPU counters, so a GPU-offloaded job's CPU FP /
+    // roofline numbers misrepresent it (the real compute is on the device). Detect
+    // it from /proc while the child lives (sticky — once seen, stop checking).
+    let mut gpu: Option<&'static str> = None;
     let status = loop {
         if let Some(status) = child.try_wait().context("failed polling target process")? {
             break status;
         }
         for collector in &mut collectors {
             let _ = collector.sample();
+        }
+        if gpu.is_none() {
+            gpu = uaps_collect::gpu::detect(target.pid);
         }
         std::thread::sleep(interval);
     };
@@ -91,6 +98,15 @@ fn collect_process(
         snapshot.extend(metrics);
     }
     uaps_core::derive(&mut snapshot);
+    // Flag GPU offload so the aggregator warns and the renderer suppresses the
+    // (CPU-only, hence misleading) roofline. The vendor rides in the label.
+    if let Some(vendor) = gpu {
+        snapshot.push(Metric {
+            key: "gpu_offload",
+            label: format!("GPU offload detected ({vendor})"),
+            value: MetricValue::Int { value: 1, unit: "" },
+        });
+    }
     Ok((snapshot, status))
 }
 

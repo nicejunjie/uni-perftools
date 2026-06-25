@@ -9,6 +9,9 @@ mod mpi;
 pub use elapsed::ElapsedCollector;
 pub use mpi::MpiCollector;
 
+// GPU-offload detection from the CPU side (reads /proc; a no-op off Linux).
+pub mod gpu;
+
 // Linux-only backends; other platforms use the stubs in `fallback`.
 #[cfg(target_os = "linux")]
 pub mod pmudb;

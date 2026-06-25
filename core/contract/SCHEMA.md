@@ -29,6 +29,10 @@ namespaced file; the analysis core reads all of them.
 ```
 Roofline/characterization keys live in `metrics` (e.g. `dp_gflops`,
 `arith_intensity`, `peak_gflops`, `peak_bw_gbs`, `memory_bound`, `ipc`, …).
+`gpu_offload` (1 when the rank drove a GPU — detected from `/proc/<pid>` device
+nodes + mapped compute runtime) marks a job whose compute is on the device; the
+renderer then SUPPRESSES the (CPU-only, hence misleading) roofline and the
+aggregator warns.
 
 The snap.json is run-level, but it is produced one of two ways:
 - **single / node-level (`-a`)**: counters read on the process (or whole node)
