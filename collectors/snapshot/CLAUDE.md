@@ -186,7 +186,9 @@ cargo run -- run -- sleep 1       # profile a command
 
 make -C testbench                 # build local validation workloads into testbench/bin
 ./target/debug/uaps run -- ./testbench/bin/memory_bound 512
-./target/debug/uaps run --mpi -- mpirun --oversubscribe -n 4 ./testbench/bin/mpi_ring 8000
+# MPI: per-rank (APS-style) — uaps INSIDE the launcher, then aggregate the result dir:
+mpirun --oversubscribe -n 4 ./target/debug/uaps ./testbench/bin/mpi_ring 8000
+./target/debug/uaps report uaps_result
 ./target/debug/uaps run --format json -o report.json -- ./testbench/bin/threaded 8 200000000
 ```
 

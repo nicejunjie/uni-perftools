@@ -314,8 +314,9 @@ enum Cmd {
         /// Write the report to a file instead of stdout.
         #[arg(long, short)]
         output: Option<PathBuf>,
-        /// Profile MPI: LD_PRELOAD the PMPI shim so per-rank MPI time and
-        /// imbalance are collected. Run as `uaps run --mpi -- mpirun -n N ./app`.
+        /// Add the PMPI shim (MPI time/imbalance) to the node-level (`-a`) path.
+        /// For a per-rank, multi-node snapshot use the APS form instead — place uaps
+        /// INSIDE the launcher: `mpirun -n N uaps ./app`, then `uaps report`.
         #[arg(long)]
         mpi: bool,
         /// Node-level (system-wide) counting: read HW counters per-CPU across the

@@ -1,5 +1,6 @@
 //! MPI metrics: aggregates the per-rank files written by the PMPI shim
-//! (`shim/mpi/uaps_mpi.c`, LD_PRELOAD-ed by the CLI under `--mpi`).
+//! (`shim/mpi/uaps_mpi.c`, LD_PRELOAD-ed by the CLI on the per-rank APS path and
+//! the node-level `-a` path).
 //!
 //! The shim writes `$UAPS_MPI_OUTDIR/rank_<n>.txt` at MPI_Finalize. This
 //! collector reads them all at [`finish`], aggregates across ranks, then
