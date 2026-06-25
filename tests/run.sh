@@ -140,6 +140,15 @@ if [ "$HAVE_MPI" = 1 ]; then
     ok "uaps: APS MPI section"        "echo \"$SOUT\" | grep -q 'MPI % of runtime'"
     ok "uaps: MPI time + imbalance"   "echo \"$SOUT\" | grep -q 'MPI time' && echo \"$SOUT\" | grep -q 'MPI imbalance'"
     ok "uaps: top MPI function"       "echo \"$SOUT\" | grep -qE 'MPI_(Allreduce|Sendrecv|Bcast).*of MPI'"
+
+    # APS-style (launcher-agnostic) two-step: uaps INSIDE the launcher writes a
+    # per-rank results dir, then `uaps report` aggregates it (like aps-report).
+    RDIR="$TMP/aps_result"
+    OMPI_MCA_rmaps_base_oversubscribe=1 mpirun --oversubscribe -n 4 \
+      "$UAPS" run --rank-dir "$RDIR" -- "$TMP/m" >/dev/null 2>&1
+    ok "uaps APS-form: 4 per-rank snaps" "[ \"\$(ls "$RDIR"/snap.*.json 2>/dev/null | wc -l)\" = 4 ]"
+    AOUT=$("$UAPS" report "$RDIR" 2>&1 >/dev/null)
+    ok "uaps APS-form: report aggregates ranks" "echo \"$AOUT\" | grep -qE 'ranks +4'"
   fi
 fi
 

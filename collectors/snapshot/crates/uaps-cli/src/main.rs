@@ -336,10 +336,41 @@ enum Cmd {
         #[arg(required = true)]
         names: Vec<String>,
     },
+    /// Aggregate a per-rank results dir into one snapshot report (like `aps-report`).
+    /// For the launcher-agnostic APS-style flow: `mpirun -n N uaps run -- ./app`
+    /// (each rank writes snap.<rank>.json into ./uaps_result), then `uaps report
+    /// ./uaps_result`.
+    Report {
+        /// The per-rank results directory (holds snap.<rank>.json).
+        result_dir: PathBuf,
+        /// Output format.
+        #[arg(long, value_enum, default_value_t = OutputFormat::Text)]
+        format: OutputFormat,
+        /// Write the report to a file instead of stdout/stderr.
+        #[arg(long, short)]
+        output: Option<PathBuf>,
+    },
+}
+
+/// APS-parity shorthand: a bare `uaps ./app …` (so `mpirun -n N uaps ./app` works
+/// just like `mpirun -n N aps ./app`) is rewritten to `uaps run -- ./app …`. Only
+/// triggers when the first token is a plain program (not a subcommand or a flag).
+fn normalize_argv() -> Vec<String> {
+    const SUBS: &[&str] = &["run", "attach", "resolve-events", "report", "help"];
+    let v: Vec<String> = std::env::args().collect();
+    if v.len() >= 2 {
+        let a = v[1].as_str();
+        if !a.starts_with('-') && !SUBS.contains(&a) {
+            let mut out = vec![v[0].clone(), "run".into(), "--".into()];
+            out.extend_from_slice(&v[1..]);
+            return out;
+        }
+    }
+    v
 }
 
 fn main() -> Result<()> {
-    let cli = Cli::parse();
+    let cli = Cli::parse_from(normalize_argv());
     match cli.command {
         Cmd::Run { interval_ms, format, output, mpi, system_wide, rank_dir, argv } => {
             run(argv, interval_ms, format.into(), output, mpi, system_wide, rank_dir)
@@ -348,6 +379,7 @@ fn main() -> Result<()> {
             anyhow::bail!("`attach` (pid {pid}) is not implemented yet — see roadmap Phase 2+")
         }
         Cmd::ResolveEvents { names } => resolve_events(&names),
+        Cmd::Report { result_dir, format, output } => report(&result_dir, format.into(), &output),
     }
 }
 
@@ -380,15 +412,11 @@ fn run(
     // soft fd limit up front so counters don't fail with EMFILE and gap silently.
     uaps_collect::raise_fd_limit();
 
-    // (1) Are we a single MPI rank? Reinjected by a parent uaps (which sets
-    // UAPS_COLLECT to its TCP rendezvous address) or invoked APS-style as
-    // `mpirun -n N uaps run --rank-dir D`. Count ONLY this process, on THIS node,
-    // and ship the snapshot to the parent — that's what makes HW metrics cover
-    // every node, not just the launcher's. The TCP rendezvous needs NO shared FS.
-    let collect_addr = std::env::var("UAPS_COLLECT").ok();
-    let rank_dir = rank_dir.or_else(|| std::env::var_os("UAPS_RANK_DIR").map(PathBuf::from));
-    if collect_addr.is_some() || rank_dir.is_some() {
-        return collect_rank(program, args, interval_ms, rank_dir.as_deref(), collect_addr.as_deref());
+    // (1a) Reinjected by a parent uaps wrapper, which set UAPS_COLLECT to its TCP
+    // rendezvous address: count this process and ship the snapshot back over TCP
+    // (no shared FS needed). This is the `uaps run -- mpirun …` (wrapper) path.
+    if let Some(addr) = std::env::var("UAPS_COLLECT").ok() {
+        return collect_rank(program, args, interval_ms, None, Some(&addr), None);
     }
 
     let launcher = Path::new(program)
@@ -397,6 +425,27 @@ fn run(
         .unwrap_or_default();
     let is_launcher =
         matches!(launcher.as_str(), "mpirun" | "mpiexec" | "orterun" | "srun" | "aprun" | "prun" | "jsrun");
+
+    // (1b) APS-style (launcher-AGNOSTIC) per-rank collection: we were placed inside
+    // the launcher (`mpirun -n N uaps run -- ./app`) — detected by an explicit
+    // --rank-dir, or auto-detected when a rank env is set and the target isn't a
+    // launcher. Count this process, write snap.<rank>.json (+ MPI shim timing) into
+    // the shared results dir; `uaps report <dir>` aggregates it (like aps-report).
+    // No launcher flag-parsing or `-x` env injection — works with any launcher.
+    let rank_dir = rank_dir.or_else(|| std::env::var_os("UAPS_RANK_DIR").map(PathBuf::from));
+    if rank_dir.is_some() || (!is_launcher && uaps_collect::rank_from_env().is_some()) {
+        let dir = rank_dir.unwrap_or_else(default_result_dir);
+        std::fs::create_dir_all(&dir)
+            .with_context(|| format!("failed to create results dir {}", dir.display()))?;
+        if uaps_collect::rank_from_env() == Some(0) {
+            eprintln!(
+                "uaps: per-rank (APS-style) collection into {} — aggregate with: uaps report {}",
+                dir.display(),
+                dir.display()
+            );
+        }
+        return collect_rank(program, args, interval_ms, Some(&dir), None, Some(&dir));
+    }
 
     // (2) Launcher + not explicit node-level (-a): APS-style PER-RANK collection.
     // Reinject `uaps run` per rank so each rank counts itself on its own node, then
@@ -526,19 +575,21 @@ fn run(
 }
 
 /// Collect a single MPI rank: count ONLY this process, on THIS node (per-process,
-/// never system-wide), and write `snap.<rank>.json` into the shared dir. No
-/// report — the parent / report step aggregates. This is the per-rank, multi-node
-/// half of the APS model. The MPI shim (if any) rides in via the inherited
-/// LD_PRELOAD the parent set, so MPI timing is captured per rank too.
+/// never system-wide). The result goes to the parent over TCP (`collect_addr`,
+/// wrapper form) and/or to `dir`/snap.<rank>.json (APS form). `shim_dir`, when set,
+/// LD_PRELOADs the PMPI shim into the child so MPI timing is captured here (the APS
+/// form needs this — there's no parent to `-x` the shim in; the wrapper form passes
+/// None because the parent already injected it via the launcher env).
 fn collect_rank(
     program: &str,
     args: &[String],
     interval_ms: u64,
     dir: Option<&Path>,
     collect_addr: Option<&str>,
+    shim_dir: Option<&Path>,
 ) -> Result<()> {
     let rank = uaps_collect::rank_from_env().unwrap_or(0);
-    let (mut snapshot, status) = collect_process(program, args, interval_ms, None)?;
+    let (mut snapshot, status) = collect_process(program, args, interval_ms, shim_dir)?;
     // Record the job's total rank count so the parent can flag a SHORT aggregate
     // (e.g. crashed ranks) rather than silently undercounting.
     if let Some(ws) = uaps_collect::mpi_world_size_from_env() {
@@ -556,12 +607,61 @@ fn collect_rank(
             eprintln!("uaps: rank {rank}: could not send snapshot to {addr} ({e})");
         }
     }
-    // Explicit `--rank-dir` form (and debugging): also drop a file when a dir is set.
+    // APS-style / explicit `--rank-dir` form: drop snap.<rank>.json into the results
+    // dir for `uaps report` to aggregate; rank 0 also records the command so the
+    // report can show the app and resolve its compiler.
     if let Some(dir) = dir {
         std::fs::create_dir_all(dir).ok();
         let _ = std::fs::write(dir.join(format!("snap.{rank}.json")), &json);
+        if rank == 0 {
+            let cmd: Vec<&str> =
+                std::iter::once(program).chain(args.iter().map(String::as_str)).collect();
+            let _ = std::fs::write(dir.join("cmdline"), cmd.join("\n"));
+        }
     }
     mirror_exit(status);
+    Ok(())
+}
+
+/// Default per-rank results dir for the APS-style flow: `./uaps_result` under the
+/// job's working directory (the shared submit dir on a cluster). All ranks of one
+/// launch share it; override with `--rank-dir` for concurrent jobs.
+fn default_result_dir() -> PathBuf {
+    std::env::current_dir()
+        .unwrap_or_else(|_| PathBuf::from("."))
+        .join("uaps_result")
+}
+
+/// `aps-report` for uaps: aggregate a per-rank results dir (snap.<rank>.json plus
+/// any MPI shim files) into one snapshot and render it.
+fn report(result_dir: &Path, format: Format, output: &Option<PathBuf>) -> Result<()> {
+    let (mut snapshot, nranks) = aggregate::aggregate(result_dir)
+        .with_context(|| format!("no per-rank snapshots in {}", result_dir.display()))?;
+    // Fold in per-rank MPI timing if the shim left rank_*.txt (does NOT delete dir).
+    snapshot.extend(MpiCollector::new(result_dir.to_path_buf()).metrics());
+    eprintln!("uaps: aggregated {nranks} rank snapshot(s) from {}", result_dir.display());
+
+    let command: Vec<String> = std::fs::read_to_string(result_dir.join("cmdline"))
+        .map(|s| s.lines().map(str::to_string).collect())
+        .unwrap_or_else(|_| vec![result_dir.display().to_string()]);
+
+    match format {
+        Format::Json => {
+            let json = render_json(&snapshot);
+            match output {
+                Some(p) => {
+                    std::fs::write(p, &json)
+                        .with_context(|| format!("failed to write {}", p.display()))?;
+                    eprintln!("uaps: snapshot written to {}", p.display());
+                }
+                None => {
+                    eprintln!();
+                    eprint!("{json}");
+                }
+            }
+        }
+        _ => render_via_core(&snapshot, &command, format, output)?,
+    }
     Ok(())
 }
 

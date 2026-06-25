@@ -79,18 +79,33 @@ impl Collector for MpiCollector {
 
     fn finish(&mut self) -> Result<Vec<Metric>> {
         let ranks = self.read_ranks();
-        // Best-effort cleanup of the temp directory.
+        // Best-effort cleanup of the temp (wrapper) directory.
         let _ = std::fs::remove_dir_all(&self.outdir);
-
-        let n = ranks.len();
-        if n == 0 {
+        if ranks.is_empty() {
             eprintln!(
                 "uaps: --mpi set but no per-rank data was produced \
                  (did LD_PRELOAD reach the ranks? for some launchers use `mpirun -x LD_PRELOAD`)"
             );
-            return Ok(Vec::new());
         }
+        Ok(build_mpi_metrics(ranks))
+    }
+}
 
+impl MpiCollector {
+    /// Read the per-rank MPI files and build metrics WITHOUT removing the dir — for
+    /// `uaps report` over a PERSISTENT results dir (the APS-style two-step flow).
+    pub fn metrics(&self) -> Vec<Metric> {
+        build_mpi_metrics(self.read_ranks())
+    }
+}
+
+/// Aggregate per-rank MPI stats into the snapshot metrics (empty if no ranks).
+fn build_mpi_metrics(ranks: Vec<RankStat>) -> Vec<Metric> {
+    let n = ranks.len();
+    if n == 0 {
+        return Vec::new();
+    }
+    {
         let avg_wall = ranks.iter().map(|r| r.wall).sum::<f64>() / n as f64;
         let avg_mpi = ranks.iter().map(|r| r.mpi_time).sum::<f64>() / n as f64;
         let max_mpi = ranks.iter().map(|r| r.mpi_time).fold(0.0_f64, f64::max);
@@ -152,6 +167,6 @@ impl Collector for MpiCollector {
                 value: MetricValue::Float { value: *t, unit: "s" },
             });
         }
-        Ok(out)
+        out
     }
 }
