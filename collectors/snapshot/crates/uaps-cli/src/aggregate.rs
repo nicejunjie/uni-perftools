@@ -188,9 +188,43 @@ pub fn aggregate(dir: &Path) -> Result<(Snapshot, usize)> {
     if let Some(w) = short_count_warning(n, expected) {
         eprintln!("{w}");
     }
+
+    // Detect PARTIAL / MISSING vendor HWPC: ranks that reported but have no vendor
+    // counters (FP/roofline/top-down) — summed gflops/DRAM/etc. then silently
+    // undercount those ranks. Almost always the pmu-events DB wasn't found on some
+    // nodes (a staged binary without its DB), or perf is disabled there.
+    let hwpc_ranks = ranks.iter().filter(|r| r.contains_key("gflops")).count();
+    if let Some(w) = partial_hwpc_warning(hwpc_ranks, n) {
+        eprintln!("{w}");
+    }
     let _ = dir; // retained for the file-based explicit (--rank-dir) path
 
     Ok((agg, n))
+}
+
+/// Warning when vendor HWPC is missing on some/all ranks (the rest contribute no
+/// FP/roofline/top-down, so the job totals undercount). `None` when every rank has
+/// it. Pure + testable; the caller prints it.
+fn partial_hwpc_warning(hwpc_ranks: usize, n: usize) -> Option<String> {
+    if n == 0 || hwpc_ranks >= n {
+        return None;
+    }
+    if hwpc_ranks == 0 {
+        Some(format!(
+            "uaps: WARNING: no vendor HW counters on ANY of the {n} ranks (FP/roofline/top-down \
+             absent). The pmu-events DB was not found, or perf is disabled. Stage the pmu-events \
+             tree alongside the uaps binary (or set UAPS_PMU_EVENTS), and ensure \
+             perf_event_paranoid<=1."
+        ))
+    } else {
+        Some(format!(
+            "uaps: WARNING: vendor HW counters present on only {hwpc_ranks} of {n} ranks — the \
+             other {} contribute NO FP/roofline/top-down, so those job totals UNDERCOUNT. Likely \
+             the pmu-events DB is missing on some nodes (a staged binary without its DB): stage \
+             pmu-events alongside the binary, or set UAPS_PMU_EVENTS.",
+            n - hwpc_ranks
+        ))
+    }
 }
 
 /// Warning when only `found` of `expected` ranks reported back — the rest crashed/
@@ -334,5 +368,18 @@ mod tests {
         let w = short_count_warning(2, Some(4)).expect("should warn");
         assert!(w.contains("aggregated 2 of 4 ranks"), "{w}");
         assert!(w.contains("never reported"), "{w}");
+    }
+
+    #[test]
+    fn partial_hwpc_warning_flags_ranks_missing_vendor_counters() {
+        assert!(partial_hwpc_warning(4, 4).is_none(), "complete → no warning");
+        assert!(partial_hwpc_warning(0, 0).is_none());
+        // some ranks have HWPC, some don't (staged binary without DB on some nodes)
+        let w = partial_hwpc_warning(2, 4).expect("should warn");
+        assert!(w.contains("only 2 of 4 ranks"), "{w}");
+        assert!(w.contains("UNDERCOUNT"), "{w}");
+        // none have it
+        let w0 = partial_hwpc_warning(0, 4).expect("should warn");
+        assert!(w0.contains("no vendor HW counters on ANY"), "{w0}");
     }
 }

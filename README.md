@@ -68,3 +68,12 @@ make install    # installs bin/uaps + bin/upat under PREFIX
 ```
 Each collector also builds standalone (`make -C collectors/profile`,
 `cd collectors/snapshot && cargo build`).
+
+**Multi-node deployment.** `uaps` finds its vendored `pmu-events` DB (vendor
+HWPC: FP/roofline/DRAM/top-down) and the report renderer *next to the binary*.
+`make install` co-locates both, so install onto a **shared filesystem** every
+compute node sees and run `mpirun -n N uaps ./app` from there. If you stage the
+binary by hand instead, stage the `pmu-events` tree alongside it (or point
+`UAPS_PMU_EVENTS` at it) — a bare binary on a node without its DB silently loses
+all vendor HWPC on that node. uaps now warns loudly when the DB is missing at
+collection and when `uaps report` sees only some ranks carrying vendor counters.

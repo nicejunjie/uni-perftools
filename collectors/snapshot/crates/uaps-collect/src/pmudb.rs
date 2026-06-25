@@ -51,6 +51,13 @@ fn data_root() -> Option<PathBuf> {
     cands.into_iter().find(|p| p.is_dir())
 }
 
+/// Whether the vendored pmu-events DB was located. False means a staged/relocated
+/// binary can't find it — so ALL vendor HWPC (FP/GFLOPS, DRAM, NUMA, top-down)
+/// silently gaps. The CLI warns on this so the deployment defect is never silent.
+pub fn data_available() -> bool {
+    data_root().is_some()
+}
+
 // ---------------------------------------------------------------- CPU detection
 struct CpuId {
     arch: &'static str,    // "x86" or "arm64"

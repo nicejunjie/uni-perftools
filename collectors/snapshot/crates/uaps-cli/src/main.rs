@@ -576,6 +576,16 @@ fn collect_rank(
     shim_dir: Option<&Path>,
 ) -> Result<()> {
     let rank = uaps_collect::rank_from_env().unwrap_or(0);
+    // Heads-up (rank 0) if THIS node can't find the pmu-events DB — its vendor HWPC
+    // (FP/roofline/top-down) will be absent. The report's partial-HWPC check is the
+    // authoritative warning (it sees every node); flag it early too.
+    if rank == 0 && !uaps_collect::pmudb::data_available() {
+        eprintln!(
+            "uaps: WARNING: pmu-events DB not found next to the binary — vendor HW counters \
+             (FP/roofline/top-down) will be ABSENT. Stage the pmu-events tree alongside the \
+             uaps binary, or set UAPS_PMU_EVENTS=<…/pmu-events/arch>."
+        );
+    }
     let (mut snapshot, status) = collect_process(program, args, interval_ms, shim_dir)?;
     // Record the job's total rank count so `uaps report` can flag a SHORT aggregate
     // (e.g. crashed ranks) rather than silently undercounting.

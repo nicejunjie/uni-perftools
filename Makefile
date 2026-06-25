@@ -49,8 +49,13 @@ install: profile
 	install -m755 $(SNAPSHOT)/target/release/uaps $(DEST)/collectors/snapshot/target/release/
 	install -m644 $$(ls $(SNAPSHOT)/target/release/build/uaps-cli-*/out/uaps_mpi.so | head -1) \
 	              $(DEST)/collectors/snapshot/target/release/uaps_mpi.so
+	# Co-locate the vendored pmu-events DB with the binary (uaps finds it at
+	# <exe>/../../pmu-events). WITHOUT this, vendor HWPC silently gaps off the build
+	# host — fatal for multi-node, where this install lives on a shared FS so every
+	# compute node runs the same binary + DB.
+	cp -r $(SNAPSHOT)/pmu-events $(DEST)/collectors/snapshot/
 	cp -r core $(DEST)/
 	printf '#!/bin/sh\nexec "%s/lib/uni-perftools/core/cli/upat" "$$@"\n' "$(PREFIX)" > $(DESTDIR)$(PREFIX)/bin/upat
 	printf '#!/bin/sh\nexec "%s/lib/uni-perftools/collectors/snapshot/target/release/uaps" "$$@"\n' "$(PREFIX)" > $(DESTDIR)$(PREFIX)/bin/uaps
 	chmod +x $(DESTDIR)$(PREFIX)/bin/upat $(DESTDIR)$(PREFIX)/bin/uaps
-	@echo "installed → run: uaps run -- ./app   (snapshot)   |   upat run -- ./app   (deep)"
+	@echo "installed → run on a SHARED FS: 'mpirun -n N uaps ./app' then 'uaps report uaps_result'"

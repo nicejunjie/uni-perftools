@@ -195,6 +195,16 @@ These are load-bearing for production scale — don't regress them when editing:
   (`short_count_warning` in `aggregate.rs`) instead of silently undercounting. `-a`
   gives the old node-level (launcher-node only) system-wide path. Validated across two
   real machines (Zen 5 + Zen 4); see `tests/scale/multinode.sh`.
+- **Every node must find the pmu-events DB, or vendor HWPC gaps** — `data_root()`
+  (`pmudb.rs`) locates the DB at `<exe>/../../pmu-events` (or `UAPS_PMU_EVENTS`). A bare
+  binary copied to a node WITHOUT its DB silently loses ALL FP/roofline/DRAM/top-down on
+  that node, and the aggregate undercounts. So **deploy via `make install` onto a shared
+  FS** (it co-locates the DB + the `core/` renderer next to the binary) — or stage the
+  `pmu-events` tree alongside the binary. This is now LOUD not silent: collection warns
+  (rank 0) when the DB is absent, and `uaps report` warns via `partial_hwpc_warning`
+  when only some ranks carry vendor counters (`aggregate.rs`). Same for the text/HTML
+  report: it needs the `core/cli/upat` renderer found next to the binary (install does
+  this) or `UAPS_CORE_UPAT`; `--format json` needs neither.
 - **Per-process counting misses wrapped/forked work** (no `inherit`): `numactl`/
   `taskset`/shell wrappers measure the idle parent (each rank's app must `exec`, not
   fork). The C profiler suppresses its report write in `fork`-without-`exec` children
