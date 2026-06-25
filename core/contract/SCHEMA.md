@@ -34,15 +34,15 @@ The snap.json is run-level, but it is produced one of two ways:
 - **single / node-level (`-a`)**: counters read on the process (or whole node)
   from outside — one snapshot, no rank dimension.
 - **per-rank (APS-style, the default for an MPI launch)**: each rank counts its
-  OWN process on its own node and writes a transient `snap.<rank>.json` into a
-  **shared-filesystem rendezvous dir** (the job's cwd — standard for APS/CrayPAT);
-  the parent reduces them into this run-level snap.json — counts/throughput SUM,
-  wall time MAX, percentages MEAN, and the ratios (IPC, CPI, bandwidth…) are
-  RECOMPUTED from the summed raws. The aggregate additionally carries `nranks`,
-  `mpi_world_size`, and per-rank HW imbalance `<key>_imbalance_pct`
-  (`(max-avg)/max` over ranks, for `gflops`, `ipc`, `memory_bound`, `cpu_time`,
-  `elapsed_time`). If `nranks < mpi_world_size` (e.g. a node-local rendezvous dir,
-  or crashed ranks) the parent warns rather than silently undercounting.
+  OWN process on its own node and sends its snapshot to the parent over a **TCP
+  rendezvous** (no shared filesystem needed — works from any cwd). The parent
+  reduces them into this run-level snap.json — counts/throughput SUM, wall time
+  MAX, percentages MEAN, and the ratios (IPC, CPI, bandwidth…) are RECOMPUTED from
+  the summed raws. The aggregate additionally carries `nranks`, `mpi_world_size`,
+  and per-rank HW imbalance `<key>_imbalance_pct` (`(max-avg)/max` over ranks, for
+  `gflops`, `ipc`, `memory_bound`, `cpu_time`, `elapsed_time`). If
+  `nranks < mpi_world_size` (ranks that crashed or couldn't reach the collector)
+  the parent warns rather than silently undercounting.
 
 The transient per-rank `snap.<rank>.json` use the same `{ "metrics": [...] }`
 shape as the aggregate; they are not part of the saved result dir.

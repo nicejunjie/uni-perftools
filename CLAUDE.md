@@ -103,8 +103,8 @@ workload shows up as cross-rank imbalance (and a balanced one doesn't), and that
 dead rank doesn't sink the report. `tests/scale/multinode.sh` covers the cross-host
 behavior single-node can't: two containers act as two "nodes" with one `mpirun`
 spanning both (via a docker-exec launch agent, no sshd) — it asserts the parent
-aggregates ranks from BOTH nodes over a shared FS (positive) and that a node-local
-rank dir undercounts (negative — the regression test for the `/tmp`→cwd fix).
+aggregates ranks from BOTH nodes via the TCP rendezvous, from a node-local cwd (no
+shared FS) — the case a file rendezvous undercounted.
 Containers share the host PMU, so this validates orchestration, not per-node HW
 accuracy. The aggregation MATH is covered deterministically by unit tests in
 `crates/uaps-cli/src/aggregate.rs` (sum/max/mean, ratios recomputed from summed
@@ -182,15 +182,18 @@ These are load-bearing for production scale — don't regress them when editing:
   the summed raws for exact ratios — keep that split (don't average ratios). The
   reinjection finds the app via `find_program_index`; if it can't, it falls back to
   node-level with a warning. `-a` forces the old node-level path.
-- **Per-rank rendezvous is a shared-filesystem results dir** — the standard design for
-  this tool class (APS, CrayPAT, Score-P all do this); not a limitation. Each rank
-  writes `snap.<rank>.json` to the dir (cwd-based, i.e. the job's shared submit dir on
-  every real cluster), and the parent reads them all. A node-local dir (e.g. `/tmp`)
-  would let the launcher node see only its own ranks, so each rank records its MPI
-  world size and the aggregator **warns loudly on a short count** (`aggregate.rs`)
-  rather than silently undercounting. (Eliminating the shared-FS rendezvous entirely
-  would mean in-band MPI reduction — a different architecture that would couple the
-  collector to MPI; deliberately NOT done.)
+- **Per-rank rendezvous is over TCP, not a shared filesystem** (`net.rs`): the parent
+  binds a listener and advertises `host:port` to each rank via `UAPS_COLLECT`; each
+  rank sends its snapshot back (TCP guarantees integrity/order). So per-rank collection
+  needs **no shared FS** and works from any cwd — `run_per_rank` writes the received
+  snapshots to a parent-LOCAL dir and aggregates that. (A shared-FS file rendezvous was
+  the obvious first design but breaks from a node-local cwd; funnelling through the
+  launcher's stderr is unreliable — mpirun splits/interleaves structured output.) Each
+  rank still records its MPI world size, so if fewer ranks report than the job had
+  (crash, or a firewall blocking the launch-node port) the aggregator **warns on the
+  short count** (`short_count_warning` in `aggregate.rs`) instead of silently
+  undercounting. Validated across two real machines (Zen 5 + Zen 4) from a node-local
+  cwd, and in `tests/scale/multinode.sh`.
 - **Per-process counting misses wrapped/forked work** (no `inherit`): `numactl`/
   `taskset`/shell wrappers measure the idle parent (each rank's app must `exec`, not
   fork). The C profiler suppresses its report write in `fork`-without-`exec` children

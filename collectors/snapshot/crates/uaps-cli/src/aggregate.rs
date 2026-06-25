@@ -179,30 +179,35 @@ pub fn aggregate(dir: &Path) -> Result<(Snapshot, usize)> {
         }
     }
 
-    // Detect a SHORT aggregate: if the job had N ranks but we only found K<N
-    // snap.<rank>.json, the rest are missing — almost always a node-local rank dir
-    // (the launcher node can't see other nodes' files) or crashed ranks. Warn
-    // loudly and actionably instead of silently reporting an undercounted job.
+    // Warn (don't silently undercount) if fewer ranks reported than the job had.
     let expected = ranks
         .iter()
         .filter_map(|r| r.get("mpi_world_size"))
         .map(|m| m.value as i64)
         .max();
-    if let Some(exp) = expected {
-        if (exp as usize) > n {
-            eprintln!(
-                "uaps: WARNING: aggregated {n} of {exp} ranks — {} missing. The per-rank \
-                 directory ({}) must be on a filesystem visible to EVERY node; a node-local \
-                 path (e.g. /tmp) lets the launcher node see only its own ranks and \
-                 UNDERCOUNTS the job. Run from a shared filesystem (the job's submit dir), \
-                 or set the working directory to one. (Or the missing ranks crashed.)",
-                exp as usize - n,
-                dir.display()
-            );
-        }
+    if let Some(w) = short_count_warning(n, expected) {
+        eprintln!("{w}");
     }
+    let _ = dir; // retained for the file-based explicit (--rank-dir) path
 
     Ok((agg, n))
+}
+
+/// Warning when only `found` of `expected` ranks reported back — the rest crashed/
+/// were killed before finishing, or couldn't reach the launch-node TCP collector (a
+/// firewall). `None` when every rank reported (or the world size is unknown), so a
+/// complete run is never flagged. Pure + testable; the caller prints it.
+fn short_count_warning(found: usize, expected: Option<i64>) -> Option<String> {
+    let exp = expected? as usize;
+    if exp <= found {
+        return None;
+    }
+    Some(format!(
+        "uaps: WARNING: aggregated {found} of {exp} ranks — {} never reported (crashed, or \
+         could not reach the launch-node collector). The job-level metrics below reflect \
+         only the {found} ranks that completed.",
+        exp - found
+    ))
 }
 
 #[cfg(test)]
@@ -314,8 +319,20 @@ mod tests {
         write_rank(&sc.0, 0, &[("gflops", 5.0, "GFLOP/s"), ("mpi_world_size", 4.0, "")]);
         write_rank(&sc.0, 1, &[("gflops", 5.0, "GFLOP/s"), ("mpi_world_size", 4.0, "")]);
         let (agg, n) = aggregate(&sc.0).unwrap();
-        assert_eq!(n, 2, "only 2 ranks present on this node-local dir");
+        assert_eq!(n, 2, "only 2 of the job's ranks reported back");
         assert_eq!(get(&agg, "nranks"), 2.0);
         assert_eq!(get(&agg, "mpi_world_size"), 4.0, "world size maxed, not summed (would be 8)");
+    }
+
+    #[test]
+    fn short_count_warning_fires_only_when_ranks_are_missing() {
+        // complete run (or unknown world size) → no warning
+        assert!(short_count_warning(4, Some(4)).is_none());
+        assert!(short_count_warning(8, None).is_none());
+        assert!(short_count_warning(5, Some(4)).is_none()); // never negative
+        // short run → an actionable warning naming the gap
+        let w = short_count_warning(2, Some(4)).expect("should warn");
+        assert!(w.contains("aggregated 2 of 4 ranks"), "{w}");
+        assert!(w.contains("never reported"), "{w}");
     }
 }

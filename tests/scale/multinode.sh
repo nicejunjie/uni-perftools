@@ -70,30 +70,21 @@ pass=0; fail=0
 ok()  { echo "  PASS: $1"; pass=$((pass+1)); }
 bad() { echo "  FAIL: $1"; fail=$((fail+1)); }
 
-echo "== uaps multi-node (2 containers, single spanning mpirun) =="
+echo "== uaps multi-node (2 containers, single spanning mpirun, TCP rendezvous) =="
 
-echo "-- POSITIVE: shared FS (cwd under the shared mount) --"
-rm -rf out/mn_shared; mkdir -p out/mn_shared
-run_uaps "$ROOT/tests/scale/out/mn_shared" "$ROOT/tests/scale/out/mn_shared/snap.json" out/mn_pos.err
-nr=$(val_in "$ROOT/tests/scale/out/mn_shared/snap.json")
-[ "${nr:-0}" = 4 ] && ok "shared-FS aggregation sees all 4 ranks across both nodes" \
-  || bad "expected nranks=4 across nodes, got '${nr:-none}'"
+# The per-rank rendezvous is TCP (FS-independent), so a NODE-LOCAL cwd (/tmp, which
+# differs per container — no shared filesystem at all) must STILL aggregate every
+# rank across both nodes. This is the case that undercounted with a file rendezvous;
+# it's the headline cross-node test. (Short-count detection when a rank genuinely
+# never reports is covered deterministically by the aggregate.rs unit tests.)
+echo "-- cross-node from a node-local cwd (/tmp), no shared FS — TCP must see all 4 --"
+docker exec "$N0" rm -f /tmp/snap_mn.json 2>/dev/null
+run_uaps /tmp /tmp/snap_mn.json out/mn_pos.err
+nr=$(val_in /tmp/snap_mn.json)
+[ "${nr:-0}" = 4 ] && ok "TCP aggregates all 4 ranks across both nodes (no shared FS)" \
+  || bad "expected nranks=4 across nodes via TCP, got '${nr:-none}'"
 grep -qi "WARNING: aggregated" out/mn_pos.err \
-  && bad "shared FS should NOT warn, but it did" || ok "no false-positive warning on the shared-FS run"
-
-echo "-- NEGATIVE: node-local rank dir (/tmp, per-container) --"
-docker exec "$N0" rm -f /tmp/snap_nl.json 2>/dev/null
-run_uaps /tmp /tmp/snap_nl.json out/mn_neg.err
-nl=$(val_in /tmp/snap_nl.json)
-[ "${nl:-0}" = 2 ] && ok "node-local dir undercounts (nranks=2)" \
-  || bad "expected undercount nranks=2 on node-local dir, got '${nl:-none}'"
-# The fix: the undercount must NOT be silent — the parent detects it (world size 4
-# vs 2 found) and warns actionably.
-if grep -qi "WARNING: aggregated 2 of 4" out/mn_neg.err; then
-  ok "undercount is DETECTED + warned (not silent): $(grep -oi 'aggregated 2 of 4 ranks' out/mn_neg.err | head -1)"
-else
-  bad "node-local undercount was SILENT — no 'aggregated 2 of 4' warning"
-fi
+  && bad "a complete run should NOT warn, but it did" || ok "no false-positive warning on a complete run"
 
 echo "== multinode: $pass passed, $fail failed =="
 [ "$fail" = 0 ]

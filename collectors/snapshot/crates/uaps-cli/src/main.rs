@@ -19,6 +19,7 @@ use uaps_core::{Collector, Metric, MetricValue, Snapshot, Target};
 use uaps_report::{render_json, Format};
 
 mod aggregate;
+mod net;
 
 /// The HWPC/OS collector set used for every counting pass (single, per-rank, or
 /// node-level). Top-down prefers the perf-data-driven engine when it resolves for
@@ -379,14 +380,15 @@ fn run(
     // soft fd limit up front so counters don't fail with EMFILE and gap silently.
     uaps_collect::raise_fd_limit();
 
-    // (1) Are we a single MPI rank? Either reinjected by a parent uaps (which set
-    // UAPS_RANK_DIR) or invoked APS-style as `mpirun -n N uaps run --rank-dir D`.
-    // Count ONLY this process, on THIS node, and drop snap.<rank>.json — the parent
-    // / report step aggregates across ranks. This is what makes HW metrics cover
-    // every node, not just the launcher's.
+    // (1) Are we a single MPI rank? Reinjected by a parent uaps (which sets
+    // UAPS_COLLECT to its TCP rendezvous address) or invoked APS-style as
+    // `mpirun -n N uaps run --rank-dir D`. Count ONLY this process, on THIS node,
+    // and ship the snapshot to the parent — that's what makes HW metrics cover
+    // every node, not just the launcher's. The TCP rendezvous needs NO shared FS.
+    let collect_addr = std::env::var("UAPS_COLLECT").ok();
     let rank_dir = rank_dir.or_else(|| std::env::var_os("UAPS_RANK_DIR").map(PathBuf::from));
-    if let Some(dir) = rank_dir {
-        return collect_rank(program, args, interval_ms, &dir);
+    if collect_addr.is_some() || rank_dir.is_some() {
+        return collect_rank(program, args, interval_ms, rank_dir.as_deref(), collect_addr.as_deref());
     }
 
     let launcher = Path::new(program)
@@ -528,11 +530,17 @@ fn run(
 /// report — the parent / report step aggregates. This is the per-rank, multi-node
 /// half of the APS model. The MPI shim (if any) rides in via the inherited
 /// LD_PRELOAD the parent set, so MPI timing is captured per rank too.
-fn collect_rank(program: &str, args: &[String], interval_ms: u64, dir: &Path) -> Result<()> {
+fn collect_rank(
+    program: &str,
+    args: &[String],
+    interval_ms: u64,
+    dir: Option<&Path>,
+    collect_addr: Option<&str>,
+) -> Result<()> {
     let rank = uaps_collect::rank_from_env().unwrap_or(0);
     let (mut snapshot, status) = collect_process(program, args, interval_ms, None)?;
-    // Record the job's total rank count so the parent can detect a SHORT aggregate
-    // (a node-local rank dir, or crashed ranks) rather than silently undercounting.
+    // Record the job's total rank count so the parent can flag a SHORT aggregate
+    // (e.g. crashed ranks) rather than silently undercounting.
     if let Some(ws) = uaps_collect::mpi_world_size_from_env() {
         snapshot.push(Metric {
             key: "mpi_world_size",
@@ -540,10 +548,19 @@ fn collect_rank(program: &str, args: &[String], interval_ms: u64, dir: &Path) ->
             value: MetricValue::Int { value: ws, unit: "" },
         });
     }
-    std::fs::create_dir_all(dir).ok();
-    let path = dir.join(format!("snap.{rank}.json"));
-    std::fs::write(&path, render_json(&snapshot))
-        .with_context(|| format!("rank {rank}: failed to write {}", path.display()))?;
+    let json = render_json(&snapshot);
+    // Ship to the parent over TCP (no shared FS needed). Best-effort: if it fails,
+    // this rank is simply absent and the parent's world-size check flags it.
+    if let Some(addr) = collect_addr {
+        if let Err(e) = net::send_snapshot(addr, rank, &json) {
+            eprintln!("uaps: rank {rank}: could not send snapshot to {addr} ({e})");
+        }
+    }
+    // Explicit `--rank-dir` form (and debugging): also drop a file when a dir is set.
+    if let Some(dir) = dir {
+        std::fs::create_dir_all(dir).ok();
+        let _ = std::fs::write(dir.join(format!("snap.{rank}.json")), &json);
+    }
     mirror_exit(status);
     Ok(())
 }
@@ -575,13 +592,24 @@ fn run_per_rank(
     let self_exe =
         std::env::current_exe().context("cannot find own path for per-rank reinjection")?;
 
-    // Shared, cross-node-visible dir for the per-rank files (cwd is the job's
-    // shared submit dir on virtually all clusters; /tmp would be node-local).
+    // Parent-LOCAL dir: ranks ship their snapshots over TCP and the parent writes
+    // them here to aggregate. It only ever holds files this process writes, so a
+    // node-local path is fine — no shared filesystem required.
     let base = std::env::current_dir().unwrap_or_else(|_| std::env::temp_dir());
     let dir = base.join(format!(".uaps_rank_{}", std::process::id()));
     std::fs::create_dir_all(&dir)
         .with_context(|| format!("failed to create per-rank dir {}", dir.display()))?;
     let _guard = TempDir(dir.clone());
+
+    // TCP rendezvous: bind before launching so every rank can dial back.
+    let (listener, collect_addr) =
+        net::bind_collector().context("failed to bind the per-rank collector socket")?;
+    let stop = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
+    let collector = {
+        let dir = dir.clone();
+        let stop = stop.clone();
+        std::thread::spawn(move || net::collect_into(listener, &dir, stop))
+    };
 
     let shim = resolve_mpi_shim().ok(); // MPI timing is best-effort
     let is_openmpi = matches!(launcher, "mpirun" | "mpiexec" | "orterun");
@@ -591,7 +619,7 @@ fn run_per_rank(
     cmd.args(&args[..prog_idx]);
     if is_openmpi {
         // OpenMPI does not forward the launcher's env to ranks — push ours via -x.
-        cmd.arg("-x").arg("UAPS_RANK_DIR");
+        cmd.arg("-x").arg("UAPS_COLLECT");
         if shim.is_some() {
             cmd.arg("-x").arg("LD_PRELOAD").arg("-x").arg("UAPS_MPI_OUTDIR");
         }
@@ -603,7 +631,7 @@ fn run_per_rank(
         .arg("--")
         .args(&args[prog_idx..]);
 
-    cmd.env("UAPS_RANK_DIR", &dir);
+    cmd.env("UAPS_COLLECT", &collect_addr);
     if let Some(shim) = &shim {
         let mut preload = std::env::var("LD_PRELOAD").unwrap_or_default();
         if !preload.is_empty() {
@@ -620,6 +648,9 @@ fn run_per_rank(
     let status = cmd
         .status()
         .with_context(|| format!("failed to launch `{program}`"))?;
+    // Job done: stop accepting (after a short drain) and collect the received snaps.
+    stop.store(true, std::sync::atomic::Ordering::Relaxed);
+    let _received = collector.join().unwrap_or(0);
 
     // Aggregate the per-rank HW snapshots, then fold in per-rank MPI timing.
     let (mut snapshot, nranks) = aggregate::aggregate(&dir)?;
