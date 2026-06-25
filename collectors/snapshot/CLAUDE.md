@@ -26,7 +26,9 @@ Build **`uaps`** (Universal Application Performance Snapshot) — a cross-platfo
 ## Intended Architecture (Cargo workspace, trait-based)
 
 ```
-uaps-cli      launcher / attach, arg parsing, runs target to completion, prints report
+uaps-cli      launcher, arg parsing, runs target to completion, prints report;
+                per-rank reinjection + cross-rank aggregation (aggregate.rs) and the
+                TCP per-rank rendezvous (net.rs) for MPI launches
 uaps-core     Collector trait, normalized Metric model, metric-derivation engine
 uaps-collect  backend impls behind the Collector trait:
                 proc  → /proc sampling   (no privileges, works on any Linux)
@@ -118,8 +120,19 @@ PMU events), real macOS/Windows backends, and `attach` for running processes.
   our own arithmetic over perf-resolved event *encodings*.
 
 ### Key behaviors & limitations to know
-- **In the perf-suite:** this tool is the **snapshot** collector (roofline + microarch). MPI is owned by the **profile** collector (portable `mpi.h`-free PMPI), so the suite runs `uaps` **without `--mpi`** and `uaps_mpi.c` is standalone-only — there is no double MPI interception. The unified imbalance metric is `(max-avg)/max` (matches the profile collector and `core/contract`).
-- **MPI runs (standalone `--mpi`):** the `/proc` and perf collectors profile the *launcher* process tree, not individual ranks; for MPI the authoritative metrics come from the shim (`mpi_*`). The "Mostly single-threaded" insight is intentionally suppressed under `--mpi`.
+- **In the perf-suite:** this tool is the **snapshot** collector (roofline + microarch);
+  the deep **profile** collector (`upat`) owns sci-lib/MPI *tracing*. They run as
+  separate invocations, so there is no double MPI interception. The unified imbalance
+  metric is `(max-avg)/max` (matches the profile collector and `core/contract`).
+- **MPI runs are PER-RANK (APS-style), the default for a launcher:** `uaps run -- mpirun`
+  reinjects `uaps` into each rank (`run_per_rank`/`collect_rank` in `uaps-cli`), so the
+  `/proc`+perf collectors count **each rank's own process on its own node** — not the
+  idle launcher — and the parent aggregates across ranks (SUM counts/throughput, MAX
+  wall, MEAN %, ratios re-derived from summed raws) plus per-rank HW imbalance. Per-rank
+  snapshots come back over a **TCP rendezvous** (`net.rs`), so it needs no shared FS and
+  works from any cwd; the PMPI shim still supplies per-rank `mpi_*` timing. `-a` forces
+  the old node-level (launcher-node, system-wide) path. See the top-level CLAUDE.md for
+  the full per-rank invariants.
 - **AMD host:** primary development is on an AMD CPU, but the engine is validated
   cross-arch (AMD Zen 3–5, ARM Neoverse V2). Generic events (`perf.rs`) are
   portable; vendor *raw* events (`raw_pmu.rs`) and top-down are per-vendor.

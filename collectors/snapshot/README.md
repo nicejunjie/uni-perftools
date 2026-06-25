@@ -8,8 +8,8 @@ hardware or software.
 CPU, memory stalls, vectorization, I/O, and (for HPC workloads) MPI and OpenMP
 imbalance — to point you at which deeper analysis to run next.
 
-> **Status:** early development (Phase 0). Linux-first, written in Rust.
-> See [CLAUDE.md](CLAUDE.md) for the full roadmap and architecture.
+> **Status:** Linux-first, written in Rust; cross-vendor HWPC (AMD/Intel/ARM) and
+> per-rank MPI collection working. See [CLAUDE.md](CLAUDE.md) for the architecture.
 
 ## Build
 
@@ -25,6 +25,11 @@ cargo run -- run -- sleep 1
 
 # (installed binary)
 uaps run -- ./my_app --flag
+
+# MPI: per-rank (APS-style) — each rank counts itself on its own node, then the
+# results aggregate across ranks (no shared filesystem needed; works multi-node):
+uaps run -- mpirun -n 4 ./my_app
+uaps run -a -- mpirun -n 4 ./my_app   # old node-level (launcher node only)
 ```
 
 ## Test

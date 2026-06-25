@@ -92,6 +92,11 @@ reads identically standalone vs in-suite. Update profile tests.
 Gate/mark the old `uaps_mpi.c` standalone-only; document in-suite MPI comes from the
 profile collector (no double interception). Update its docs.
 
+> **Superseded:** the snapshot collector later gained its own **per-rank** MPI model
+> (APS-style reinjection + TCP rendezvous; `uaps run -- mpirun`), so the PMPI shim is
+> no longer standalone-only — it supplies per-rank `mpi_*` timing alongside per-rank
+> HWPC. See CLAUDE.md "Scale & robustness invariants".
+
 ### Phase 7 — Packaging, tests, docs
 Suite name/branding; `make install` (libprofile.so, snapshot bin, `core/cli` driver);
 CI building all three; end-to-end tests in `tests/` (serial + MPI: correct result
