@@ -9,8 +9,12 @@ commands over a shared analysis core, branded after the vendor tools they descen
 from (made portable). There is **no umbrella/driver command** — run one tier:
 
 - **`uaps`** — Universal Application Performance *Snapshot* (← Intel APS). Cheap,
-  **non-invasive** counter-based bird's-eye view (HWPC + MPI/OpenMP, aggregated
-  across ranks). Rust, `collectors/snapshot/`.
+  **non-invasive** counter-based bird's-eye view (HWPC + MPI/OpenMP). Like APS it
+  collects **per-rank**: `uaps run -- mpirun -n N ./app` reinjects `uaps` into each
+  rank so every rank counts ITS OWN process on its OWN node (per-process, needs only
+  `perf_event_paranoid<=1`), then aggregates across ranks (+ per-rank HW imbalance).
+  `-a` gives the old node-level system-wide mode (launcher node only). Rust,
+  `collectors/snapshot/`.
 - **`upat`** — Universal Performance Analysis *Tool* (← CrayPAT). Deep profiler:
   sci-lib tracing (BLAS/LAPACK/FFTW + Fortran/C MPI/IO), statistical + event-based
   sampling, per-function roofline, heap. C `.so` + `core/cli/upat`.
@@ -88,7 +92,23 @@ cd collectors/snapshot && cargo test            # all Rust unit tests
 cargo test -p uaps-collect                      # one crate
 cargo test format_bytes                         # a single test by name
 bash tests/run.sh                               # suite-level e2e (both commands)
+bash tests/scale/run.sh                         # uaps per-rank at scale (oversubscription)
+bash tests/scale/multinode.sh                   # uaps cross-NODE (2 containers, one mpirun)
 ```
+
+`tests/scale/run.sh` simulates a large parallel job on one node: it oversubscribes
+the cores with a synthetic per-rank workload to exercise `uaps`'s per-rank
+reinjection + cross-rank aggregation at high rank counts, validates that a skewed
+workload shows up as cross-rank imbalance (and a balanced one doesn't), and that a
+dead rank doesn't sink the report. `tests/scale/multinode.sh` covers the cross-host
+behavior single-node can't: two containers act as two "nodes" with one `mpirun`
+spanning both (via a docker-exec launch agent, no sshd) — it asserts the parent
+aggregates ranks from BOTH nodes over a shared FS (positive) and that a node-local
+rank dir undercounts (negative — the regression test for the `/tmp`→cwd fix).
+Containers share the host PMU, so this validates orchestration, not per-node HW
+accuracy. The aggregation MATH is covered deterministically by unit tests in
+`crates/uaps-cli/src/aggregate.rs` (sum/max/mean, ratios recomputed from summed
+raws, truncated-file skip) and the launcher arg-parser in `main.rs`.
 
 CI mirrors this: `.github/workflows/ci.yml` (build + all e2e on x86 and arm; runners
 have no PMU, so perf-gated checks self-skip) and the HWPC structural sweep.
@@ -155,10 +175,26 @@ These are load-bearing for production scale — don't regress them when editing:
   `mem_dram_reads` / `l2_fill_rsp_src.dram_io_*`), not demand-only fills — mixing them
   mis-places memory-bound kernels ~3×. See `_whole_program_point` (`htmlrep.py`),
   `ROOFLINE_EVENTS` (`core/cli/upat`), and `derive.rs`.
+- **uaps MPI is per-rank by default** (APS model): the parent reinjects `uaps run`
+  per rank (`run_per_rank`/`collect_rank` + `aggregate.rs` in `uaps-cli`), so HW
+  metrics cover **every node**, not just the launcher's. Aggregation reduces raws by
+  policy (SUM counts/throughput, MAX wall/threads, MEAN %) then re-runs `derive()` on
+  the summed raws for exact ratios — keep that split (don't average ratios). The
+  reinjection finds the app via `find_program_index`; if it can't, it falls back to
+  node-level with a warning. `-a` forces the old node-level path.
+- **Per-rank rendezvous is a shared-filesystem results dir** — the standard design for
+  this tool class (APS, CrayPAT, Score-P all do this); not a limitation. Each rank
+  writes `snap.<rank>.json` to the dir (cwd-based, i.e. the job's shared submit dir on
+  every real cluster), and the parent reads them all. A node-local dir (e.g. `/tmp`)
+  would let the launcher node see only its own ranks, so each rank records its MPI
+  world size and the aggregator **warns loudly on a short count** (`aggregate.rs`)
+  rather than silently undercounting. (Eliminating the shared-FS rendezvous entirely
+  would mean in-band MPI reduction — a different architecture that would couple the
+  collector to MPI; deliberately NOT done.)
 - **Per-process counting misses wrapped/forked work** (no `inherit`): `numactl`/
-  `taskset`/shell wrappers measure the idle parent — use `-a` (auto for MPI). The C
-  profiler suppresses its report write in `fork`-without-`exec` children (`pthread_atfork`
-  in `libprof.c`) so they don't clobber the parent's rank file.
+  `taskset`/shell wrappers measure the idle parent (each rank's app must `exec`, not
+  fork). The C profiler suppresses its report write in `fork`-without-`exec` children
+  (`pthread_atfork` in `libprof.c`) so they don't clobber the parent's rank file.
 
 Regenerating the QE validation reports (`tests/qe/out/`) requires the run host (QE
 binary + per-host roofline). The node-level `uaps` snapshots need `cap_perfmon` on the

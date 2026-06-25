@@ -250,7 +250,8 @@ def environment_rows(result_dir, manifest, snap, profile, collector=None):
     app_path = (raw or {}).get("application") or (manifest.get("command") or [""])[0]
     app = os.path.basename(app_path) if app_path else "?"
     cmd = " ".join(manifest.get("command", []))
-    nranks = (profile or {}).get("nranks") or len(profs) or 1
+    nranks = ((profile or {}).get("nranks") or _m(snap, "nranks")
+              or _m(snap, "mpi_ranks") or len(profs) or 1)
     nthr = int((raw or {}).get("nthreads") or _m(snap, "max_threads") or 1)
     # Timing is per-run: snap and profile can be separate runs (the suite collects
     # each tier independently), so a upat report reports the profile's own wall/CPU

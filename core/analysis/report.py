@@ -130,6 +130,20 @@ def _render_snapshot(snap, out):
     if "peak_rss" in m:        # memory footprint (a resource metric, not a cache/access one)
         out.append("    %-26s %s" % (m["peak_rss"]["label"], disp("peak_rss")))
 
+    # Per-rank HW imbalance (max vs avg across ranks) — only present for a per-rank
+    # (APS-style) aggregate. This is the microarchitectural spread the old
+    # launcher-node snapshot could not see; (max-avg)/max, suite-wide definition.
+    imb = [(lbl, disp(k)) for k, lbl in
+           [("gflops_imbalance_pct", "FP throughput"),
+            ("ipc_imbalance_pct", "IPC"),
+            ("memory_bound_imbalance_pct", "memory bound"),
+            ("cpu_time_imbalance_pct", "CPU time"),
+            ("elapsed_imbalance_pct", "wall time")] if disp(k)]
+    if imb:
+        out.append("\n══ Cross-rank imbalance (HW, max vs avg) ══")
+        for lbl, v in imb:
+            out.append("    %-26s %s" % (lbl, v))
+
     io = [(lbl, disp(k)) for k, lbl in
           [("disk_read", "disk read"), ("disk_write", "disk write"),
            ("io_read", "logical read"), ("io_write", "logical write")] if disp(k)]

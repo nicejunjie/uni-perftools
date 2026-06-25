@@ -9,38 +9,39 @@
             │          ··///                                     
             │      ··////                                        
             │   ··///                                            
-        100 │·////                                     E         
-            │/                                                   
-            │                                     D        A  B  
-         10 │                             G   F                  
-            │                        H                           
+        100 │·////                                     G         
+            │/                                    D              
+            │                                  H      C    A     
+         10 │                               F                    
             │                                                    
-            │                                 C                  
+            │                             E    B                 
+            │                                                    
           1 │                                                    
             └────────────────────────────────────────────────────
              1           10           100        1000       10000  AI (FLOP/byte)
              / bandwidth roof   ‾ compute ceiling   · theoretical roof
       A n1bv_32
-      B n1fv_32
-      C __pthread_rwlock_rdunlock
+      B 0x766145fe0c4b
+      C __fft_scalar_fftw3_MOD_cfft3ds
       D vloc_psi_k_acc_
-      E zgemm_kernel_n_COOPERLAKE
-      F init_us_2_acc_
-      G usnldiag_
-      H do_sin
+      E libc_feholdsetround_sse_ctx
+      F t1bv_4
+      G zgemm_kernel_n_COOPERLAKE
+      H init_us_2_acc_
 
       function                 self(s)   time%     AI   GFLOP/s  %peak  bound
     ─────────────────────────────────────────────────────────────────────────
-      epoll_wait                 1.487   34.6%    inf       0.0     0%  compute
-      __GI___poll                1.422   33.0%    inf       0.0     0%  compute
-    A n1bv_32                    0.237    5.5% 4326.6      23.4     1%  latency
-    B n1fv_32                    0.165    3.8% 6453.1      25.0     1%  latency
-      n1_32                      0.128    3.0%    inf       4.8     0%  compute
-    C __pthread_rwlock_rdunloc   0.126    2.9%  375.0       1.9     0%  latency
-      0x7fa23f4fdc4b             0.082    1.9%    inf       2.0     0%  compute
-    D vloc_psi_k_acc_            0.044    1.0%  811.7      23.6     1%  latency
-      __fft_scalar_fftw3_MOD_c   0.043    1.0%    inf      23.3     1%  compute
-      libc_feholdsetround_sse_   0.039    0.9%    inf       3.1     0%  compute
-      zgemm_kernel_l_COOPERLAK   0.024    0.6%    inf      50.4     2%  compute
+      epoll_wait                 1.503   34.5%    inf       0.0     0%  compute
+      __GI___poll                1.437   33.0%    inf       0.0     0%  compute
+    A n1bv_32                    0.242    5.6% 4253.1      22.5     1%  latency
+      n1fv_32                    0.195    4.5%    inf      21.5     1%  compute
+      __pthread_rwlock_rdunloc   0.135    3.1%    inf       0.8     0%  compute
+    B 0x766145fe0c4b             0.080    1.8%  464.1       3.7     0%  latency
+    C __fft_scalar_fftw3_MOD_c   0.055    1.3% 1643.8      19.1     1%  latency
+      n1_32                      0.048    1.1%    inf       5.9     0%  compute
+    D vloc_psi_k_acc_            0.032    0.7%  810.9      32.4     1%  latency
+    E libc_feholdsetround_sse_   0.029    0.7%  200.0       4.4     0%  latency
+      n1bv_8                     0.028    0.6%    inf       2.6     0%  compute
+      apply                      0.021    0.5%    inf      11.2     0%  compute
     ─────────────────────────────────────────────────────────────────────────
     (AI=inf → no DRAM traffic sampled = cache-resident/compute-bound; precision assumed DP)

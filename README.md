@@ -7,9 +7,11 @@ universal (vendor-neutral):
 - **`uaps`** — *Universal Application Performance Snapshot* (← Intel **APS**).
   Cheap, **non-invasive** bird's-eye view from hardware counters: roofline +
   microarchitecture (IPC, %peak, top-down, DRAM/NUMA, vectorization), MPI &
-  OpenMP/thread imbalance, memory, I/O — aggregated across ranks. Run it first
-  on anything (no injection needed): *"what kind of bottleneck, how efficient?"*
-  Rust, `collectors/snapshot/`.
+  OpenMP/thread imbalance, memory, I/O. Like APS it collects **per-rank** — each
+  rank counts itself on its own node and the results aggregate across ranks (+
+  per-rank HW imbalance), so it's correct on multi-node jobs and needs only
+  `perf_event_paranoid<=1`. Run it first on anything: *"what kind of bottleneck,
+  how efficient, and is it balanced across ranks?"* Rust, `collectors/snapshot/`.
 - **`upat`** — *Universal Performance Analysis Tool* (← **CrayPAT**). The deep
   dive via LD_PRELOAD interception + call-stack/event sampling: sci-lib tracing
   (BLAS/LAPACK/FFTW + Fortran/C **MPI** + I/O), per-function roofline, comm
@@ -25,7 +27,8 @@ folds it in automatically.
 
 ## Usage
 ```
-uaps run -- mpirun -n 4 ./app      # snapshot: HWPC + MPI/OpenMP, one screen across ranks
+uaps run -- mpirun -n 4 ./app      # snapshot: per-rank HWPC + MPI/OpenMP, aggregated across ranks
+uaps run -a -- mpirun -n 4 ./app   # node-level (system-wide) variant — launcher node only
 upat run -- ./app                  # deep profile + report
 upat run -- mpirun -n 4 ./app
 upat report  RESULT                # re-render (text); --format html for the HTML report

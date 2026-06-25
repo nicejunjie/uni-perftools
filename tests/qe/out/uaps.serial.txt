@@ -9,7 +9,7 @@
     threads/rank   19
     elapsed        2.8 s
     CPU time       26 s
-    date           2026-06-24 11:39
+    date           2026-06-24 21:26
 
 ══ Machine ══
     CPU            AMD Ryzen 9 9950X 16-Core Processor
@@ -38,27 +38,27 @@
 
 
 ══ Performance ══
-    Elapsed time               2.832 s
-    FP throughput              6.53 GFLOP/s (0.27% of FP64 peak)
-    Avg CPU frequency          5.47 GHz
-    Physical core utilization  28.1% (9.0 cores busy)
+    Elapsed time               2.837 s
+    FP throughput              6.50 GFLOP/s (0.27% of FP64 peak)
+    Avg CPU frequency          5.43 GHz
+    Physical core utilization  28.2% (9.0 cores busy)
     IPC (instructions/cycle)   0.28
     CPI (cycles/instruction)   3.55
-    Memory footprint (peak RSS) 69.5 MiB
+    Memory footprint (peak RSS) 69.0 MiB
 
 ══ I/O ══
     disk read                  0 B
-    disk write                 328.0 KiB
-    logical read               732.7 KiB
-    logical write              305.0 KiB
+    disk write                 2.9 MiB
+    logical read               882.4 KiB
+    logical write              3.1 MiB
 
 ══ Roofline (whole program) ══
   Roofline ceilings for AMD Ryzen 9 9950X 16-Core Processor:
-    peak compute FP64    2447    GFLOP/s   achievable   (2947 theoretical)
-    peak compute FP32    5022    GFLOP/s   achievable   (5895 theoretical)
+    peak compute FP64    2442    GFLOP/s   achievable   (2947 theoretical)
+    peak compute FP32    4996    GFLOP/s   achievable   (5895 theoretical)
     peak DRAM bandwidth  53      GB/s      achievable   (77 theoretical)
-    ridge AI FP64        46.08 FLOP/byte
-    ridge AI FP32        94.58 FLOP/byte
+    ridge AI FP64        46.34 FLOP/byte
+    ridge AI FP32        94.81 FLOP/byte
       # achievable = microbenchmark-measured peak (register-resident
       #   FMA kernel for compute, a STREAM triad with non-temporal
       #   stores for bandwidth) — the realistic ceiling; %peak is
@@ -86,7 +86,7 @@
             │/                                                   
             │                                                    
          10 │                                                    
-            │                         ●                          
+            │                           ●                        
             │                                                    
             │                                                    
           1 │                                                    
@@ -96,9 +96,9 @@
 
     point                      prec       AI    GFLOP/s    ceiling    %peak  bound
     ──────────────────────────────────────────────────────────────────────────────
-    whole-program (measured)     DP    87.72        6.5     2446.7       0%  latency
+    whole-program (measured)     DP   137.36        6.5     2441.9       0%  latency
     ──────────────────────────────────────────────────────────────────────────────
-    measured application:  6.5 GFLOP/s   0.1 GB/s DRAM   AI 87.720 FLOP/byte
+    measured application:  6.5 GFLOP/s   0.0 GB/s DRAM   AI 137.364 FLOP/byte
     whole program sits at 0% of the DP ceiling — far below the roofline: latency/overhead/idle-bound, not compute- or bandwidth-bound.
 
 ══ Microarchitecture (top-down pipeline slots) ══
@@ -106,7 +106,7 @@
     frontend-bound      40.6%
     backend-bound       50.5%
     bad speculation      0.3%
-    SMT contention       3.8%
+    SMT contention       3.9%
       # retiring + frontend + backend + bad-spec + SMT = 100% of slots
     branch mispredict  0.3%   (of branches — main cause of bad speculation)
       # retiring — pipeline slots doing useful work — instructions
@@ -123,15 +123,15 @@
       #   main cause of 'bad speculation' slots
 
 ══ Memory access ══
-    DRAM bandwidth         0.1 GB/s (0% of peak)
-    cache-miss rate          15.8%
-    last-level cache misses  6.99 per 1k instructions
+    DRAM bandwidth         0.0 GB/s (0% of peak)
+    cache-miss rate          15.0%
+    last-level cache misses  6.70 per 1k instructions
     data-TLB misses          0.00 per 1k instructions
     instruction-TLB misses   0.00 per 1k instructions
-    DRAM fills               0.35 per 1k instructions
-    DRAM-bound               2.1%
+    DRAM fills               0.31 per 1k instructions
+    DRAM-bound               1.8%
     NUMA remote access       0.0%
-    memory-bound (slots)     3.0%
+    memory-bound (slots)     2.6%
       # DRAM bandwidth — rate of data moved to/from main memory (DRAM
       #   = dynamic RAM, the off-chip main memory)
       # cache-miss rate — fraction of last-level-cache accesses that
@@ -151,7 +151,7 @@
       #   stalled waiting on the memory hierarchy
 
 ══ Vectorization ══
-    FP efficiency 0.3% of vector peak (7 / 2447 GFLOP/s)
+    FP efficiency 0.3% of vector peak (7 / 2442 GFLOP/s)
     → FP throughput far below vector peak in compute-bound code: likely scalar / under-vectorized (or a reference library).
       # FP efficiency — achieved floating-point throughput vs. the
       #   CPU's vector (SIMD) peak — low means scalar/under-vectorized
@@ -159,14 +159,14 @@
     confirm SIMD per loop with a compiler vec report (gcc -fopt-info-vec / icc -qopt-report=5) and build -O3 -march=native.
 
 ══ Scheduling / OS ══
-    context switches                  242/s   (684 total)
-    CPU migrations                     35/s   (100 total)
-    page faults (minor+major)        3468/s   (9822 total)
+    context switches                  240/s   (681 total)
+    CPU migrations                     32/s   (91 total)
+    page faults (minor+major)        3460/s   (9816 total)
     major page faults                     2   (disk-backed — should be ~0)
 
 ══ Threading ══
     threads (peak)         33
     active threads         17 of 33
-    avg cores used         9.01
+    avg cores used         9.03
     parallel efficiency    27%
     thread imbalance       14%  ((max-avg)/max of per-thread time)

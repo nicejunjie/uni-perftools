@@ -526,6 +526,20 @@ def build(result_dir, manifest, snap, profile, suite, detail=None, threshold=0.1
         # the metric lists; the roofline figure anchors the right column.
         left, right = [], []
 
+        # --- cross-rank HW imbalance (per-rank / APS-style aggregate only) → left ---
+        imb_rows = [(lbl, val(k)) for k, lbl in
+                    [("gflops_imbalance_pct", "FP throughput"),
+                     ("ipc_imbalance_pct", "IPC"),
+                     ("memory_bound_imbalance_pct", "memory bound"),
+                     ("cpu_time_imbalance_pct", "CPU time"),
+                     ("elapsed_imbalance_pct", "wall time")] if val(k) is not None]
+        if imb_rows:
+            nr = int(val("nranks") or val("mpi_ranks") or 0)
+            rows = "".join("<tr><td>%s</td><td>%.1f%%</td></tr>" % (E(l), v) for l, v in imb_rows)
+            left.append("<div class='sec'><h2>Cross-rank imbalance</h2>"
+                        "<p class='note'>per-rank HW spread, (max-avg)/max over %d ranks</p>"
+                        "<table>%s</table></div>" % (nr, rows))
+
         # --- pipeline slots as a stacked bar (the APS signature visual) → left ---
         four = {l: val(k) for l, k in
                 [("retiring", "topdown_retiring_pct"), ("frontend-bound", "topdown_frontend_pct"),

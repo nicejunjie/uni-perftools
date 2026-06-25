@@ -1,6 +1,6 @@
 [upat] collecting: qenv/bin/mpirun -np 16 --bind-to core ./pw -in si_big.scf.in
 
-     Program PWSCF v.7.5 starts on 24Jun2026 at 11:39:55 
+     Program PWSCF v.7.5 starts on 24Jun2026 at 21:26:23 
 
      This program is part of the open-source Quantum ESPRESSO suite
      for quantum simulation of materials; please cite
@@ -16,7 +16,7 @@
      Threads/MPI process:                     1
 
      MPI processes distributed on     1 nodes
-     32052 MiB available memory on the printing compute node when the environment starts
+     30742 MiB available memory on the printing compute node when the environment starts
 
      Reading input from si_big.scf.in
 
@@ -166,7 +166,7 @@
 
      total cpu time spent up to now is        0.8 secs
 
-     per-process dynamical memory:    39.9 Mb
+     per-process dynamical memory:    40.0 Mb
 
      Self-consistent Calculation
 
@@ -305,47 +305,47 @@
      Message from routine punch:
      Nothing written, as per user request (disk_io='none')
 
-     init_run     :      0.76s CPU      0.83s WALL (       1 calls)
-     electrons    :      7.83s CPU      8.17s WALL (       1 calls)
+     init_run     :      0.77s CPU      0.82s WALL (       1 calls)
+     electrons    :      7.81s CPU      8.19s WALL (       1 calls)
 
      Called by init_run:
-     wfcinit      :      0.41s CPU      0.47s WALL (       1 calls)
-     potinit      :      0.01s CPU      0.01s WALL (       1 calls)
+     wfcinit      :      0.42s CPU      0.47s WALL (       1 calls)
+     potinit      :      0.00s CPU      0.01s WALL (       1 calls)
      hinit0       :      0.22s CPU      0.22s WALL (       1 calls)
 
      Called by electrons:
-     c_bands      :      6.95s CPU      7.22s WALL (      10 calls)
-     sum_band     :      0.79s CPU      0.85s WALL (      10 calls)
+     c_bands      :      6.93s CPU      7.24s WALL (      10 calls)
+     sum_band     :      0.79s CPU      0.86s WALL (      10 calls)
      v_of_rho     :      0.03s CPU      0.03s WALL (      10 calls)
-     mix_rho      :      0.06s CPU      0.05s WALL (      10 calls)
+     mix_rho      :      0.05s CPU      0.05s WALL (      10 calls)
 
      Called by c_bands:
-     init_us_2    :      0.38s CPU      0.35s WALL (      42 calls)
-     cegterg      :      6.47s CPU      6.78s WALL (      20 calls)
+     init_us_2    :      0.34s CPU      0.32s WALL (      42 calls)
+     cegterg      :      6.47s CPU      6.80s WALL (      20 calls)
 
      Called by *egterg:
-     cdiaghg      :      0.64s CPU      0.63s WALL (      80 calls)
-     h_psi        :      4.05s CPU      4.43s WALL (      84 calls)
+     cdiaghg      :      0.64s CPU      0.64s WALL (      80 calls)
+     h_psi        :      4.08s CPU      4.45s WALL (      84 calls)
      g_psi        :      0.04s CPU      0.04s WALL (      62 calls)
 
      Called by h_psi:
-     h_psi:calbec :      0.49s CPU      0.50s WALL (      84 calls)
-     vloc_psi     :      2.92s CPU      3.29s WALL (      84 calls)
+     h_psi:calbec :      0.51s CPU      0.51s WALL (      84 calls)
+     vloc_psi     :      2.95s CPU      3.30s WALL (      84 calls)
                                         0.00s GPU  (      84 calls)
-     add_vuspsi   :      0.52s CPU      0.50s WALL (      84 calls)
+     add_vuspsi   :      0.51s CPU      0.49s WALL (      84 calls)
 
      General routines
-     calbec       :      0.49s CPU      0.50s WALL (      84 calls)
+     calbec       :      0.51s CPU      0.51s WALL (      84 calls)
      fft          :      0.24s CPU      0.24s WALL (      30 calls)
      ffts         :      0.00s CPU      0.01s WALL (      10 calls)
-     fftw         :      3.13s CPU      3.53s WALL (   14780 calls)
+     fftw         :      3.17s CPU      3.56s WALL (   14780 calls)
 
      Parallel routines
 
-     PWSCF        :      8.61s CPU      9.01s WALL
+     PWSCF        :      8.60s CPU      9.03s WALL
 
 
-   This run was terminated on:  11:40: 4  24Jun2026            
+   This run was terminated on:  21:26:32  24Jun2026            
 
 =------------------------------------------------------------------------------=
    JOB DONE.
@@ -361,7 +361,7 @@
     threads/rank   4
     elapsed        9.2 s
     CPU time       150 s
-    date           2026-06-24 11:40
+    date           2026-06-24 21:26
 
 ══ Machine ══
     CPU            AMD Ryzen 9 9950X 16-Core Processor
@@ -386,71 +386,72 @@
     paranoid       1
 
 ── INSIGHTS ──────────────────────────────────────────────────────────────────
-  ▶ MPI is 44% of time with 51% imbalance — rebalance work or check rank placement; see the communication matrix.
+  ▶ MPI is 44% of time with 49% imbalance — rebalance work or check rank placement; see the communication matrix.
+  ▶ zgemv_ is 51% load-imbalanced across ranks — uneven work distribution.
 
 ══ Time breakdown (sampled, by dominant group) ══
-    MPI             44.1%  ██████████████████
+    MPI             43.8%  ██████████████████
     idle/wait       38.3%  ███████████████
-    math-libs        8.9%  ████
-    user code        8.7%  ███
+    math-libs        9.0%  ████
+    user code        8.9%  ████
     system/other     0.0%  
 
 
 ══ MPI summary ══
-    MPI time 1.7958s  (19.6% of runtime, 16 ranks)
+    MPI time 1.7985s  (19.6% of runtime, 16 ranks)
     function                time(s)    %MPI      calls   imb%
     ─────────────────────────────────────────────────────────
-    mpi_alltoall_            0.9606   53.5%      14821     7%
-    mpi_bcast_               0.6161   34.3%        939     9%
-    mpi_barrier_             0.1598    8.9%       1359    51%
-    mpi_allreduce_           0.0533    3.0%        599     1%
-    mpi_alltoallv_           0.0059    0.3%         31     7%
+    mpi_alltoall_            0.9515   52.9%      14821     5%
+    mpi_bcast_               0.6192   34.4%        939     9%
+    mpi_barrier_             0.1618    9.0%       1359    49%
+    mpi_allreduce_           0.0595    3.3%        599     1%
+    mpi_alltoallv_           0.0064    0.4%         31    11%
     ─────────────────────────────────────────────────────────
 
 ══ MPI wait-state (call-type heuristic) ══
-    synchronization/wait 1.7958s (100%) | transfer/initiation 0.0000s ( 0%)
+    synchronization/wait 1.7985s (100%) | transfer/initiation 0.0000s ( 0%)
     call                   time%    excl(s)   class   imb%
     ──────────────────────────────────────────────────────
-    mpi_alltoall_          10.2%    0.96058    wait     7%
-    mpi_bcast_              6.6%    0.61606    wait     9%
-    mpi_barrier_            1.7%    0.15982    wait    51%
-    mpi_allreduce_          0.6%    0.05329    wait     1%
-    mpi_alltoallv_          0.1%    0.00592    wait     7%
-    mpi_gatherv_            0.0%    0.00010    wait    21%
+    mpi_alltoall_          10.1%    0.95147    wait     5%
+    mpi_bcast_              6.6%    0.61916    wait     9%
+    mpi_barrier_            1.7%    0.16185    wait    49%
+    mpi_allreduce_          0.6%    0.05952    wait     1%
+    mpi_alltoallv_          0.1%    0.00642    wait    11%
+    mpi_gatherv_            0.0%    0.00010    wait    10%
     ──────────────────────────────────────────────────────
-    → wait-dominated MPI with imbalanced collectives/receives (51% imb): likely late-sender / load imbalance — rebalance work across ranks before tuning communication.
+    → wait-dominated MPI with imbalanced collectives/receives (49% imb): likely late-sender / load imbalance — rebalance work across ranks before tuning communication.
     overlap: all communication is blocking — no comm/compute overlap possible. Consider nonblocking calls (Isend/Irecv or Iallreduce-style collectives) + compute + Wait.
 
 ══ Load imbalance (across 16 ranks, ranked by recoverable time) ══
     function                   imb%   time% avg excl(s)  recover(s)
     ───────────────────────────────────────────────────────────────
-    mpi_barrier_                51%    1.7%      0.1598      0.1641
-    mpi_alltoall_                7%   10.2%      0.9606      0.0766
-    mpi_bcast_                   9%    6.6%      0.6161      0.0600
-    zgemv_                      50%    0.2%      0.0212      0.0213
-    ddot_                       32%    0.1%      0.0056      0.0027
-    dcopy_                       9%    0.1%      0.0068      0.0006
-    mpi_alltoallv_               7%    0.1%      0.0059      0.0005
+    mpi_barrier_                49%    1.7%      0.1618      0.1560
+    mpi_bcast_                   9%    6.6%      0.6192      0.0594
+    mpi_alltoall_                5%   10.1%      0.9515      0.0510
+    zgemv_                      51%    0.2%      0.0208      0.0215
+    read                         5%    0.7%      0.0613      0.0035
+    mpi_alltoallv_              11%    0.1%      0.0064      0.0008
+    dcopy_                      12%    0.1%      0.0058      0.0008
     ───────────────────────────────────────────────────────────────
 
 ══ Anomaly / variance (across 16 ranks) ══
-    per-rank busy time: min 6.2546s  max 6.3788s  median 6.3229s  spread 2%
+    per-rank busy time: min 6.2410s  max 6.3854s  median 6.3012s  spread 2%
     → no outlier rank (all within the pack).
-    most variable call: disnan_ (CV 384%, 0.0000..0.0051s across ranks)
+    most variable call: disnan_ (CV 384%, 0.0000..0.0052s across ranks)
 
 Table 1:  Profile by Function Group  (sampling @ 1000 Hz, 16 PEs)
           time charged to the highest-level group on each sample's stack
 
    Samp%      Samp  Imb.Samp  Imb.Samp%  Group
   ──────────────────────────────────────────────────────────────────────────────
- 100.0%    380608     270.0      1.1%  Total
+ 100.0%    381632     225.0      0.9%  Total
   ──────────────────────────────────────────────────────────────────────────────
-  44.1%    167682     147.9      1.4%  MPI
-  38.3%    145959      31.6      0.3%  WAIT
-   8.7%     33118     117.1      5.4%  USER
-   5.2%     19823     174.1     12.3%  BLAS
-   3.7%     14025     116.4     11.7%  FFTW
-   0.0%         1       0.9     93.8%  ETC
+  43.8%    167340      80.2      0.8%  MPI
+  38.3%    146254      25.1      0.3%  WAIT
+   8.9%     33811     116.8      5.2%  USER
+   5.3%     20140     154.2     10.9%  BLAS
+   3.7%     14084     117.8     11.8%  FFTW
+   0.0%         3       1.8     90.6%  ETC
   ──────────────────────────────────────────────────────────────────────────────
   legend:
     Samp%        percent of samples here (~ percent of wall time)
@@ -463,22 +464,22 @@ Table 1:  Profile by Function Group  (sampling @ 1000 Hz, 16 PEs)
   ──────────────────────────────────────────────────────────────────────────────
    Samp%      Samp  Imb.Samp  Imb.Samp%  Function
   ──────────────────────────────────────────────────────────────────────────────
-  38.3%    145959      31.6      0.3%  __GI___poll  [WAIT]
-  22.4%     85237     216.7      3.9%  MAIN__  [USER]
-  22.4%     85203     216.8      3.9%  main  [USER]
-  22.1%     84183     213.6      3.9%  run_pwscf_  [USER]
-  18.6%     70953     214.4      4.6%  electrons_scf_  [USER]
-  18.6%     70953     214.4      4.6%  electrons_  [USER]
-  16.6%     63157     233.7      5.6%  c_bands_  [USER]
-  15.5%     58815     231.1      5.9%  diag_bands_  [USER]
-  15.2%     57933     238.2      6.2%  cegterg_  [USER]
-  10.9%     41518     165.1      6.0%  h_psi__  [USER]
-  10.9%     41518     165.1      6.0%  h_psi_  [USER]
-   9.4%     35910     185.6      7.6%  __fft_parallel_2d_MOD_tg_cft3s  [USER]
-   8.3%     31715     142.8      6.7%  vloc_psi_k_acc_  [USER]
-   5.5%     21055     172.1     11.6%  invfft_y_  [USER]
-   5.4%     20612     215.8     14.3%  __fft_scatter_2d_MOD_fft_scatter  [USER]
-   ... 1152 more below 0.1% of CPU time (report --threshold 0 to show all)
+  38.3%    146254      25.1      0.3%  __GI___poll  [WAIT]
+  22.4%     85497     172.4      3.1%  MAIN__  [USER]
+  22.4%     85458     169.9      3.1%  main  [USER]
+  22.1%     84452     170.8      3.1%  run_pwscf_  [USER]
+  18.7%     71317     172.7      3.7%  electrons_scf_  [USER]
+  18.7%     71317     172.7      3.7%  electrons_  [USER]
+  16.7%     63564     154.2      3.7%  c_bands_  [USER]
+  15.6%     59359     147.1      3.8%  diag_bands_  [USER]
+  15.3%     58435     137.8      3.6%  cegterg_  [USER]
+  11.0%     41953     115.9      4.2%  h_psi__  [USER]
+  11.0%     41953     115.9      4.2%  h_psi_  [USER]
+   9.4%     35903     104.1      4.4%  __fft_parallel_2d_MOD_tg_cft3s  [USER]
+   8.4%     32023     107.6      5.1%  vloc_psi_k_acc_  [USER]
+   5.6%     21427      80.8      5.7%  invfft_y_  [USER]
+   5.4%     20468     107.8      7.8%  __fft_scatter_2d_MOD_fft_scatter  [USER]
+   ... 1153 more below 0.1% of CPU time (report --threshold 0 to show all)
   ──────────────────────────────────────────────────────────────────────────────
   legend:
     Samp%        percent of samples here (~ percent of wall time)
@@ -491,22 +492,22 @@ Table 1:  Profile by Function Group  (sampling @ 1000 Hz, 16 PEs)
   ──────────────────────────────────────────────────────────────────────────────
    Samp%      Samp  Imb.Samp  Imb.Samp%  Function
   ──────────────────────────────────────────────────────────────────────────────
-  38.4%    146160      31.0      0.3%  epoll_wait  (WAIT)
-  38.3%    145959      31.6      0.3%  __GI___poll  (WAIT)
-   2.3%      8787     125.8     18.6%  __fft_scatter_2d_MOD_fft_scatter  (USER)
-   2.1%      7814      56.6     10.4%  process_vm_readv  (ETC)
-   1.9%      7112      52.5     10.6%  zgemm_itcopy_COOPERLAKE  (BLAS)
-   1.4%      5218      64.9     16.6%  mca_btl_sm_component_progress  (MPI)
-   1.3%      5011      25.8      7.6%  init_us_2_acc_  (USER)
-   0.9%      3324      15.2      6.8%  zgemm_kernel_l_COOPERLAKE  (BLAS)
-   0.9%      3314      51.9     20.0%  zgemm_kernel_n_COOPERLAKE  (BLAS)
-   0.9%      3292      24.2     10.5%  dp_dev_memcpy_c2d_  (USER)
-   0.8%      3091      37.8     16.4%  zgemm_beta_COOPERLAKE  (BLAS)
-   0.7%      2636      17.2      9.5%  h_psi__._omp_fn.0  (USER)
-   0.7%      2597      73.7     31.2%  fftw_cpy2d  (FFTW)
-   0.6%      2322       5.9      3.9%  __buiol_MOD_buiol_read_record  (USER)
-   0.6%      2121      36.4     21.6%  vloc_psi_k_acc_  (USER)
-   ... 599 more below 0.1% of CPU time (report --threshold 0 to show all)
+  38.4%    146487      22.6      0.2%  epoll_wait  (WAIT)
+  38.3%    146254      25.1      0.3%  __GI___poll  (WAIT)
+   2.5%      9382      73.6     11.2%  __fft_scatter_2d_MOD_fft_scatter  (USER)
+   2.0%      7597      65.2     12.1%  process_vm_readv  (ETC)
+   1.8%      7059      34.8      7.3%  zgemm_itcopy_COOPERLAKE  (BLAS)
+   1.4%      5155      66.8     17.2%  mca_btl_sm_component_progress  (MPI)
+   1.3%      4869      29.7      8.9%  init_us_2_acc_  (USER)
+   0.9%      3430      39.6     15.6%  zgemm_kernel_n_COOPERLAKE  (BLAS)
+   0.9%      3296      35.0     14.5%  zgemm_kernel_l_COOPERLAKE  (BLAS)
+   0.9%      3296      22.0      9.6%  dp_dev_memcpy_c2d_  (USER)
+   0.8%      3220      25.8     11.3%  zgemm_beta_COOPERLAKE  (BLAS)
+   0.7%      2682      51.4     23.5%  fftw_cpy2d  (FFTW)
+   0.7%      2534      16.6      9.5%  h_psi__._omp_fn.0  (USER)
+   0.6%      2458      34.4     18.3%  vloc_psi_k_acc_  (USER)
+   0.6%      2239       7.1      4.8%  __buiol_MOD_buiol_read_record  (USER)
+   ... 590 more below 0.1% of CPU time (report --threshold 0 to show all)
   ──────────────────────────────────────────────────────────────────────────────
   legend:
     Samp%        percent of samples here (~ percent of wall time)
@@ -520,47 +521,44 @@ Table 1b:  Profile by source line  (hotspots, sampling @ 1000 Hz, 16 PEs)
 
    Samp%      Samp  Imb.Samp  Imb.Samp%  Function  [file:line]  (group)
   ──────────────────────────────────────────────────────────────────────────────
-  38.4%    146160      31.0      0.3%  epoll_wait  [epoll_wait.c:30]  (WAIT
-  38.3%    145959      31.6      0.3%  __GI___poll  [poll.c:29]  (WAIT)
-   2.3%      8787     125.8     18.6%  __fft_scatter_2d_MOD_fft_scatter  [p
-   2.1%      7811      56.8     10.4%  process_vm_readv  [process_vm_readv.
-   1.9%      7112      52.5     10.6%  zgemm_itcopy_COOPERLAKE  [libopenbla
-   1.4%      5218      64.9     16.6%  mca_btl_sm_component_progress  [btl_
-   1.3%      5011      25.8      7.6%  init_us_2_acc_  [pw.x]  (USER)
-   0.9%      3324      15.2      6.8%  zgemm_kernel_l_COOPERLAKE  [libopenb
-   0.9%      3314      51.9     20.0%  zgemm_kernel_n_COOPERLAKE  [libopenb
-   0.9%      3292      24.2     10.5%  dp_dev_memcpy_c2d_  [pw.x]  (USER)
-   0.8%      3091      37.8     16.4%  zgemm_beta_COOPERLAKE  [libopenblasp
-   0.7%      2636      17.2      9.5%  h_psi__._omp_fn.0  [h_psi.f90:?]  (U
-   0.7%      2597      73.7     31.2%  fftw_cpy2d  [libfftw3.so.3.7.11]  (F
-   0.6%      2322       5.9      3.9%  __buiol_MOD_buiol_read_record  [pw.x
-   0.6%      2121      36.4     21.6%  vloc_psi_k_acc_  [pw.x]  (USER)
-   0.5%      1777      60.9     35.4%  mca_part_persist_progress  [part_per
-   0.5%      1751      26.6     19.5%  lll_mutex_unlock_optimized  [pthread
-   0.4%      1632      28.0     21.5%  lll_mutex_lock_optimized  [pthread_m
-   0.4%      1496      20.5     18.0%  zgemm_incopy_COOPERLAKE  [libopenbla
-   0.4%      1337      57.4     40.7%  t2bv_8  [t2bv_8.c:?]  (FFTW)
-   0.3%      1190      51.6     41.0%  t2fv_8  [t2fv_8.c:?]  (FFTW)
-   0.3%      1174      14.6     16.6%  __symme_MOD_sym_rho_init_shells  [sy
-   0.3%      1151      35.1     32.8%  zgemm_oncopy_COOPERLAKE  [libopenbla
-   0.3%      1117      25.2     26.5%  __fft_helper_subroutines_MOD_fftx_c2
-   0.3%      1094      25.6     27.3%  __fft_scalar_fftw3_MOD_cft_2xy  [pw.
-   0.3%       980      49.8     44.8%  n2fv_12  [n2fv_12.c:?]  (FFTW)
-   0.3%       958      43.1     41.9%  n2bv_12  [n2bv_12.c:?]  (FFTW)
-   0.2%       836      15.8     23.2%  usnldiag_  [pw.x]  (USER)
-   0.2%       680      60.5     58.7%  n1bv_6  [n1bv_6.c:?]  (FFTW)
-   0.2%       596      54.8     59.5%  n1bv_12  [n1bv_12.c:?]  (FFTW)
-   0.1%       562      12.9     26.8%  __buiol_MOD_buiol_write_record  [pw.
-   0.1%       537      87.4     72.3%  fftw_transpose  [libfftw3.so.3.7.11]
-   0.1%       516       1.8      5.1%  hpsort_eps_  [pw.x]  (USER)
-   0.1%       500       7.8     19.9%  cegterg_._omp_fn.0  [cegterg.f90:?] 
-   0.1%       478       9.1     23.4%  g_psi_  [pw.x]  (USER)
-   0.1%       477      11.2     27.3%  opal_timer_linux_get_cycles_sys_time
-   0.1%       439      93.6     77.3%  t2bv_16  [t2bv_16.c:?]  (FFTW)
-   0.1%       425      24.4     47.9%  mca_btl_sm_poll_handle_frag  [libope
-   0.1%       399      60.1     70.7%  n1fv_6  [n1fv_6.c:?]  (FFTW)
-   0.1%       387      59.8     71.2%  n1fv_12  [n1fv_12.c:?]  (FFTW)
-   ... 832 more below 0.1% of CPU time (report --threshold 0 to show all)
+  38.4%    146487      22.6      0.2%  epoll_wait  [epoll_wait.c:30]  (WAIT
+  38.3%    146254      25.1      0.3%  __GI___poll  [poll.c:29]  (WAIT)
+   2.5%      9382      73.6     11.2%  __fft_scatter_2d_MOD_fft_scatter  [p
+   2.0%      7597      65.2     12.1%  process_vm_readv  [process_vm_readv.
+   1.8%      7059      34.8      7.3%  zgemm_itcopy_COOPERLAKE  [libopenbla
+   1.4%      5155      66.8     17.2%  mca_btl_sm_component_progress  [btl_
+   1.3%      4869      29.7      8.9%  init_us_2_acc_  [pw.x]  (USER)
+   0.9%      3430      39.6     15.6%  zgemm_kernel_n_COOPERLAKE  [libopenb
+   0.9%      3296      35.0     14.5%  zgemm_kernel_l_COOPERLAKE  [libopenb
+   0.9%      3296      22.0      9.6%  dp_dev_memcpy_c2d_  [pw.x]  (USER)
+   0.8%      3220      25.8     11.3%  zgemm_beta_COOPERLAKE  [libopenblasp
+   0.7%      2682      51.4     23.5%  fftw_cpy2d  [libfftw3.so.3.7.11]  (F
+   0.7%      2534      16.6      9.5%  h_psi__._omp_fn.0  [h_psi.f90:?]  (U
+   0.6%      2458      34.4     18.3%  vloc_psi_k_acc_  [pw.x]  (USER)
+   0.6%      2239       7.1      4.8%  __buiol_MOD_buiol_read_record  [pw.x
+   0.5%      1779      22.8     17.0%  lll_mutex_unlock_optimized  [pthread
+   0.4%      1632      32.0     23.9%  mca_part_persist_progress  [part_per
+   0.4%      1603      27.8     21.7%  lll_mutex_lock_optimized  [pthread_m
+   0.4%      1602      27.9     21.8%  zgemm_incopy_COOPERLAKE  [libopenbla
+   0.4%      1525      63.7     40.1%  t2bv_8  [t2bv_8.c:?]  (FFTW)
+   0.3%      1228      31.2     28.9%  zgemm_oncopy_COOPERLAKE  [libopenbla
+   0.3%      1176      14.5     16.5%  __symme_MOD_sym_rho_init_shells  [sy
+   0.3%      1170      21.9     23.0%  __fft_scalar_fftw3_MOD_cft_2xy  [pw.
+   0.3%      1130      47.4     40.1%  t2fv_8  [t2fv_8.c:?]  (FFTW)
+   0.3%      1128      28.5     28.8%  __fft_helper_subroutines_MOD_fftx_c2
+   0.3%       986      69.4     53.0%  n2bv_12  [n2bv_12.c:?]  (FFTW)
+   0.2%       886      60.6     52.3%  n2fv_12  [n2fv_12.c:?]  (FFTW)
+   0.2%       868      17.8     24.7%  usnldiag_  [pw.x]  (USER)
+   0.2%       726      70.6     60.9%  n1bv_12  [n1bv_12.c:?]  (FFTW)
+   0.2%       635     110.3     73.5%  n1fv_6  [n1fv_6.c:?]  (FFTW)
+   0.1%       544      13.0     27.7%  __buiol_MOD_buiol_write_record  [pw.
+   0.1%       522      99.4     75.3%  n1bv_6  [n1bv_6.c:?]  (FFTW)
+   0.1%       518       2.6      7.5%  hpsort_eps_  [pw.x]  (USER)
+   0.1%       508       4.2     11.8%  cegterg_._omp_fn.0  [cegterg.f90:?] 
+   0.1%       495      50.1     61.8%  n1fv_12  [n1fv_12.c:?]  (FFTW)
+   0.1%       463      11.1     27.7%  opal_timer_linux_get_cycles_sys_time
+   0.1%       452      12.8     31.1%  g_psi_  [pw.x]  (USER)
+   ... 822 more below 0.1% of CPU time (report --threshold 0 to show all)
 
    ⚠ no source-line info for 18% of the hotspots above — file:line shows a
      module/binary name (or 'file:?'); those objects were built without -g
@@ -584,33 +582,33 @@ Table 2:  Library calls by group and function  (tracing)
   ──────────────────────────────────────────────────────────────────────────────
    time% group    function                  count [imb]    incl(s)    excl(s)
   ──────────────────────────────────────────────────────────────────────────────
-   27.6% BLAS     zgemm_                     5709 63.1%     2.5857     2.5857
-   19.2% FFTW     fftw_execute_dft          29640  0.0%     1.7986     1.7986
-    5.9% LAPACK   zhegvx_                      64  0.0%     0.5505     0.0002
-    5.0% LAPACK   zheevx_                      64  0.0%     0.4725     0.0004
-    2.0% LAPACK   dstebz_                      64  0.0%     0.1891     0.0002
-    2.0% LAPACK   dlaebz_                     192  0.0%     0.1889     0.1889
-    1.2% LAPACK   zhetrd_                      80  0.0%     0.1090     0.0002
-    1.0% LAPACK   zlatrd_                     367  0.0%     0.0967     0.0174
-    0.8% LAPACK   zlanhe_                      80  0.0%     0.0719     0.0668
-    0.8% LAPACK   zstein_                      64  0.0%     0.0714     0.0144
-    0.7% LAPACK   zhegv_                       16  0.0%     0.0703     0.0001
-    0.7% LAPACK   zheev_                       16  0.0%     0.0630     0.0000
-    0.5% LAPACK   zhegst_                      80  0.0%     0.0515     0.0003
-    0.5% BLAS     zhemv_                    13144  0.0%     0.0513     0.0513
-    0.5% LAPACK   zunmtr_                      64  0.0%     0.0448     0.0001
-    0.5% LAPACK   zunmql_                      64  0.0%     0.0447     0.0002
-    0.5% LAPACK   zsteqr_                      16  0.0%     0.0446     0.0090
+   27.5% BLAS     zgemm_                     5709 63.1%     2.5781     2.5781
+   19.1% FFTW     fftw_execute_dft          29640  0.0%     1.7966     1.7966
+    5.9% LAPACK   zhegvx_                      64  0.0%     0.5523     0.0002
+    5.0% LAPACK   zheevx_                      64  0.0%     0.4735     0.0004
+    2.0% LAPACK   dstebz_                      64  0.0%     0.1882     0.0002
+    2.0% LAPACK   dlaebz_                     192  0.0%     0.1880     0.1880
+    1.2% LAPACK   zhetrd_                      80  0.0%     0.1101     0.0002
+    1.0% LAPACK   zlatrd_                     367  0.0%     0.0977     0.0174
+    0.8% LAPACK   zlanhe_                      80  0.0%     0.0721     0.0670
+    0.8% LAPACK   zstein_                      64  0.0%     0.0720     0.0148
+    0.8% LAPACK   zhegv_                       16  0.0%     0.0704     0.0001
+    0.7% LAPACK   zheev_                       16  0.0%     0.0631     0.0000
+    0.6% LAPACK   zhegst_                      80  0.0%     0.0521     0.0003
+    0.6% BLAS     zhemv_                    13144  0.0%     0.0519     0.0519
+    0.5% LAPACK   zsteqr_                      16  0.0%     0.0449     0.0090
+    0.5% LAPACK   zunmtr_                      64  0.0%     0.0449     0.0001
+    0.5% LAPACK   zunmql_                      64  0.0%     0.0448     0.0002
     0.4% LAPACK   dlagts_                   20736  0.0%     0.0356     0.0356
-    0.4% LAPACK   zlasr_                     3099  0.0%     0.0342     0.0342
-    0.4% BLAS     ztrsm_                      408  0.0%     0.0331     0.0331
-    0.3% LAPACK   zlarfb_                     679  0.0%     0.0276     0.0021
-    0.2% BLAS     zgemv_                     4479 93.7%     0.0212     0.0212
-    0.2% LAPACK   zhegs2_                     244  0.0%     0.0207     0.0058
+    0.4% LAPACK   zlasr_                     3113  0.0%     0.0345     0.0345
+    0.4% BLAS     ztrsm_                      408  0.0%     0.0333     0.0333
+    0.3% LAPACK   zlarfb_                     679  0.0%     0.0278     0.0021
+    0.2% LAPACK   zhegs2_                     244  0.0%     0.0211     0.0059
+    0.2% BLAS     zgemv_                     4479 93.7%     0.0208     0.0208
     0.2% BLAS     zher2k_                     531  0.0%     0.0185     0.0185
-    0.2% LAPACK   zpotrf_                      80  0.0%     0.0141     0.0141
-    0.1% LAPACK   zlarft_                     679  0.0%     0.0117     0.0042
-    0.1% LAPACK   dlarnv_                    6912  0.0%     0.0097     0.0015
+    0.2% LAPACK   zpotrf_                      80  0.0%     0.0144     0.0144
+    0.1% LAPACK   zlarft_                     679  0.0%     0.0117     0.0041
+    0.1% LAPACK   dlarnv_                    6912  0.0%     0.0099     0.0015
     0.1% BLAS     ztrmm_                    29451  0.0%     0.0094     0.0094
    ... 47 more below 0.1% of CPU time (report --threshold 0 to show all)
   ──────────────────────────────────────────────────────────────────────────────
@@ -628,10 +626,10 @@ Table 3:  MPI message statistics  (tracing)
   ──────────────────────────────────────────────────────────────────────────────
    time% function          count [imb]   r/R   incl(s)       bytes    GB/s
   ──────────────────────────────────────────────────────────────────────────────
-   10.2% mpi_alltoall_     14821  0.0%  16/16     0.9606  2202009664    2.29
-    6.6% mpi_bcast_          939  0.0%  16/16     0.6161   634736992    1.03
-    1.7% mpi_barrier_       1359  0.0%  16/16     0.1598           0    0.00
-    0.6% mpi_allreduce_      599  0.0%  16/16     0.0533   913628160   17.14
+   10.1% mpi_alltoall_     14821  0.0%  16/16     0.9515  2202009664    2.31
+    6.6% mpi_bcast_          939  0.0%  16/16     0.6192   634736992    1.03
+    1.7% mpi_barrier_       1359  0.0%  16/16     0.1618           0    0.00
+    0.6% mpi_allreduce_      599  0.0%  16/16     0.0595   913628160   15.35
   ──────────────────────────────────────────────────────────────────────────────
    total communication volume: 3.750 GB  (sum over ranks)
    ... 2 more below 0.1% of CPU time (report --threshold 0 to show all)
@@ -666,7 +664,7 @@ Table 4:  I/O statistics  (tracing)
   ──────────────────────────────────────────────────────────────────────────────
    time% call            count [imb]   r/R   incl(s)      bytes    GB/s
   ──────────────────────────────────────────────────────────────────────────────
-    0.7% read              390  8.7%  16/16     0.0630    3534190    0.06
+    0.7% read              390  9.0%  16/16     0.0613    3534262    0.06
   ──────────────────────────────────────────────────────────────────────────────
    total I/O volume: 0.004 GB  (sum over ranks)
    ... 7 more below 0.1% of CPU time (report --threshold 0 to show all)
@@ -682,22 +680,22 @@ Table 4:  I/O statistics  (tracing)
 Per-PE summary
   ──────────────────────────────────────────────────────────────────────────────
    PE       runtime(s)  lib excl(s)     lib%
-   0             9.167        6.379    69.6%
-   1             9.167        6.297    68.7%
-   2             9.167        6.339    69.2%
-   3             9.167        6.269    68.4%
-   4             9.167        6.329    69.0%
-   5             9.166        6.331    69.1%
-   6             9.166        6.368    69.5%
-   7             9.165        6.369    69.5%
-   8             9.162        6.339    69.2%
-   9             9.161        6.322    69.0%
-   10            9.160        6.324    69.0%
-   11            9.161        6.285    68.6%
-   12            9.161        6.308    68.9%
-   13            9.160        6.277    68.5%
-   14            9.159        6.255    68.3%
-   15            9.159        6.266    68.4%
+   0             9.180        6.359    69.3%
+   1             9.179        6.296    68.6%
+   2             9.180        6.375    69.4%
+   3             9.180        6.264    68.2%
+   4             9.180        6.296    68.6%
+   5             9.179        6.316    68.8%
+   6             9.179        6.301    68.6%
+   7             9.178        6.310    68.8%
+   8             9.174        6.317    68.9%
+   9             9.174        6.285    68.5%
+   10            9.173        6.311    68.8%
+   11            9.172        6.385    69.6%
+   12            9.172        6.301    68.7%
+   13            9.171        6.255    68.2%
+   14            9.169        6.269    68.4%
+   15            9.170        6.241    68.1%
   ──────────────────────────────────────────────────────────────────────────────
-   slowest PE 1 (9.167s); mean 9.163s; spread 0.1%
+   slowest PE 0 (9.180s); mean 9.176s; spread 0.1%
 

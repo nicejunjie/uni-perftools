@@ -1,0 +1,3 @@
+# Regenerable scale-test artifacts: the compiled synthetic workload and the
+# per-run JSON/err outputs. The workload source + run.sh are tracked.
+out/

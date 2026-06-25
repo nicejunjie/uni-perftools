@@ -43,6 +43,53 @@ pub fn set_system_wide(_on: bool) {}
 #[cfg(not(target_os = "linux"))]
 pub fn raise_fd_limit() {}
 
+/// Global MPI rank from the launcher environment (no MPI calls needed), else None.
+/// Must stay in sync with `core/contract/contract.py:rank_from_env` and the C
+/// profiler's `util.c` — a launcher missing here makes ranks collide on rank 0.
+pub fn rank_from_env() -> Option<i64> {
+    const KEYS: [&str; 7] = [
+        "OMPI_COMM_WORLD_RANK",
+        "PMI_RANK",
+        "PMIX_RANK",
+        "MV2_COMM_WORLD_RANK",
+        "SLURM_PROCID",
+        "PALS_RANKID",
+        "ALPS_APP_PE",
+    ];
+    for k in KEYS {
+        if let Ok(v) = std::env::var(k) {
+            if let Ok(r) = v.trim().parse::<i64>() {
+                return Some(r);
+            }
+        }
+    }
+    None
+}
+
+/// Total MPI job size (number of ranks) from the launcher environment, else None.
+/// Lets the per-rank aggregator detect a SHORT rank set (a node-local rank dir, or
+/// crashed ranks) instead of silently undercounting.
+pub fn mpi_world_size_from_env() -> Option<i64> {
+    const KEYS: [&str; 6] = [
+        "OMPI_COMM_WORLD_SIZE",
+        "PMI_SIZE",
+        "MV2_COMM_WORLD_SIZE",
+        "SLURM_NTASKS",
+        "SLURM_NPROCS",
+        "PALS_NRANKS",
+    ];
+    for k in KEYS {
+        if let Ok(v) = std::env::var(k) {
+            if let Ok(r) = v.trim().parse::<i64>() {
+                if r > 0 {
+                    return Some(r);
+                }
+            }
+        }
+    }
+    None
+}
+
 // Compiled on every platform so Linux builds keep it valid, but only used as
 // the public collectors off Linux.
 #[cfg_attr(target_os = "linux", allow(dead_code))]

@@ -76,22 +76,16 @@ OMP_NUM_THREADS=$HALF OPENBLAS_NUM_THREADS=$HALF \
   "$UPAT" run -o out/run_mpi -- qenv/bin/mpirun -np 2 --bind-to core --map-by socket:PE=$HALF \
     ./pw -in si.scf.in > out/qe.mpi.out 2>&1
 
-# MPI snapshot (uaps, NODE-LEVEL): a plain `uaps run -- mpirun` would only see the
-# idle launcher, so this uses `-a` (system-wide, per-CPU) counting to capture all
-# ranks on the node — like Intel APS. That needs perf_event_paranoid <= 0; where it
-# isn't available (e.g. inside a container) we skip it cleanly instead of saving an
-# empty report.
-if node_perf_ok; then
-  echo "   + MPI node snapshot (uaps -a, system-wide HWPC)"
-  OMP_NUM_THREADS=$HALF OPENBLAS_NUM_THREADS=$HALF \
-    "$UAPS" run -a --format json -o out/run_mpi/snap.json -- qenv/bin/mpirun -np 2 \
-      --bind-to core --map-by socket:PE=$HALF ./pw -in si.scf.in > out/qe.snap_mpi.out 2>&1
-  "$UPAT" report out/run_mpi --collector uaps               > out/uaps.mpi.txt  2>&1
-  "$UPAT" report out/run_mpi --collector uaps --format html > out/uaps.mpi.html 2>&1
-else
-  echo "   - MPI node snapshot skipped (system-wide perf unavailable). Enable with:"
-  echo "     sudo setcap cap_perfmon+ep \"$UAPS\""
-fi
+# MPI snapshot (uaps, PER-RANK / APS-style): `uaps run -- mpirun` reinjects itself
+# per rank, so each rank counts ONLY its own process on its own node and the parent
+# aggregates across ranks (+ per-rank HW imbalance). This is multi-node-correct and
+# needs only perf_event_paranoid <= 1 (per-process) — no -a, no CAP_PERFMON.
+echo "   + MPI per-rank snapshot (uaps, APS-style — each rank counts itself)"
+OMP_NUM_THREADS=$HALF OPENBLAS_NUM_THREADS=$HALF \
+  "$UAPS" run --format json -o out/run_mpi/snap.json -- qenv/bin/mpirun -np 2 \
+    --bind-to core --map-by socket:PE=$HALF ./pw -in si.scf.in > out/qe.snap_mpi.out 2>&1
+"$UPAT" report out/run_mpi --collector uaps               > out/uaps.mpi.txt  2>&1
+"$UPAT" report out/run_mpi --collector uaps --format html > out/uaps.mpi.html 2>&1
 
 "$UPAT" report out/run_mpi --collector upat               > out/upat.mpi.txt  2>&1
 "$UPAT" report out/run_mpi --collector upat --format html  > out/upat.mpi.html 2>&1  # deep MPI: top fns + matrix
@@ -112,15 +106,13 @@ rm -rf scratch_big; mkdir -p scratch_big
 OMP_NUM_THREADS=1 OPENBLAS_NUM_THREADS=1 \
   "$UPAT" run -o out/run_big -- qenv/bin/mpirun -np "$PHYS" --bind-to core \
     ./pw -in si_big.scf.in > out/qe.big.out 2>&1
-if node_perf_ok; then
-  echo "   + large node snapshot (uaps -a, system-wide HWPC)"
-  rm -rf scratch_big; mkdir -p scratch_big
-  OMP_NUM_THREADS=1 OPENBLAS_NUM_THREADS=1 \
-    "$UAPS" run -a --format json -o out/run_big/snap.json -- qenv/bin/mpirun -np "$PHYS" \
-      --bind-to core ./pw -in si_big.scf.in > out/qe.big.snap.out 2>&1
-  "$UPAT" report out/run_big --collector uaps               > out/uaps.big.txt  2>&1
-  "$UPAT" report out/run_big --collector uaps --format html > out/uaps.big.html 2>&1
-fi
+echo "   + large per-rank snapshot (uaps, APS-style, $PHYS ranks)"
+rm -rf scratch_big; mkdir -p scratch_big
+OMP_NUM_THREADS=1 OPENBLAS_NUM_THREADS=1 \
+  "$UAPS" run --format json -o out/run_big/snap.json -- qenv/bin/mpirun -np "$PHYS" \
+    --bind-to core ./pw -in si_big.scf.in > out/qe.big.snap.out 2>&1
+"$UPAT" report out/run_big --collector uaps               > out/uaps.big.txt  2>&1
+"$UPAT" report out/run_big --collector uaps --format html > out/uaps.big.html 2>&1
 "$UPAT" report out/run_big --collector upat > out/upat.big.txt      2>&1
 "$UPAT" report out/run_big --detail mpi     > out/detail.big.mpi.txt 2>&1
 
