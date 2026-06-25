@@ -532,12 +532,16 @@ fn run(
     // take a sample. Per-sample errors are non-fatal (the process may have
     // exited between the exit check and the read).
     let interval = Duration::from_millis(interval_ms.max(1));
+    let mut gpu: Option<&'static str> = None;
     let status = loop {
         if let Some(status) = child.try_wait().context("failed polling target process")? {
             break status;
         }
         for collector in &mut collectors {
             let _ = collector.sample();
+        }
+        if gpu.is_none() {
+            gpu = uaps_collect::gpu::detect(target.pid);
         }
         std::thread::sleep(interval);
     };
@@ -552,6 +556,25 @@ fn run(
 
     // Turn raw counts into APS-style derived metrics (CPI, cache-miss rate, …).
     uaps_core::derive(&mut snapshot);
+
+    // GPU offload flag (suppresses the CPU-only roofline downstream — see collect_rank).
+    if let Some(vendor) = gpu {
+        snapshot.push(Metric {
+            key: "gpu_offload",
+            label: format!("GPU offload detected ({vendor})"),
+            value: MetricValue::Int { value: 1, unit: "" },
+        });
+    }
+    // Wrapper/fork heads-up: a near-idle measured process usually means the target
+    // forked its real work instead of exec'ing it (uaps then saw the idle parent).
+    if let Some(w) = wrapper_warning(
+        snapshot.numeric("cpu_time"),
+        snapshot.numeric("hw_instructions"),
+        snapshot.numeric("elapsed_time"),
+        gpu.is_some(),
+    ) {
+        eprintln!("{w}");
+    }
 
     // JSON is the on-disk contract — emitted here. The human report (text/HTML)
     // is produced by the SHARED core renderer (the one place that owns the
@@ -584,6 +607,43 @@ fn run(
 /// (per-process, never system-wide), and write `snap.<rank>.json` into the shared
 /// results `dir` for `uaps report` to aggregate. `shim_dir`, when set, LD_PRELOADs
 /// the PMPI shim into the child so per-rank MPI timing is captured too.
+/// Heads-up when uaps measured a process that did almost no CPU work over a
+/// non-trivial wall time — the classic signature of a launch wrapper (a shell,
+/// `numactl`/`taskset`, or an env wrapper) that FORKS its real command instead of
+/// exec'ing it: uaps counts only the per-process tree (no `inherit`), so it measured
+/// the idle parent and missed the work in the child pid. `None` when the work looks
+/// real, the run is too short to judge, or GPU offload already explains the idle CPU.
+/// Pure + testable. (A genuinely idle / sleeping process trips it too — the note says so.)
+fn wrapper_warning(
+    cpu_time: Option<f64>,
+    instructions: Option<f64>,
+    elapsed: Option<f64>,
+    gpu: bool,
+) -> Option<String> {
+    if gpu {
+        return None; // GPU offload already explains near-zero CPU work
+    }
+    let elapsed = elapsed?;
+    if elapsed < 0.1 {
+        return None; // too short to distinguish a wrapper from startup
+    }
+    let cpu = cpu_time.unwrap_or(0.0);
+    // <1% core-time utilization: a forking wrapper's parent just fork+waits. A real
+    // exec'd app — even an I/O-heavy one — keeps more CPU than this. Billions of
+    // retired instructions (when perf is available) prove real work and veto the note.
+    let util = cpu / elapsed;
+    if util < 0.01 && instructions.unwrap_or(0.0) < 5e7 {
+        Some(format!(
+            "uaps: NOTE: measured near-zero CPU work ({cpu:.3}s CPU over {elapsed:.2}s wall) — if the \
+             launched command WRAPS its real work (a shell, numactl/taskset, or env wrapper that forks \
+             instead of exec'ing), uaps counted the idle parent and missed the child; have each rank \
+             exec its app. (If it is genuinely idle / I-O- or sleep-bound, ignore.)"
+        ))
+    } else {
+        None
+    }
+}
+
 /// This node's hostname for tagging a rank snapshot. `/proc/sys/kernel/hostname` is
 /// the kernel's own value (no `gethostname` crate needed); fall back to `$HOSTNAME`,
 /// then `unknown`.
@@ -624,6 +684,19 @@ fn collect_rank(
         );
     }
     let (mut snapshot, status) = collect_process(program, args, interval_ms, shim_dir)?;
+    // Wrapper/fork heads-up — rank 0 only (a per-rank print would be N copies at
+    // scale; rank 0 is representative for SPMD). collect_process already pushed
+    // gpu_offload, so reuse it to skip the note when GPU offload explains the idle CPU.
+    if rank == 0 {
+        if let Some(w) = wrapper_warning(
+            snapshot.numeric("cpu_time"),
+            snapshot.numeric("hw_instructions"),
+            snapshot.numeric("elapsed_time"),
+            snapshot.numeric("gpu_offload").is_some(),
+        ) {
+            eprintln!("{w}");
+        }
+    }
     // Record the job's total rank count so `uaps report` can flag a SHORT aggregate
     // (e.g. crashed ranks) rather than silently undercounting.
     if let Some(ws) = uaps_collect::mpi_world_size_from_env() {
@@ -694,5 +767,27 @@ fn report(result_dir: &Path, format: Format, output: &Option<PathBuf>) -> Result
         _ => render_via_core(&snapshot, &command, format, output)?,
     }
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::wrapper_warning;
+
+    #[test]
+    fn wrapper_warning_flags_idle_parent_but_not_real_work() {
+        // forking wrapper: 0.002s CPU over 5s wall, ~no instructions → warn
+        let w = wrapper_warning(Some(0.002), Some(0.0), Some(5.0), false).expect("should warn");
+        assert!(w.contains("near-zero CPU work") && w.contains("exec"), "{w}");
+        // a real compute app: busy CPU → no warning
+        assert!(wrapper_warning(Some(4.8), Some(9e10), Some(5.0), false).is_none());
+        // perf disabled (no instructions) but CPU genuinely busy → still no warning
+        assert!(wrapper_warning(Some(4.8), None, Some(5.0), false).is_none());
+        // billions of retired instructions veto the note even if CPU-time looks low
+        assert!(wrapper_warning(Some(0.01), Some(8e9), Some(5.0), false).is_none());
+        // GPU offload already explains the idle CPU → suppressed
+        assert!(wrapper_warning(Some(0.002), Some(0.0), Some(5.0), true).is_none());
+        // too short to judge → no warning
+        assert!(wrapper_warning(Some(0.0), Some(0.0), Some(0.05), false).is_none());
+    }
 }
 

@@ -30,13 +30,15 @@ const DERIVED: &[&str] = &[
 ];
 
 /// Headline metrics that get a per-rank imbalance companion `(max-avg)/max`.
-/// (source_key, imbalance_key, label)
-const IMBALANCE: &[(&str, &str, &str)] = &[
-    ("elapsed_time", "elapsed_imbalance_pct", "Wall-time imbalance (across ranks)"),
-    ("cpu_time", "cpu_time_imbalance_pct", "CPU-time imbalance (across ranks)"),
-    ("gflops", "gflops_imbalance_pct", "FP-throughput imbalance (across ranks)"),
-    ("ipc", "ipc_imbalance_pct", "IPC imbalance (across ranks)"),
-    ("memory_bound", "memory_bound_imbalance_pct", "Memory-bound imbalance (across ranks)"),
+/// (source_key, imbalance_key, label, floor). `floor` is the value below which the
+/// metric is counter noise everywhere — reporting imbalance there is meaningless
+/// (a ~zero max makes (max-avg)/max swing to ~100% on rounding dust), so we skip it.
+const IMBALANCE: &[(&str, &str, &str, f64)] = &[
+    ("elapsed_time", "elapsed_imbalance_pct", "Wall-time imbalance (across ranks)", 1e-3),
+    ("cpu_time", "cpu_time_imbalance_pct", "CPU-time imbalance (across ranks)", 1e-3),
+    ("gflops", "gflops_imbalance_pct", "FP-throughput imbalance (across ranks)", 0.1),
+    ("ipc", "ipc_imbalance_pct", "IPC imbalance (across ranks)", 0.05),
+    ("memory_bound", "memory_bound_imbalance_pct", "Memory-bound imbalance (across ranks)", 1.0),
 ];
 
 struct RankMetric {
@@ -175,17 +177,11 @@ pub fn aggregate(dir: &Path) -> Result<(Snapshot, usize)> {
 
     // Per-rank HW imbalance for the headline metrics. Average over ALL ranks (a
     // rank that did no FP still counts toward FP imbalance), matching the suite's
-    // (max-avg)/max convention.
-    for (src, imb_key, label) in IMBALANCE {
+    // (max-avg)/max convention. Skipped when the metric is ~zero everywhere (below
+    // its floor) — that "imbalance" would be counter noise, not real work skew.
+    for (src, imb_key, label, floor) in IMBALANCE {
         let vals: Vec<f64> = ranks.iter().filter_map(|r| r.get(*src)).map(|m| m.value).collect();
-        if vals.len() < 2 {
-            continue;
-        }
-        let sum: f64 = vals.iter().sum();
-        let mx = vals.iter().cloned().fold(f64::MIN, f64::max);
-        if mx > 0.0 {
-            let avg = sum / n as f64;
-            let imb = ((mx - avg) / mx * 100.0).max(0.0);
+        if let Some(imb) = imbalance_pct(&vals, n, *floor) {
             agg.push(Metric {
                 key: imb_key,
                 label: (*label).to_string(),
@@ -297,6 +293,23 @@ fn partial_hwpc_warning(hwpc_ranks: usize, n: usize) -> Option<String> {
             n - hwpc_ranks
         ))
     }
+}
+
+/// Per-rank imbalance `(max-avg)/max` as a percent (0-100), averaging over ALL `n`
+/// ranks so a rank that did none of this work still counts. `None` when fewer than 2
+/// ranks reported the metric, or its max is below `floor` (effectively zero
+/// everywhere — the ratio would otherwise amplify counter dust into a bogus ~100%).
+/// Pure + testable.
+fn imbalance_pct(vals: &[f64], n: usize, floor: f64) -> Option<f64> {
+    if vals.len() < 2 {
+        return None;
+    }
+    let mx = vals.iter().cloned().fold(f64::MIN, f64::max);
+    if mx < floor {
+        return None;
+    }
+    let avg = vals.iter().sum::<f64>() / n as f64;
+    Some(((mx - avg) / mx * 100.0).max(0.0))
 }
 
 /// Warning when GPU offload was detected on some/all ranks. uaps reads only CPU
@@ -435,6 +448,22 @@ mod tests {
     fn empty_dir_is_an_error_not_a_panic() {
         let sc = Scratch::new();
         assert!(aggregate(&sc.0).is_err());
+    }
+
+    #[test]
+    fn imbalance_pct_floors_out_near_zero_noise() {
+        // real skew: gflops [10, 30] over 2 ranks → (30-20)/30 = 33.3%
+        let v = imbalance_pct(&[10.0, 30.0], 2, 0.1).expect("real skew");
+        assert!((v - 100.0 / 3.0).abs() < 1e-6, "{v}");
+        // counter dust: both ranks ~0 GFLOP/s, one a hair higher → must NOT report
+        // a huge imbalance. Below the 0.1 GFLOP/s floor → None.
+        assert!(imbalance_pct(&[0.0008, 0.0011], 2, 0.1).is_none(), "near-zero noise suppressed");
+        // only one rank reported the metric → no cross-rank imbalance
+        assert!(imbalance_pct(&[42.0], 2, 0.1).is_none());
+        // a rank that did none of the work still counts toward the average (sum/n):
+        // vals [0, 4] over n=2 → avg=2, (4-2)/4 = 50%
+        let v2 = imbalance_pct(&[0.0, 4.0], 2, 0.1).expect("two ranks, one idle");
+        assert!((v2 - 50.0).abs() < 1e-9, "{v2}");
     }
 
     #[test]

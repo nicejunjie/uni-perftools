@@ -225,7 +225,21 @@ These are load-bearing for production scale — don't regress them when editing:
 - **Per-process counting misses wrapped/forked work** (no `inherit`): `numactl`/
   `taskset`/shell wrappers measure the idle parent (each rank's app must `exec`, not
   fork). The C profiler suppresses its report write in `fork`-without-`exec` children
-  (`pthread_atfork` in `libprof.c`) so they don't clobber the parent's rank file.
+  (`pthread_atfork` in `libprof.c`) so they don't clobber the parent's rank file. uaps
+  can't suppress (it has no view into the uncounted child), so it **warns** instead:
+  `wrapper_warning` (`uaps-cli`) fires when a process did near-zero CPU work (<1%
+  utilization, no billions of retired instructions) over a non-trivial wall time — the
+  fork-instead-of-exec signature — rank 0 only at scale, and skipped under GPU offload
+  (which already explains idle CPU). Genuinely idle/sleep/IO-bound runs trip it too; the
+  note says so.
+- **Cross-rank imbalance has a noise floor.** The `(max-avg)/max` companion metrics
+  (`imbalance_pct` in `aggregate.rs`) are skipped when a metric's max is below a small
+  per-metric floor (gflops 0.1, ipc 0.05, memory_bound 1%, times 1ms) — otherwise a
+  metric that's ~zero on every rank reports a bogus ~100% "imbalance" from counter dust.
+- **MPI aggregates are per-rank means, uniformly.** `mpi_time` and the top-function
+  seconds (`mpi_top1..5`, `build_mpi_metrics` in `uaps-collect/mpi.rs`) are both avg/rank
+  so a single function's time can't appear to exceed the total; the %-of-MPI share is a
+  rank-invariant ratio. `mpi_imbalance_pct` is the `(max-avg)/max` spread.
 
 Regenerating the QE validation reports (`tests/qe/out/`) requires the run host (QE
 binary + per-host roofline). The node-level `uaps` snapshots need `cap_perfmon` on the

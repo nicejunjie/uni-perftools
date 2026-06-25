@@ -155,16 +155,18 @@ fn build_mpi_metrics(ranks: Vec<RankStat>) -> Vec<Metric> {
                 value: MetricValue::Percent(imbalance_pct),
             },
         ];
-        // Top 5 MPI functions by aggregate time (the keys mpi_top1..5 are listed
-        // in the report's Parallelism section). Label carries name + %-of-MPI;
-        // value is total seconds across ranks.
+        // Top 5 MPI functions (the keys mpi_top1..5 are listed in the report's
+        // Parallelism section). The %-of-MPI share is rank-invariant (a ratio), but
+        // the seconds are reported as avg/rank to stay CONSISTENT with `mpi_time`
+        // (also avg/rank) — so a reader can't see a single function's time exceed the
+        // total MPI time, which a sum-across-ranks value would appear to do.
         const TOPKEYS: [&str; 5] = ["mpi_top1", "mpi_top2", "mpi_top3", "mpi_top4", "mpi_top5"];
         for (i, (name, t)) in fn_totals.iter().take(5).enumerate() {
             let pct = if fn_sum > 0.0 { t / fn_sum * 100.0 } else { 0.0 };
             out.push(Metric {
                 key: TOPKEYS[i],
                 label: format!("  {name}  ({pct:.0}% of MPI)"),
-                value: MetricValue::Float { value: *t, unit: "s" },
+                value: MetricValue::Float { value: t / n as f64, unit: "s" },
             });
         }
         out
