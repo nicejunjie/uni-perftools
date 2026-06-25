@@ -990,13 +990,15 @@ mod tests {
     #[test]
     fn evaluator_resolves_amd_topdown_retiring() {
         // retiring = d_ratio(ex_ret_ops, 8 * ls_not_halted_cyc). Feed synthetic
-        // counts and check the math + event-ref + metric-ref resolution.
-        let Some((dir, model)) = detect_model_dir() else { return };
-        if !model.starts_with("amdzen") {
-            return;
-        }
+        // counts and check the math + event-ref + metric-ref resolution. Pin to the
+        // vendored amdzen5 model (which ships the named top-down metrics) rather than
+        // the HOST CPU: Zen1-4 / non-AMD CI runners don't have `retiring`, so a
+        // host-dependent test fails on e.g. GitHub's AMD-EPYC runners.
+        let Some((_, dir)) = vendored_model_dirs().into_iter().find(|(n, _)| n == "amdzen5") else {
+            return; // vendored pmu-events tree absent
+        };
         let mut db = load(&dir);
-        db.model_dir = model;
+        db.model_dir = "amdzen5".into();
         let mut counts = |ev: &str| -> Option<f64> {
             match ev {
                 "ex_ret_ops" => Some(2000.0),

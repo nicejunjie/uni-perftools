@@ -43,14 +43,29 @@ pub fn send_snapshot(addr: &str, rank: i64, json: &str) -> std::io::Result<()> {
 /// ranks should dial. Binds all interfaces; advertises this node's hostname (which
 /// is reachable from the other ranks — the launcher already ssh'd between them).
 pub fn bind_collector() -> std::io::Result<(TcpListener, String)> {
+    use std::net::ToSocketAddrs;
     let listener = TcpListener::bind("0.0.0.0:0")?;
     let port = listener.local_addr()?.port();
     let host = std::env::var("UAPS_COLLECT_HOST").ok().unwrap_or_else(|| {
         std::fs::read_to_string("/proc/sys/kernel/hostname")
             .map(|h| h.trim().to_string())
-            .unwrap_or_else(|_| "127.0.0.1".to_string())
+            .unwrap_or_default()
     });
-    Ok((listener, format!("{host}:{port}")))
+    // The listener is on all interfaces, so any address that resolves to this host
+    // reaches it. Use the hostname when it resolves (needed for remote ranks on a
+    // cluster); fall back to loopback when it doesn't (e.g. a CI runner whose
+    // hostname isn't in DNS/hosts — single-node, so loopback is enough).
+    let resolves = !host.is_empty()
+        && (host.as_str(), port)
+            .to_socket_addrs()
+            .map(|mut a| a.next().is_some())
+            .unwrap_or(false);
+    let addr = if resolves {
+        format!("{host}:{port}")
+    } else {
+        format!("127.0.0.1:{port}")
+    };
+    Ok((listener, addr))
 }
 
 /// Parent side: accept rank connections until `stop` is set (plus a short drain for
