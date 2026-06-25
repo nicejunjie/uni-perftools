@@ -27,8 +27,9 @@ folds it in automatically.
 
 ## Usage
 ```
-uaps run -- mpirun -n 4 ./app      # snapshot: per-rank HWPC + MPI/OpenMP, aggregated across ranks
-uaps run -a -- mpirun -n 4 ./app   # node-level (system-wide) variant — launcher node only
+uaps run -- mpirun -n 4 ./app      # snapshot: reinjects uaps per rank — each rank counts ITS OWN
+                                   #   process on its own node, aggregated across ranks (no shared FS)
+uaps run -a -- mpirun -n 4 ./app   # old node-level (system-wide) variant — launcher node only
 upat run -- ./app                  # deep profile + report
 upat run -- mpirun -n 4 ./app
 upat report  RESULT                # re-render (text); --format html for the HTML report
