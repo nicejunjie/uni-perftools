@@ -205,6 +205,12 @@ These are load-bearing for production scale — don't regress them when editing:
   when only some ranks carry vendor counters (`aggregate.rs`). Same for the text/HTML
   report: it needs the `core/cli/upat` renderer found next to the binary (install does
   this) or `UAPS_CORE_UPAT`; `--format json` needs neither.
+- **Each rank tags its `snap.<rank>.json` with its node** — top-level `host`
+  (hostname) + `arch` (`pmudb::node_arch()`, the CPU model e.g. `amdzen5`). `uaps
+  report` (`node_participation` in `aggregate.rs`) shows per-node rank spread and
+  **warns when ranks span >1 CPU model AND a roofline exists** — the aggregated
+  roofline/GFLOPS/top-down would mix heterogeneous FLOP+bandwidth ceilings, so the
+  single job-level point is not physically meaningful (group ranks by node type).
 - **Per-process counting misses wrapped/forked work** (no `inherit`): `numactl`/
   `taskset`/shell wrappers measure the idle parent (each rank's app must `exec`, not
   fork). The C profiler suppresses its report write in `fork`-without-`exec` children

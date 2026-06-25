@@ -68,9 +68,19 @@ fn typed(value: f64, unit: &str) -> MetricValue {
     }
 }
 
-fn parse_rank(path: &Path) -> Option<RankMap> {
+/// One parsed rank file: its metrics plus the node it ran on (host/CPU-model tags,
+/// absent in pre-tagging snapshots → `None`).
+struct RankFile {
+    metrics: RankMap,
+    host: Option<String>,
+    arch: Option<String>,
+}
+
+fn parse_rank(path: &Path) -> Option<RankFile> {
     let text = std::fs::read_to_string(path).ok()?;
     let v: serde_json::Value = serde_json::from_str(&text).ok()?;
+    let host = v.get("host").and_then(|x| x.as_str()).map(str::to_string);
+    let arch = v.get("arch").and_then(|x| x.as_str()).map(str::to_string);
     let arr = v.get("metrics")?.as_array()?;
     let mut m = RankMap::new();
     for it in arr {
@@ -87,13 +97,15 @@ fn parse_rank(path: &Path) -> Option<RankMap> {
         let label = it.get("label").and_then(|x| x.as_str()).unwrap_or(&key).to_string();
         m.insert(key, RankMetric { value, unit, label });
     }
-    Some(m)
+    Some(RankFile { metrics: m, host, arch })
 }
 
 /// Read every `snap.<rank>.json` in `dir`, reduce to one job-level snapshot, and
 /// return it with the number of ranks aggregated.
 pub fn aggregate(dir: &Path) -> Result<(Snapshot, usize)> {
     let mut ranks: Vec<RankMap> = Vec::new();
+    // (host, arch) per rank — for per-node participation + mixed-arch roofline warning.
+    let mut nodes: Vec<(Option<String>, Option<String>)> = Vec::new();
     for entry in std::fs::read_dir(dir)? {
         let p = entry?.path();
         let name = match p.file_name().and_then(|n| n.to_str()) {
@@ -104,8 +116,9 @@ pub fn aggregate(dir: &Path) -> Result<(Snapshot, usize)> {
         if name.starts_with("snap.") && name.ends_with(".json") && name != "snap.json" {
             // A rank killed mid-run leaves a truncated file — skip it, don't abort
             // the whole job's report (the normal failure mode at scale).
-            if let Some(m) = parse_rank(&p) {
-                ranks.push(m);
+            if let Some(rf) = parse_rank(&p) {
+                nodes.push((rf.host, rf.arch));
+                ranks.push(rf.metrics);
             }
         }
     }
@@ -197,9 +210,59 @@ pub fn aggregate(dir: &Path) -> Result<(Snapshot, usize)> {
     if let Some(w) = partial_hwpc_warning(hwpc_ranks, n) {
         eprintln!("{w}");
     }
+
+    // Per-node participation + mixed-arch roofline caveat (only meaningful if some
+    // rank actually produced vendor HWPC / a roofline point).
+    for line in node_participation(&nodes, hwpc_ranks > 0) {
+        eprintln!("{line}");
+    }
     let _ = dir; // retained for the file-based explicit (--rank-dir) path
 
     Ok((agg, n))
+}
+
+/// Diagnostics about which nodes/CPU-models the ranks ran on. Emits:
+///   - an info line when the ranks span more than one node (so a multi-node run is
+///     visibly multi-node, with the per-arch rank split);
+///   - a WARNING when they span more than one CPU model AND a roofline exists — the
+///     aggregated roofline/GFLOPS/top-down then mix heterogeneous FLOP+bandwidth
+///     ceilings, so the single job-level point is not physically meaningful.
+/// Empty when every rank is one node+arch, or the snapshots predate node tagging
+/// (all `None`). Pure + testable; the caller prints each line.
+fn node_participation(
+    nodes: &[(Option<String>, Option<String>)],
+    has_roofline: bool,
+) -> Vec<String> {
+    use std::collections::{BTreeMap, BTreeSet};
+    let hosts: BTreeSet<&str> = nodes.iter().filter_map(|(h, _)| h.as_deref()).collect();
+    let mut arch_counts: BTreeMap<&str, usize> = BTreeMap::new();
+    for (_, a) in nodes {
+        if let Some(a) = a.as_deref() {
+            *arch_counts.entry(a).or_insert(0) += 1;
+        }
+    }
+    let mut out = Vec::new();
+    if hosts.len() > 1 {
+        let split: Vec<String> =
+            arch_counts.iter().map(|(a, c)| format!("{a} ({c} ranks)")).collect();
+        out.push(format!(
+            "uaps: ranks span {} nodes, {} CPU model(s): {}",
+            hosts.len(),
+            arch_counts.len(),
+            split.join(", ")
+        ));
+    }
+    if arch_counts.len() > 1 && has_roofline {
+        out.push(format!(
+            "uaps: WARNING: ranks span {} different CPU models ({}) — the aggregated roofline / \
+             GFLOPS / top-down MIX heterogeneous FLOP+bandwidth ceilings, so the single job-level \
+             roofline point is not physically meaningful. Group ranks by node type and compare \
+             per-arch instead.",
+            arch_counts.len(),
+            arch_counts.keys().cloned().collect::<Vec<_>>().join(", ")
+        ));
+    }
+    out
 }
 
 /// Warning when vendor HWPC is missing on some/all ranks (the rest contribute no
@@ -342,6 +405,27 @@ mod tests {
     fn empty_dir_is_an_error_not_a_panic() {
         let sc = Scratch::new();
         assert!(aggregate(&sc.0).is_err());
+    }
+
+    #[test]
+    fn node_participation_flags_multinode_and_mixed_arch() {
+        let some = |h: &str, a: &str| (Some(h.to_string()), Some(a.to_string()));
+        // single node, single arch → silent
+        assert!(node_participation(&[some("n0", "amdzen5"), some("n0", "amdzen5")], true).is_empty());
+        // two nodes, same arch → an info line, no mixed-arch warning
+        let two = node_participation(&[some("z20", "amdzen5"), some("legion", "amdzen5")], true);
+        assert_eq!(two.len(), 1, "{two:?}");
+        assert!(two[0].contains("2 nodes"), "{:?}", two[0]);
+        assert!(two[0].contains("1 CPU model"), "{:?}", two[0]);
+        // two nodes, two arches, roofline present → info + mixed-arch WARNING
+        let mix = node_participation(&[some("z20", "amdzen5"), some("vista", "arm/neoverse-v2")], true);
+        assert_eq!(mix.len(), 2, "{mix:?}");
+        assert!(mix[1].contains("WARNING") && mix[1].contains("different CPU models"), "{:?}", mix[1]);
+        // mixed arch but NO roofline (no HWPC) → no roofline warning
+        let no_rl = node_participation(&[some("z20", "amdzen5"), some("vista", "arm/neoverse-v2")], false);
+        assert_eq!(no_rl.len(), 1, "no roofline → only the node-span info line: {no_rl:?}");
+        // untagged (old) snapshots → silent
+        assert!(node_participation(&[(None, None), (None, None)], true).is_empty());
     }
 
     #[test]

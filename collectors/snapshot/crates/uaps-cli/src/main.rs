@@ -568,6 +568,27 @@ fn run(
 /// (per-process, never system-wide), and write `snap.<rank>.json` into the shared
 /// results `dir` for `uaps report` to aggregate. `shim_dir`, when set, LD_PRELOADs
 /// the PMPI shim into the child so per-rank MPI timing is captured too.
+/// This node's hostname for tagging a rank snapshot. `/proc/sys/kernel/hostname` is
+/// the kernel's own value (no `gethostname` crate needed); fall back to `$HOSTNAME`,
+/// then `unknown`.
+fn node_host() -> String {
+    std::fs::read_to_string("/proc/sys/kernel/hostname")
+        .ok()
+        .map(|s| s.trim().to_string())
+        .filter(|s| !s.is_empty())
+        .or_else(|| std::env::var("HOSTNAME").ok())
+        .unwrap_or_else(|| "unknown".to_string())
+}
+
+/// Insert top-level `"host"`/`"arch"` fields into a rank snapshot's JSON, right after
+/// the opening brace. `render_json` emits `{\n  "metrics": [ … ]\n}`; we splice ahead
+/// of `"metrics"` so the document stays well-formed and old readers ignore the extras.
+fn tag_node(json: String, host: &str, arch: &str) -> String {
+    let esc = |s: &str| s.replace('\\', "\\\\").replace('"', "\\\"");
+    let header = format!("{{\n  \"host\": \"{}\", \"arch\": \"{}\",\n", esc(host), esc(arch));
+    json.replacen("{\n", &header, 1)
+}
+
 fn collect_rank(
     program: &str,
     args: &[String],
@@ -596,7 +617,12 @@ fn collect_rank(
             value: MetricValue::Int { value: ws, unit: "" },
         });
     }
-    let json = render_json(&snapshot);
+    // Tag the rank file with the node it ran on (hostname) and its CPU model, so
+    // `uaps report` can show per-node participation and WARN when a roofline is being
+    // aggregated across heterogeneous CPUs (different FLOP/bandwidth ceilings — the
+    // single job-level point would be meaningless). Top-level fields, so old readers
+    // that only look at "metrics" are unaffected.
+    let json = tag_node(render_json(&snapshot), &node_host(), &uaps_collect::pmudb::node_arch());
     // Write snap.<rank>.json into the results dir for `uaps report` to aggregate;
     // rank 0 also records the command so the report can show the app + compiler.
     if let Some(dir) = dir {

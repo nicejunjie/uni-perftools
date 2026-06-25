@@ -45,7 +45,11 @@ The snap.json is run-level, but it is produced one of two ways:
   rather than silently undercounting.
 
 The transient per-rank `snap.<rank>.json` use the same `{ "metrics": [...] }`
-shape as the aggregate; they are not part of the saved result dir.
+shape as the aggregate, plus two top-level tags — `"host"` (the node's hostname)
+and `"arch"` (its CPU model, e.g. `amdzen5` / `arm/neoverse-v2`). The aggregator
+uses them to show per-node participation and to WARN when ranks span more than one
+CPU model (the aggregated roofline would mix heterogeneous FLOP/bandwidth ceilings).
+They are not part of the saved result dir; pre-tagging snapshots simply omit them.
 
 ## prof.<rank>.json  (profile collector — PER-RANK)
 ```json

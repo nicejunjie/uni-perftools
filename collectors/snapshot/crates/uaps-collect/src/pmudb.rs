@@ -58,6 +58,18 @@ pub fn data_available() -> bool {
     data_root().is_some()
 }
 
+/// A short identifier of THIS node's CPU model, e.g. `amdzen5`, `sapphirerapids`,
+/// `arm/neoverse-v2`. Used to tag each rank's snapshot so `uaps report` can flag a
+/// roofline being aggregated across heterogeneous nodes (different FLOP/bandwidth
+/// ceilings). Falls back to the bare ISA (`x86`/`arm64`), then `unknown`, when the
+/// model can't be resolved (e.g. DB missing on this node).
+pub fn node_arch() -> String {
+    if let Some((_, model)) = detect_model_dir() {
+        return model;
+    }
+    detect_cpuid().map(|c| c.arch.to_string()).unwrap_or_else(|| "unknown".to_string())
+}
+
 // ---------------------------------------------------------------- CPU detection
 struct CpuId {
     arch: &'static str,    // "x86" or "arm64"
