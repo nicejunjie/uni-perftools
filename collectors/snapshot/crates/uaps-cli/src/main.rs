@@ -19,7 +19,6 @@ use uaps_core::{Collector, Metric, MetricValue, Snapshot, Target};
 use uaps_report::{render_json, Format};
 
 mod aggregate;
-mod net;
 
 /// The HWPC/OS collector set used for every counting pass (single, per-rank, or
 /// node-level). Top-down prefers the perf-data-driven engine when it resolves for
@@ -412,13 +411,6 @@ fn run(
     // soft fd limit up front so counters don't fail with EMFILE and gap silently.
     uaps_collect::raise_fd_limit();
 
-    // (1a) Reinjected by a parent uaps wrapper, which set UAPS_COLLECT to its TCP
-    // rendezvous address: count this process and ship the snapshot back over TCP
-    // (no shared FS needed). This is the `uaps run -- mpirun …` (wrapper) path.
-    if let Some(addr) = std::env::var("UAPS_COLLECT").ok() {
-        return collect_rank(program, args, interval_ms, None, Some(&addr), None);
-    }
-
     let launcher = Path::new(program)
         .file_name()
         .map(|s| s.to_string_lossy().into_owned())
@@ -426,12 +418,12 @@ fn run(
     let is_launcher =
         matches!(launcher.as_str(), "mpirun" | "mpiexec" | "orterun" | "srun" | "aprun" | "prun" | "jsrun");
 
-    // (1b) APS-style (launcher-AGNOSTIC) per-rank collection: we were placed inside
-    // the launcher (`mpirun -n N uaps run -- ./app`) — detected by an explicit
-    // --rank-dir, or auto-detected when a rank env is set and the target isn't a
-    // launcher. Count this process, write snap.<rank>.json (+ MPI shim timing) into
-    // the shared results dir; `uaps report <dir>` aggregates it (like aps-report).
-    // No launcher flag-parsing or `-x` env injection — works with any launcher.
+    // APS-style per-rank collection: uaps was placed INSIDE the launcher
+    // (`mpirun -n N uaps ./app`) — detected by an explicit --rank-dir, or by a rank
+    // env when the target isn't itself a launcher. Count this process, write
+    // snap.<rank>.json (+ MPI shim timing) into the shared results dir; `uaps report
+    // <dir>` aggregates it (like aps-report). Launcher-agnostic: no flag-parsing,
+    // no `-x` env injection — works with ANY launcher that sets a rank env.
     let rank_dir = rank_dir.or_else(|| std::env::var_os("UAPS_RANK_DIR").map(PathBuf::from));
     if rank_dir.is_some() || (!is_launcher && uaps_collect::rank_from_env().is_some()) {
         let dir = rank_dir.unwrap_or_else(default_result_dir);
@@ -444,27 +436,25 @@ fn run(
                 dir.display()
             );
         }
-        return collect_rank(program, args, interval_ms, Some(&dir), None, Some(&dir));
+        return collect_rank(program, args, interval_ms, Some(&dir), Some(&dir));
     }
 
-    // (2) Launcher + not explicit node-level (-a): APS-style PER-RANK collection.
-    // Reinject `uaps run` per rank so each rank counts itself on its own node, then
-    // aggregate across ranks. This is the default for parallel jobs.
+    // An MPI launcher handed directly to uaps. uaps profiles MPI per-rank like APS:
+    // place it INSIDE the launcher, don't wrap it (wrapping would need
+    // launcher-specific arg-parsing + env propagation — not portable). `-a` still
+    // gives a quick node-level snapshot of the launcher's node.
     if is_launcher && !system_wide {
-        match run_per_rank(program, args, &launcher, interval_ms, &format, &output, &argv)? {
-            Some(()) => return Ok(()),     // handled per-rank
-            None => {}                     // couldn't locate the app — fall through to node-level
-        }
+        anyhow::bail!(
+            "uaps profiles MPI per-rank like Intel APS — place it INSIDE the launcher:\n  \
+             {launcher} … uaps ./app       (each rank writes ./uaps_result/)\n  \
+             uaps report uaps_result        (aggregate, like aps-report)\n\
+             Or `uaps run -a -- {launcher} …` for a node-level (launcher-node) snapshot."
+        );
     }
 
-    // (3) Legacy node-level (system-wide) path, kept for `-a` and as the per-rank
-    // fallback. MPI launches here measure the launcher node only.
-    let mpi = mpi || is_launcher;
-
-    // Per-process HW counting is meaningless for an MPI launch (it measures the
-    // idle launcher, not the ranks), so use node-level (per-CPU) counting — set
-    // explicitly with -a, or automatically for MPI. Needs perf_event_paranoid<=0;
-    // if the kernel denies it the affected HWPC metrics degrade to gaps.
+    // Single process, or node-level (-a). With -a on a launcher, also LD_PRELOAD the
+    // shim so node-level MPI timing is captured. Needs perf_event_paranoid<=0.
+    let mpi = mpi || (is_launcher && system_wide);
     let system_wide = system_wide || mpi;
     if system_wide {
         uaps_collect::set_system_wide(true);
@@ -574,23 +564,20 @@ fn run(
     Ok(())
 }
 
-/// Collect a single MPI rank: count ONLY this process, on THIS node (per-process,
-/// never system-wide). The result goes to the parent over TCP (`collect_addr`,
-/// wrapper form) and/or to `dir`/snap.<rank>.json (APS form). `shim_dir`, when set,
-/// LD_PRELOADs the PMPI shim into the child so MPI timing is captured here (the APS
-/// form needs this — there's no parent to `-x` the shim in; the wrapper form passes
-/// None because the parent already injected it via the launcher env).
+/// Collect a single MPI rank (APS-style): count ONLY this process, on THIS node
+/// (per-process, never system-wide), and write `snap.<rank>.json` into the shared
+/// results `dir` for `uaps report` to aggregate. `shim_dir`, when set, LD_PRELOADs
+/// the PMPI shim into the child so per-rank MPI timing is captured too.
 fn collect_rank(
     program: &str,
     args: &[String],
     interval_ms: u64,
     dir: Option<&Path>,
-    collect_addr: Option<&str>,
     shim_dir: Option<&Path>,
 ) -> Result<()> {
     let rank = uaps_collect::rank_from_env().unwrap_or(0);
     let (mut snapshot, status) = collect_process(program, args, interval_ms, shim_dir)?;
-    // Record the job's total rank count so the parent can flag a SHORT aggregate
+    // Record the job's total rank count so `uaps report` can flag a SHORT aggregate
     // (e.g. crashed ranks) rather than silently undercounting.
     if let Some(ws) = uaps_collect::mpi_world_size_from_env() {
         snapshot.push(Metric {
@@ -600,16 +587,8 @@ fn collect_rank(
         });
     }
     let json = render_json(&snapshot);
-    // Ship to the parent over TCP (no shared FS needed). Best-effort: if it fails,
-    // this rank is simply absent and the parent's world-size check flags it.
-    if let Some(addr) = collect_addr {
-        if let Err(e) = net::send_snapshot(addr, rank, &json) {
-            eprintln!("uaps: rank {rank}: could not send snapshot to {addr} ({e})");
-        }
-    }
-    // APS-style / explicit `--rank-dir` form: drop snap.<rank>.json into the results
-    // dir for `uaps report` to aggregate; rank 0 also records the command so the
-    // report can show the app and resolve its compiler.
+    // Write snap.<rank>.json into the results dir for `uaps report` to aggregate;
+    // rank 0 also records the command so the report can show the app + compiler.
     if let Some(dir) = dir {
         std::fs::create_dir_all(dir).ok();
         let _ = std::fs::write(dir.join(format!("snap.{rank}.json")), &json);
@@ -665,251 +644,3 @@ fn report(result_dir: &Path, format: Format, output: &Option<PathBuf>) -> Result
     Ok(())
 }
 
-/// Parent of a per-rank (APS-style) run: reinject `uaps run` as each rank so each
-/// counts itself on its own node, then aggregate the per-rank snapshots into one
-/// job-level report. Returns `Ok(None)` if the app can't be located in the
-/// launcher argv (caller falls back to node-level counting).
-fn run_per_rank(
-    program: &str,
-    args: &[String],
-    launcher: &str,
-    interval_ms: u64,
-    format: &Format,
-    output: &Option<PathBuf>,
-    full_argv: &[String],
-) -> Result<Option<()>> {
-    let prog_idx = match find_program_index(launcher, args) {
-        Some(i) => i,
-        None => {
-            eprintln!(
-                "uaps: could not locate the application in the `{launcher}` command for \
-                 per-rank collection — falling back to node-level (launcher-node only). \
-                 For per-rank, use `{launcher} … uaps run --rank-dir <shared-dir> -- ./app`."
-            );
-            return Ok(None);
-        }
-    };
-    let self_exe =
-        std::env::current_exe().context("cannot find own path for per-rank reinjection")?;
-
-    // Parent-LOCAL dir: ranks ship their snapshots over TCP and the parent writes
-    // them here to aggregate. It only ever holds files this process writes, so a
-    // node-local path is fine — no shared filesystem required.
-    let base = std::env::current_dir().unwrap_or_else(|_| std::env::temp_dir());
-    let dir = base.join(format!(".uaps_rank_{}", std::process::id()));
-    std::fs::create_dir_all(&dir)
-        .with_context(|| format!("failed to create per-rank dir {}", dir.display()))?;
-    let _guard = TempDir(dir.clone());
-
-    // TCP rendezvous: bind before launching so every rank can dial back.
-    let (listener, collect_addr) =
-        net::bind_collector().context("failed to bind the per-rank collector socket")?;
-    let stop = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
-    let collector = {
-        let dir = dir.clone();
-        let stop = stop.clone();
-        std::thread::spawn(move || net::collect_into(listener, &dir, stop))
-    };
-
-    let shim = resolve_mpi_shim().ok(); // MPI timing is best-effort
-    let is_openmpi = matches!(launcher, "mpirun" | "mpiexec" | "orterun");
-
-    // Reinjected: <launcher> [launcher opts] [-x ENV…] <self> run -- <app> [args].
-    let mut cmd = Command::new(program);
-    cmd.args(&args[..prog_idx]);
-    if is_openmpi {
-        // OpenMPI does not forward the launcher's env to ranks — push ours via -x.
-        cmd.arg("-x").arg("UAPS_COLLECT");
-        if shim.is_some() {
-            cmd.arg("-x").arg("LD_PRELOAD").arg("-x").arg("UAPS_MPI_OUTDIR");
-        }
-    }
-    cmd.arg(&self_exe)
-        .arg("run")
-        .arg("--interval-ms")
-        .arg(interval_ms.to_string())
-        .arg("--")
-        .args(&args[prog_idx..]);
-
-    cmd.env("UAPS_COLLECT", &collect_addr);
-    if let Some(shim) = &shim {
-        let mut preload = std::env::var("LD_PRELOAD").unwrap_or_default();
-        if !preload.is_empty() {
-            preload.push(':');
-        }
-        preload.push_str(shim);
-        cmd.env("LD_PRELOAD", preload);
-        cmd.env("UAPS_MPI_OUTDIR", &dir);
-    }
-
-    eprintln!(
-        "uaps: per-rank collection (APS-style) — each rank counts itself on its own node"
-    );
-    let status = cmd
-        .status()
-        .with_context(|| format!("failed to launch `{program}`"))?;
-    // Job done: stop accepting (after a short drain) and collect the received snaps.
-    stop.store(true, std::sync::atomic::Ordering::Relaxed);
-    let _received = collector.join().unwrap_or(0);
-
-    // Aggregate the per-rank HW snapshots, then fold in per-rank MPI timing.
-    let (mut snapshot, nranks) = aggregate::aggregate(&dir)?;
-    if shim.is_some() {
-        let mut mpic = MpiCollector::new(dir.clone());
-        let _ = mpic.start(&Target { pid: 0 });
-        if let Ok(mpi_metrics) = mpic.finish() {
-            snapshot.extend(mpi_metrics);
-        }
-    }
-    eprintln!("uaps: aggregated {nranks} rank snapshot(s) across all nodes");
-
-    match format {
-        Format::Json => {
-            let report = render_json(&snapshot);
-            match output {
-                Some(path) => {
-                    std::fs::write(path, &report)
-                        .with_context(|| format!("failed to write snapshot to {}", path.display()))?;
-                    eprintln!("uaps: snapshot written to {}", path.display());
-                }
-                None => {
-                    eprintln!();
-                    eprint!("{report}");
-                }
-            }
-        }
-        _ => render_via_core(&snapshot, full_argv, *format, output)?,
-    }
-
-    drop(_guard);
-    mirror_exit(status);
-    Ok(Some(()))
-}
-
-/// Locate the application program within a launcher's argv (everything after the
-/// launcher, e.g. `["-n","4","./app","arg"]` → index 2). Skips launcher options,
-/// consuming a value for the ones that take a separate argument. Returns None if
-/// no plausible program token is found (caller then falls back to node-level).
-fn find_program_index(launcher: &str, args: &[String]) -> Option<usize> {
-    let mut i = 0;
-    while i < args.len() {
-        let a = &args[i];
-        if a == "--" {
-            return if i + 1 < args.len() { Some(i + 1) } else { None };
-        }
-        if let Some(stripped) = a.strip_prefix('-') {
-            if stripped.is_empty() {
-                return None; // a bare "-" is not a program we can wrap
-            }
-            // `--flag=value` carries its own value; otherwise skip the flag plus
-            // however many separate-arg values it consumes (`--mca KEY VAL` = 2).
-            if a.contains('=') {
-                i += 1;
-            } else {
-                i += 1 + launcher_flag_value_count(launcher, a);
-            }
-            continue;
-        }
-        // First non-flag token. Sanity-check it looks like a program (a path or a
-        // bare command name), not a stray flag value we failed to consume.
-        return Some(i);
-    }
-    None
-}
-
-/// How many following argv entries `flag` consumes as values. The MCA family takes
-/// TWO (`--mca <key> <value>`); most value-flags take one; booleans take none.
-fn launcher_flag_value_count(launcher: &str, flag: &str) -> usize {
-    if matches!(flag, "--mca" | "--gmca" | "--prtemca" | "--omca") {
-        return 2;
-    }
-    if launcher_flag_takes_value(launcher, flag) {
-        1
-    } else {
-        0
-    }
-}
-
-/// Whether `flag` consumes the following argv entry as its value, for `launcher`.
-/// Conservative: unknown `--flags` are treated as booleans (don't consume), so a
-/// missed value-flag surfaces as a fallback-to-node-level rather than a wrong wrap.
-fn launcher_flag_takes_value(launcher: &str, flag: &str) -> bool {
-    // Common to OpenMPI/MPICH mpirun/mpiexec.
-    const MPI: &[&str] = &[
-        "-n", "-np", "-c", "-N", "--n", "--np", "--map-by", "--bind-to", "--rank-by",
-        "--mca", "--gmca", "--prtemca", "--tune", "-x", "-H", "--host", "--hostfile",
-        "--machinefile", "-rf", "--rankfile", "--path", "-wdir", "--wdir", "-am", "--am",
-        "-d", "--display", "--output", "--report-bindings",
-    ];
-    // Slurm srun.
-    const SRUN: &[&str] = &[
-        "-n", "--ntasks", "-c", "--cpus-per-task", "-N", "--nodes", "--ntasks-per-node",
-        "-p", "--partition", "-w", "--nodelist", "--cpu-bind", "--mem", "--mem-per-cpu",
-        "-t", "--time", "-A", "--account", "-J", "--job-name", "--gres", "--export",
-        "--distribution", "-m", "--label",
-    ];
-    let table: &[&str] = match launcher {
-        "srun" => SRUN,
-        "aprun" | "jsrun" | "prun" => MPI, // best-effort; -n/-c style
-        _ => MPI,
-    };
-    table.contains(&flag)
-}
-
-#[cfg(test)]
-mod tests {
-    use super::find_program_index;
-
-    fn v(args: &[&str]) -> Vec<String> {
-        args.iter().map(|s| s.to_string()).collect()
-    }
-
-    #[test]
-    fn finds_app_after_mpirun_options() {
-        // -n consumes a value; ./app is the program.
-        assert_eq!(find_program_index("mpirun", &v(&["-n", "4", "./app", "x"])), Some(2));
-        // multiple value-flags (the QE command shape).
-        assert_eq!(
-            find_program_index(
-                "mpirun",
-                &v(&["-np", "4", "--bind-to", "core", "--map-by", "socket:PE=8", "./pw", "-in", "f"])
-            ),
-            Some(6)
-        );
-        // boolean flag (--oversubscribe) must NOT swallow the program.
-        assert_eq!(
-            find_program_index("mpirun", &v(&["--oversubscribe", "-n", "4", "./app"])),
-            Some(3)
-        );
-        // -x VAR consumes its value.
-        assert_eq!(find_program_index("mpirun", &v(&["-x", "FOO", "-n", "2", "app"])), Some(4));
-        // --mca KEY VALUE consumes TWO args (the real-world case from container tests).
-        assert_eq!(
-            find_program_index("mpirun", &v(&["--mca", "btl", "self,tcp", "-n", "2", "./app"])),
-            Some(5)
-        );
-        assert_eq!(
-            find_program_index(
-                "mpirun",
-                &v(&["--allow-run-as-root", "--host", "a,b", "-np", "4", "./app"])
-            ),
-            Some(5)
-        );
-    }
-
-    #[test]
-    fn finds_app_after_srun_options() {
-        // --ntasks=N carries its own value (no consume).
-        assert_eq!(find_program_index("srun", &v(&["--ntasks=4", "./app"])), Some(1));
-        // separate-value srun flags.
-        assert_eq!(find_program_index("srun", &v(&["-n", "4", "-c", "2", "./app"])), Some(4));
-    }
-
-    #[test]
-    fn handles_explicit_separator_and_missing_program() {
-        assert_eq!(find_program_index("mpirun", &v(&["--", "./app"])), Some(1));
-        // no program at all (just options) -> None, caller falls back to node-level.
-        assert_eq!(find_program_index("mpirun", &v(&["-n", "4"])), None);
-        assert_eq!(find_program_index("mpirun", &v(&[])), None);
-    }
-}

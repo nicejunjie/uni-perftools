@@ -26,10 +26,11 @@ cargo run -- run -- sleep 1
 # (installed binary)
 uaps run -- ./my_app --flag
 
-# MPI: per-rank (APS-style) — each rank counts itself on its own node, then the
-# results aggregate across ranks (no shared filesystem needed; works multi-node):
-uaps run -- mpirun -n 4 ./my_app
-uaps run -a -- mpirun -n 4 ./my_app   # old node-level (launcher node only)
+# MPI: per-rank (APS-style) — uaps INSIDE the launcher (works with ANY launcher);
+# each rank counts itself on its own node, then aggregate the per-rank dir:
+mpirun -n 4 uaps ./my_app             # → ./uaps_result/snap.<rank>.json
+uaps report uaps_result               # aggregate (like aps-report)
+uaps run -a -- mpirun -n 4 ./my_app   # node-level alternative (launcher node only)
 ```
 
 ## Test

@@ -76,14 +76,15 @@ OMP_NUM_THREADS=$HALF OPENBLAS_NUM_THREADS=$HALF \
   "$UPAT" run -o out/run_mpi -- qenv/bin/mpirun -np 2 --bind-to core --map-by socket:PE=$HALF \
     ./pw -in si.scf.in > out/qe.mpi.out 2>&1
 
-# MPI snapshot (uaps, PER-RANK / APS-style): `uaps run -- mpirun` reinjects itself
-# per rank, so each rank counts ONLY its own process on its own node and the parent
-# aggregates across ranks (+ per-rank HW imbalance). This is multi-node-correct and
-# needs only perf_event_paranoid <= 1 (per-process) — no -a, no CAP_PERFMON.
+# MPI snapshot (uaps, PER-RANK / APS-style): uaps is placed INSIDE the launcher
+# (`mpirun … uaps run …` — launcher-agnostic, no flag-parsing/-x), so each rank counts
+# ONLY its own process on its own node and writes snap.<rank>.json to a results dir;
+# `uaps report` aggregates (+ per-rank HW imbalance). Needs only paranoid<=1 — no -a/cap.
 echo "   + MPI per-rank snapshot (uaps, APS-style — each rank counts itself)"
 OMP_NUM_THREADS=$HALF OPENBLAS_NUM_THREADS=$HALF \
-  "$UAPS" run --format json -o out/run_mpi/snap.json -- qenv/bin/mpirun -np 2 \
-    --bind-to core --map-by socket:PE=$HALF ./pw -in si.scf.in > out/qe.snap_mpi.out 2>&1
+  qenv/bin/mpirun -np 2 --bind-to core --map-by socket:PE=$HALF \
+    "$UAPS" run --rank-dir out/run_mpi/uaps_ranks -- ./pw -in si.scf.in > out/qe.snap_mpi.out 2>&1
+"$UAPS" report --format json -o out/run_mpi/snap.json out/run_mpi/uaps_ranks >> out/qe.snap_mpi.out 2>&1
 "$UPAT" report out/run_mpi --collector uaps               > out/uaps.mpi.txt  2>&1
 "$UPAT" report out/run_mpi --collector uaps --format html > out/uaps.mpi.html 2>&1
 
@@ -109,8 +110,9 @@ OMP_NUM_THREADS=1 OPENBLAS_NUM_THREADS=1 \
 echo "   + large per-rank snapshot (uaps, APS-style, $PHYS ranks)"
 rm -rf scratch_big; mkdir -p scratch_big
 OMP_NUM_THREADS=1 OPENBLAS_NUM_THREADS=1 \
-  "$UAPS" run --format json -o out/run_big/snap.json -- qenv/bin/mpirun -np "$PHYS" \
-    --bind-to core ./pw -in si_big.scf.in > out/qe.big.snap.out 2>&1
+  qenv/bin/mpirun -np "$PHYS" --bind-to core \
+    "$UAPS" run --rank-dir out/run_big/uaps_ranks -- ./pw -in si_big.scf.in > out/qe.big.snap.out 2>&1
+"$UAPS" report --format json -o out/run_big/snap.json out/run_big/uaps_ranks >> out/qe.big.snap.out 2>&1
 "$UPAT" report out/run_big --collector uaps               > out/uaps.big.txt  2>&1
 "$UPAT" report out/run_big --collector uaps --format html > out/uaps.big.html 2>&1
 "$UPAT" report out/run_big --collector upat > out/upat.big.txt      2>&1

@@ -1,11 +1,12 @@
 #!/bin/bash
-# Multi-NODE validation of uaps per-rank collection using two containers as two
-# "nodes" — the cross-host behavior that single-node oversubscription can't cover:
-#   * a single mpirun spanning both nodes reinjects uaps into every rank
-#   * ranks on BOTH nodes write snap.<rank>.json; the parent on node0 aggregates
-#     them over a SHARED filesystem  (positive: nranks == total)
-#   * with a NODE-LOCAL rank dir the launcher node only sees its own ranks
-#     (negative: undercount — the regression test for the /tmp -> cwd fix)
+# Multi-NODE validation of uaps's APS-style per-rank collection using two containers
+# as two "nodes" — the cross-host behavior single-node oversubscription can't cover:
+#   * a single mpirun spanning both nodes runs `uaps run` INSIDE each rank
+#     (launcher-agnostic — no flag-parsing, no -x); each writes snap.<rank>.json
+#   * with the results dir on a SHARED filesystem `uaps report` aggregates every
+#     rank across both nodes  (positive: nranks == total)
+#   * with a NODE-LOCAL results dir the launch node only sees its own ranks, and the
+#     short count is DETECTED + warned, not silently undercounted  (negative)
 #
 # Caveats (honest): containers share the host PMU, so HW counters are NOT
 # per-node-independent here (and many sandboxes block perf_event_open in
@@ -58,33 +59,45 @@ sleep 1
 docker exec "$N0" docker ps >/dev/null 2>&1 || { echo "SKIP: docker CLI unusable inside node0"; exit 0; }
 
 val_in() { docker exec "$N0" sh -c "grep -oE '\"key\": \"nranks\"[^}]*\"value\": [0-9]+' '$1' | grep -oE '[0-9]+\$'"; }
-run_uaps() { # <workdir> <out.json> <stderr-file>
-  docker exec -w "$1" \
+# APS form: run uaps INSIDE the spanning mpirun (launcher-agnostic), each rank writes
+# snap.<rank>.json to <rank-dir>, then `uaps report` aggregates. <rank-dir> on the
+# shared mount → all ranks; node-local → only the launch node's ranks (undercount).
+run_aps() { # <rank-dir> <out.json> <stderr-file>
+  docker exec -w "$ROOT/tests/scale/out" \
     -e OPAL_PREFIX="$ROOT/tests/qe/qenv" -e PMIX_MCA_pcompress_base_silence_warning=1 \
     -e PRTE_MCA_plm_rsh_agent="$AGENT" -e PRTE_MCA_plm_ssh_agent="$AGENT" \
-    "$N0" "$UAPS" run --format json -o "$2" -- \
-    "$MPIRUN" --allow-run-as-root --host "$N0:2,$N1:2" -np 4 "$FLOPS" 8000000 >/dev/null 2>"${3:-/dev/null}"
+    "$N0" "$MPIRUN" --allow-run-as-root --host "$N0:2,$N1:2" -np 4 \
+    "$UAPS" run --rank-dir "$1" -- "$FLOPS" 8000000 >/dev/null 2>"$3"
+  docker exec "$N0" "$UAPS" report --format json -o "$2" "$1" >>"$3" 2>&1
 }
 
 pass=0; fail=0
 ok()  { echo "  PASS: $1"; pass=$((pass+1)); }
 bad() { echo "  FAIL: $1"; fail=$((fail+1)); }
 
-echo "== uaps multi-node (2 containers, single spanning mpirun, TCP rendezvous) =="
+echo "== uaps multi-node (2 containers, single spanning mpirun, APS form) =="
 
-# The per-rank rendezvous is TCP (FS-independent), so a NODE-LOCAL cwd (/tmp, which
-# differs per container — no shared filesystem at all) must STILL aggregate every
-# rank across both nodes. This is the case that undercounted with a file rendezvous;
-# it's the headline cross-node test. (Short-count detection when a rank genuinely
-# never reports is covered deterministically by the aggregate.rs unit tests.)
-echo "-- cross-node from a node-local cwd (/tmp), no shared FS — TCP must see all 4 --"
-docker exec "$N0" rm -f /tmp/snap_mn.json 2>/dev/null
-run_uaps /tmp /tmp/snap_mn.json out/mn_pos.err
-nr=$(val_in /tmp/snap_mn.json)
-[ "${nr:-0}" = 4 ] && ok "TCP aggregates all 4 ranks across both nodes (no shared FS)" \
-  || bad "expected nranks=4 across nodes via TCP, got '${nr:-none}'"
+# POSITIVE: results dir on the SHARED mount → every rank across both nodes aggregates.
+echo "-- shared results dir — must aggregate all 4 ranks across both nodes --"
+SH="$ROOT/tests/scale/out/mn_shared"; docker exec "$N0" rm -rf "$SH" 2>/dev/null
+run_aps "$SH" "$ROOT/tests/scale/out/mn_shared.json" out/mn_pos.err
+nr=$(val_in "$ROOT/tests/scale/out/mn_shared.json")
+[ "${nr:-0}" = 4 ] && ok "APS form aggregates all 4 ranks across both nodes (shared dir)" \
+  || bad "expected nranks=4 across nodes, got '${nr:-none}'"
 grep -qi "WARNING: aggregated" out/mn_pos.err \
   && bad "a complete run should NOT warn, but it did" || ok "no false-positive warning on a complete run"
+
+# NEGATIVE: results dir is NODE-LOCAL (/tmp, per-container) → the launch node only
+# sees its own ranks; the short count must be DETECTED + warned, not silent.
+echo "-- node-local results dir (/tmp) — must detect the short count + warn --"
+docker exec "$N0" rm -rf /tmp/mn_nl /tmp/mn_nl.json 2>/dev/null
+run_aps /tmp/mn_nl /tmp/mn_nl.json out/mn_neg.err
+nl=$(val_in /tmp/mn_nl.json)
+[ "${nl:-0}" = 2 ] && ok "node-local dir → only launch-node ranks (nranks=2)" \
+  || bad "expected nranks=2 on node-local dir, got '${nl:-none}'"
+grep -qiE "WARNING: aggregated 2 of 4" out/mn_neg.err \
+  && ok "short count DETECTED + warned (not silent)" \
+  || bad "node-local undercount was SILENT — no warning"
 
 echo "== multinode: $pass passed, $fail failed =="
 [ "$fail" = 0 ]

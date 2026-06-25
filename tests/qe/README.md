@@ -67,15 +67,15 @@ OMP_NUM_THREADS=1 OPENBLAS_NUM_THREADS=1 \
   $UPAT roofline -o out/run_rf1 -- ./pw -in si.scf.in > out/qe.rf1.out
 $UPAT report out/run_rf1 --view roofline-func          > out/roofline_func.txt
 
-# uaps SNAPSHOT for the MPI run — PER-RANK (APS-style): uaps reinjects itself into each
-# rank, so every rank counts its OWN process on its OWN node (per-process — no -a /
-# cap_perfmon needed, just perf_event_paranoid<=1), then aggregates across ranks (+
-# per-rank HW imbalance) over a TCP rendezvous (no shared FS). Write the JSON into the
-# result dir so `upat report --collector uaps` can render it. (uaps's own text report
-# goes to STDERR — the target owns stdout, like `perf stat`.)
+# uaps SNAPSHOT for the MPI run — PER-RANK (APS-style): uaps goes INSIDE the launcher
+# (launcher-agnostic — no flag-parsing, no -x), so every rank counts its OWN process on
+# its OWN node (per-process — no -a / cap_perfmon, just perf_event_paranoid<=1) and
+# writes snap.<rank>.json to a results dir; `uaps report` aggregates it (+ per-rank HW
+# imbalance) into the result dir's snap.json so `upat report --collector uaps` renders it.
 OMP_NUM_THREADS=8 OPENBLAS_NUM_THREADS=8 \
-  $UAPS run --format json -o out/run_mpi/snap.json -- qenv/bin/mpirun -np 2 \
-    --bind-to core --map-by socket:PE=8 ./pw -in si.scf.in > out/qe.snap_mpi.out
+  qenv/bin/mpirun -np 2 --bind-to core --map-by socket:PE=8 \
+    $UAPS run --rank-dir out/run_mpi/uaps_ranks -- ./pw -in si.scf.in > out/qe.snap_mpi.out
+$UAPS report --format json -o out/run_mpi/snap.json out/run_mpi/uaps_ranks
 $UPAT report  out/run_mpi --collector uaps                          > out/uaps.mpi.txt
 ```
 

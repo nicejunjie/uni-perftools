@@ -27,8 +27,8 @@ Build **`uaps`** (Universal Application Performance Snapshot) — a cross-platfo
 
 ```
 uaps-cli      launcher, arg parsing, runs target to completion, prints report;
-                per-rank reinjection + cross-rank aggregation (aggregate.rs) and the
-                TCP per-rank rendezvous (net.rs) for MPI launches
+                APS-style per-rank collection (collect_rank) + cross-rank aggregation
+                (aggregate.rs) + the `uaps report` step for MPI launches
 uaps-core     Collector trait, normalized Metric model, metric-derivation engine
 uaps-collect  backend impls behind the Collector trait:
                 proc  → /proc sampling   (no privileges, works on any Linux)
@@ -124,13 +124,14 @@ PMU events), real macOS/Windows backends, and `attach` for running processes.
   the deep **profile** collector (`upat`) owns sci-lib/MPI *tracing*. They run as
   separate invocations, so there is no double MPI interception. The unified imbalance
   metric is `(max-avg)/max` (matches the profile collector and `core/contract`).
-- **MPI runs are PER-RANK (APS-style), the default for a launcher:** `uaps run -- mpirun`
-  reinjects `uaps` into each rank (`run_per_rank`/`collect_rank` in `uaps-cli`), so the
-  `/proc`+perf collectors count **each rank's own process on its own node** — not the
-  idle launcher — and the parent aggregates across ranks (SUM counts/throughput, MAX
-  wall, MEAN %, ratios re-derived from summed raws) plus per-rank HW imbalance. Per-rank
-  snapshots come back over a **TCP rendezvous** (`net.rs`), so it needs no shared FS and
-  works from any cwd; the PMPI shim still supplies per-rank `mpi_*` timing. `-a` forces
+- **MPI runs are PER-RANK (APS-style), invoked `mpirun -n N uaps ./app`** — uaps is
+  placed INSIDE the launcher (`collect_rank` in `uaps-cli`), so the `/proc`+perf
+  collectors count **each rank's own process on its own node** — not the idle launcher.
+  Launcher-agnostic: each rank reads its rank from the env (no flag-parsing, no `-x`),
+  writes `snap.<rank>.json` (+ PMPI-shim `mpi_*` timing) to a shared results dir; then
+  `uaps report <dir>` aggregates across ranks (SUM counts/throughput, MAX wall, MEAN %,
+  ratios re-derived from summed raws) plus per-rank HW imbalance. There is deliberately
+  no launcher-wrapping form (not portable; two ways to launch confuse users). `-a` forces
   the old node-level (launcher-node, system-wide) path. See the top-level CLAUDE.md for
   the full per-rank invariants.
 - **AMD host:** primary development is on an AMD CPU, but the engine is validated

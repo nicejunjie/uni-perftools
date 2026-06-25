@@ -133,22 +133,21 @@ if [ "$HAVE_MPI" = 1 ]; then
   ok "html mpi: comm-matrix heatmap" "grep -qE \"class=.hm.\" $TMP/o/detail.mpi.html"
   ok "html mpi: size histogram bars" "grep -qE \"class=.bar.\" $TMP/o/detail.mpi.html"
 
-  # uaps snapshot tier: APS-style MPI (auto-detected launcher, mpi.h-free shim)
+  # uaps snapshot tier: APS-style per-rank MPI. uaps is placed INSIDE the launcher
+  # (launcher-agnostic — no flag-parsing, no -x); each rank writes a results dir,
+  # then `uaps report` aggregates it (like aps-report). The PMPI shim supplies the
+  # per-rank mpi_* timing via the mpi.h-free interposer.
   if [ -n "$UAPS" ]; then
-    # uaps writes its report to stderr (the target owns stdout); capture stderr.
-    SOUT=$(OMPI_MCA_rmaps_base_oversubscribe=1 "$UAPS" run -- mpirun --oversubscribe -n 4 "$TMP/m" 2>&1 >/dev/null)
-    ok "uaps: APS MPI section"        "echo \"$SOUT\" | grep -q 'MPI % of runtime'"
-    ok "uaps: MPI time + imbalance"   "echo \"$SOUT\" | grep -q 'MPI time' && echo \"$SOUT\" | grep -q 'MPI imbalance'"
-    ok "uaps: top MPI function"       "echo \"$SOUT\" | grep -qE 'MPI_(Allreduce|Sendrecv|Bcast).*of MPI'"
-
-    # APS-style (launcher-agnostic) two-step: uaps INSIDE the launcher writes a
-    # per-rank results dir, then `uaps report` aggregates it (like aps-report).
     RDIR="$TMP/aps_result"
     OMPI_MCA_rmaps_base_oversubscribe=1 mpirun --oversubscribe -n 4 \
       "$UAPS" run --rank-dir "$RDIR" -- "$TMP/m" >/dev/null 2>&1
-    ok "uaps APS-form: 4 per-rank snaps" "[ \"\$(ls "$RDIR"/snap.*.json 2>/dev/null | wc -l)\" = 4 ]"
-    AOUT=$("$UAPS" report "$RDIR" 2>&1 >/dev/null)
-    ok "uaps APS-form: report aggregates ranks" "echo \"$AOUT\" | grep -qE 'ranks +4'"
+    ok "uaps: 4 per-rank snaps"       "[ \"\$(ls "$RDIR"/snap.*.json 2>/dev/null | wc -l)\" = 4 ]"
+    # uaps report writes its text to stderr (the target owns stdout); capture stderr.
+    SOUT=$("$UAPS" report "$RDIR" 2>&1 >/dev/null)
+    ok "uaps: aggregates 4 ranks"     "echo \"$SOUT\" | grep -qE 'ranks +4'"
+    ok "uaps: APS MPI section"        "echo \"$SOUT\" | grep -q 'MPI % of runtime'"
+    ok "uaps: MPI time + imbalance"   "echo \"$SOUT\" | grep -q 'MPI time' && echo \"$SOUT\" | grep -q 'MPI imbalance'"
+    ok "uaps: top MPI function"       "echo \"$SOUT\" | grep -qE 'MPI_(Allreduce|Sendrecv|Bcast).*of MPI'"
   fi
 fi
 

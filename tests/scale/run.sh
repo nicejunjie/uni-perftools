@@ -1,7 +1,7 @@
 #!/bin/bash
 # Large-scale (oversubscription) validation of uaps PER-RANK collection on a single
 # node. Simulates a many-rank job by oversubscribing the cores, and checks:
-#   A) high rank count: all N ranks reinjected, counted, and aggregated
+#   A) high rank count: all N ranks (uaps inside the launcher), counted + aggregated
 #   B) known imbalance: a skewed workload shows up as cross-rank imbalance
 #   C) homogeneous baseline: a balanced workload shows ~no imbalance
 #   D) robustness: a rank that dies mid-run doesn't sink the whole report
@@ -51,15 +51,23 @@ PHYS=$(lscpu -p=Socket,Core 2>/dev/null | grep -v '^#' | sort -u | wc -l)
 [ "$PHYS" -ge 2 ] 2>/dev/null || PHYS=$CORES
 BAL=$(( PHYS < 16 ? PHYS : 16 ))   # ranks for the bound balanced/skew tests
 
+# APS-form helper: run uaps INSIDE the launcher (launcher-agnostic — no flag-parsing,
+# no -x), then aggregate the per-rank results dir with `uaps report` (like aps-report).
+#   aps <result-dir> <out.json> <n-ranks> <bind-flags> <app> [app-args...]
+aps() {
+  local dir="$1" out="$2" n="$3" bind="$4" app="$5"; shift 5
+  rm -rf "$dir"
+  "$MPIRUN" --oversubscribe $bind -n "$n" "$UAPS" run --rank-dir "$dir" -- "$app" "$@" \
+    >/dev/null 2>"$dir.err"
+  "$UAPS" report --format json -o "$out" "$dir" >>"$dir.err" 2>&1
+}
+
 # --- A) high rank count -------------------------------------------------------
 echo "-- A) $NR ranks (oversubscribed ${NR}/$CORES), homogeneous --"
 t0=$SECONDS
-"$UAPS" run --format json -o out/scale.json -- \
-  "$MPIRUN" $MPIFLAGS -n "$NR" "$APP" "$ITERS" >/dev/null 2>out/scale.err
-rc=$?; dt=$(( SECONDS - t0 ))
-echo "   ${dt}s wall (run + aggregate $NR ranks), exit=$rc"
-grep -iE "per-rank|aggregated" out/scale.err | sed 's/^/   /'
-[ "$rc" = 0 ] && ok "A: exit 0 at $NR ranks" || bad "A: exit $rc"
+aps out/scale.d out/scale.json "$NR" "--bind-to none" "$APP" "$ITERS"
+echo "   $(( SECONDS - t0 ))s wall (collect $NR ranks + report)"
+grep -iE "per-rank|aggregated|WARNING" out/scale.d.err | head -2 | sed 's/^/   /'
 nr=$(val out/scale.json nranks)
 [ "${nr%.*}" = "$NR" ] && ok "A: aggregated all $NR ranks (nranks=$nr)" || bad "A: nranks=$nr expected $NR"
 g=$(val out/scale.json gflops)
@@ -71,12 +79,10 @@ awk "BEGIN{exit !($ipc>0)}" && ok "A: IPC recomputed from summed raws ($ipc)" ||
 # test asserts on is the WORKLOAD's, not the scheduler's. (Unbound/oversubscribed,
 # even "identical" work shows real cpu-time spread — which the tool correctly sees,
 # but that is system jitter, not what these two cases are checking.)
-BIND="--bind-to core"
 
 # --- B) known imbalance (skew: odd ranks 2x work) -----------------------------
 echo "-- B) $BAL ranks bound, SKEWED (odd ranks 2x) — expect imbalance --"
-"$UAPS" run --format json -o out/skew.json -- \
-  "$MPIRUN" --oversubscribe $BIND -n "$BAL" "$APP" "$ITERS" skew >/dev/null 2>out/skew.err
+aps out/skew.d out/skew.json "$BAL" "--bind-to core" "$APP" "$ITERS" skew
 skew_ct=$(val out/skew.json cpu_time_imbalance_pct)
 skew_el=$(val out/skew.json elapsed_imbalance_pct)
 echo "   cpu_time_imbalance=${skew_ct}%  elapsed_imbalance=${skew_el}%"
@@ -85,15 +91,14 @@ awk "BEGIN{exit !($skew_ct>=12)}" && ok "B: 2x skew detected (cpu-time imbalance
 
 # --- C) homogeneous baseline: imbalance must be clearly LESS than the skew case -
 echo "-- C) $BAL ranks bound, homogeneous — expect LESS imbalance than skew --"
-"$UAPS" run --format json -o out/even.json -- \
-  "$MPIRUN" --oversubscribe $BIND -n "$BAL" "$APP" "$ITERS" >/dev/null 2>out/even.err
+aps out/even.d out/even.json "$BAL" "--bind-to core" "$APP" "$ITERS"
 even_ct=$(val out/even.json cpu_time_imbalance_pct)
 echo "   cpu_time_imbalance=${even_ct}%  (skew was ${skew_ct}%)"
 awk "BEGIN{exit !($even_ct < $skew_ct - 8)}" \
   && ok "C: homogeneous (${even_ct}%) clearly below skew (${skew_ct}%) — metric tracks real work" \
   || bad "C: homogeneous ${even_ct}% not clearly below skew ${skew_ct}%"
 
-# --- D) robustness: a rank that exits non-zero / partial does not abort --------
+# --- D) robustness: a rank that dies mid-run does not abort the report ---------
 echo "-- D) a rank aborts mid-run — report still produced --"
 cat > out/flaky.sh <<EOF
 #!/bin/sh
@@ -102,8 +107,7 @@ r=\${OMPI_COMM_WORLD_RANK:-0}
 exec "$APP" "$ITERS"
 EOF
 chmod +x out/flaky.sh
-"$UAPS" run --format json -o out/flaky.json -- \
-  "$MPIRUN" $MPIFLAGS -n 8 out/flaky.sh >/dev/null 2>out/flaky.err
+aps out/flaky.d out/flaky.json 8 "--bind-to none" "$PWD/out/flaky.sh"
 if [ -s out/flaky.json ] && [ -n "$(val out/flaky.json gflops)" ]; then
   ok "D: report produced despite a dead rank ($(val out/flaky.json nranks) ranks aggregated)"
 else

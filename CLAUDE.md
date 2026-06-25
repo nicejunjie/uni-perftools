@@ -9,15 +9,14 @@ commands over a shared analysis core, branded after the vendor tools they descen
 from (made portable). There is **no umbrella/driver command** — run one tier:
 
 - **`uaps`** — Universal Application Performance *Snapshot* (← Intel APS). Cheap,
-  **non-invasive** counter-based bird's-eye view (HWPC + MPI/OpenMP). Like APS it
-  collects **per-rank** — every rank counts ITS OWN process on its OWN node
-  (per-process, needs only `perf_event_paranoid<=1`), aggregated across ranks (+
-  per-rank HW imbalance). Two invocations: the **APS form** `mpirun -n N uaps ./app`
-  (uaps inside the launcher — launcher-agnostic, writes `./uaps_result/snap.<rank>.json`)
-  then `uaps report uaps_result`; or the one-command **wrapper** `uaps run -- mpirun
-  -n N ./app` (reinjects per rank, TCP rendezvous, no shared FS — but launcher-specific
-  arg-parsing). `-a` gives the old node-level system-wide mode (launcher node only).
-  Rust, `collectors/snapshot/`.
+  **non-invasive** counter-based bird's-eye view (HWPC + MPI/OpenMP). Invoked exactly
+  like APS — `mpirun -n N uaps ./app` places uaps INSIDE the launcher, so every rank
+  counts ITS OWN process on its OWN node (per-process, needs only
+  `perf_event_paranoid<=1`) and writes `./uaps_result/snap.<rank>.json`; then `uaps
+  report uaps_result` aggregates across ranks (+ per-rank HW imbalance), like
+  `aps-report`. This is **launcher-agnostic** (no launcher flag-parsing, no `-x` — each
+  rank just reads its rank from the env). `-a` gives the old node-level system-wide mode
+  (launcher node only). Rust, `collectors/snapshot/`.
 - **`upat`** — Universal Performance Analysis *Tool* (← CrayPAT). Deep profiler:
   sci-lib tracing (BLAS/LAPACK/FFTW + Fortran/C MPI/IO), statistical + event-based
   sampling, per-function roofline, heap. C `.so` + `core/cli/upat`.
@@ -33,7 +32,6 @@ left one in the result dir.
 ```sh
 mpirun -n 4 uaps ./app          # snapshot, APS form (launcher-agnostic) → ./uaps_result/
 uaps report uaps_result         #   aggregate the per-rank dir (like aps-report)
-uaps run -- mpirun -n 4 ./app   # snapshot, one-command wrapper (reinject + TCP, no shared FS)
 upat run -- ./app               # deep profile + report (bare `upat ./app` auto-inserts `run`)
 upat report  RESULT             # re-render a result dir (text); --format html for HTML
 upat report  RESULT --detail mpi  # per-facility detail (comm matrix, per-shape calls)
@@ -102,14 +100,14 @@ bash tests/scale/multinode.sh                   # uaps cross-NODE (2 containers,
 ```
 
 `tests/scale/run.sh` simulates a large parallel job on one node: it oversubscribes
-the cores with a synthetic per-rank workload to exercise `uaps`'s per-rank
-reinjection + cross-rank aggregation at high rank counts, validates that a skewed
-workload shows up as cross-rank imbalance (and a balanced one doesn't), and that a
-dead rank doesn't sink the report. `tests/scale/multinode.sh` covers the cross-host
-behavior single-node can't: two containers act as two "nodes" with one `mpirun`
-spanning both (via a docker-exec launch agent, no sshd) — it asserts the parent
-aggregates ranks from BOTH nodes via the TCP rendezvous, from a node-local cwd (no
-shared FS) — the case a file rendezvous undercounted.
+the cores with a synthetic per-rank workload (uaps INSIDE the launcher) to exercise
+`uaps`'s per-rank collection + `uaps report` aggregation at high rank counts,
+validates that a skewed workload shows up as cross-rank imbalance (and a balanced one
+doesn't), and that a dead rank doesn't sink the report. `tests/scale/multinode.sh`
+covers the cross-host behavior single-node can't: two containers act as two "nodes"
+with one `mpirun` spanning both (via a docker-exec launch agent, no sshd) — it asserts
+`uaps report` aggregates ranks from BOTH nodes when the results dir is on the shared
+mount, and DETECTS+warns the short count when it's node-local (the undercount case).
 Containers share the host PMU, so this validates orchestration, not per-node HW
 accuracy. The aggregation MATH is covered deterministically by unit tests in
 `crates/uaps-cli/src/aggregate.rs` (sum/max/mean, ratios recomputed from summed
@@ -180,32 +178,23 @@ These are load-bearing for production scale — don't regress them when editing:
   `mem_dram_reads` / `l2_fill_rsp_src.dram_io_*`), not demand-only fills — mixing them
   mis-places memory-bound kernels ~3×. See `_whole_program_point` (`htmlrep.py`),
   `ROOFLINE_EVENTS` (`core/cli/upat`), and `derive.rs`.
-- **uaps MPI is per-rank** (APS model): every rank counts ITS OWN process on its OWN
-  node (per-process; `collect_rank` in `uaps-cli`), so HW metrics cover **every node**,
-  not just the launcher's. Aggregation (`aggregate.rs`) reduces raws by policy (SUM
-  counts/throughput, MAX wall/threads, MEAN %) then re-runs `derive()` on the summed
-  raws for exact ratios — keep that split (don't average ratios). `-a` forces the old
-  node-level path. **Two invocations** reach the same per-rank collection:
-  - **APS form, launcher-agnostic** (preferred): `mpirun -n N uaps ./app` places uaps
-    inside the launcher; each rank detects its rank from the env (`rank_from_env`,
-    matching `contract.rank_from_env`) and writes `snap.<rank>.json` to a shared results
-    dir (`./uaps_result` or `--rank-dir`), then `uaps report <dir>` aggregates (like
-    `aps-report`). NO launcher flag-parsing and NO `-x` env injection — works with any
-    launcher. Needs a shared FS for the results dir (standard, like APS/CrayPAT).
-  - **Wrapper, one-command** (convenience): `uaps run -- mpirun -n N ./app` reinjects
-    `uaps` per rank (`run_per_rank`) and collects over a **TCP rendezvous** (`net.rs`):
-    the parent binds a listener, advertises `host:port` via `UAPS_COLLECT`, each rank
-    sends its snapshot back (TCP = reliable, no shared FS, any cwd). But it IS
-    launcher-specific — `find_program_index` must parse the launcher's flags to reinject,
-    and `-x` propagation is OpenMPI-specific; an unknown launcher/flag falls back to
-    node-level with a warning. (A shared-FS file rendezvous breaks from a node-local cwd;
-    funnelling through the launcher's stderr is unreliable — mpirun splits structured
-    output.)
-
-  Each rank records its MPI world size, so if fewer ranks report than the job had
-  (crash, or a firewall blocking the TCP port) the aggregator **warns on the short
-  count** (`short_count_warning`) instead of silently undercounting. Both forms
-  validated across two real machines (Zen 5 + Zen 4); see `tests/scale/multinode.sh`.
+- **uaps MPI is per-rank, APS-style (`mpirun -n N uaps ./app`)** — the ONE invocation;
+  there is deliberately no launcher-wrapping form (that needs launcher-specific flag
+  parsing + `-x` propagation; not portable, and two ways to launch confuse users).
+  uaps is placed INSIDE the launcher, so every rank counts ITS OWN process on its OWN
+  node (per-process; `collect_rank` in `uaps-cli`), detects its rank from the env
+  (`rank_from_env`, matching `contract.rank_from_env` — so it's **launcher-agnostic**:
+  no flag-parsing, no `-x`), and writes `snap.<rank>.json` to a shared results dir
+  (`./uaps_result`, or `--rank-dir`). `uaps report <dir>` then aggregates (like
+  `aps-report`): reduce raws by policy (SUM counts/throughput, MAX wall/threads, MEAN %)
+  then re-run `derive()` on the summed raws for exact ratios — keep that split (don't
+  average ratios) — plus per-rank HW imbalance. The results dir must be on a **shared
+  filesystem** (standard for this tool class: APS/CrayPAT). Each rank records its MPI
+  world size, so if fewer ranks report than the job had (crash, or a node-local results
+  dir the launch node can't fully see) the aggregator **warns on the short count**
+  (`short_count_warning` in `aggregate.rs`) instead of silently undercounting. `-a`
+  gives the old node-level (launcher-node only) system-wide path. Validated across two
+  real machines (Zen 5 + Zen 4); see `tests/scale/multinode.sh`.
 - **Per-process counting misses wrapped/forked work** (no `inherit`): `numactl`/
   `taskset`/shell wrappers measure the idle parent (each rank's app must `exec`, not
   fork). The C profiler suppresses its report write in `fork`-without-`exec` children

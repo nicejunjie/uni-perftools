@@ -27,11 +27,10 @@ folds it in automatically.
 
 ## Usage
 ```
-# snapshot, per-rank (APS-style) — each rank counts its OWN process on its own node:
-mpirun -n 4 uaps ./app             #   APS form: uaps INSIDE the launcher (launcher-agnostic),
-uaps report uaps_result            #   then aggregate the per-rank dir (like `aps-report`)
-uaps run -- mpirun -n 4 ./app      #   one-command wrapper alternative: TCP rendezvous, no shared FS
-uaps run -a -- mpirun -n 4 ./app   #   old node-level (system-wide) variant — launcher node only
+# snapshot, per-rank (APS-style) — uaps INSIDE the launcher (works with ANY launcher):
+mpirun -n 4 uaps ./app             #   each rank counts its OWN process on its own node
+uaps report uaps_result            #   aggregate the per-rank dir (like `aps-report`)
+uaps run -a -- mpirun -n 4 ./app   #   node-level (system-wide) alternative — launcher node only
 upat run -- ./app                  # deep profile + report
 upat run -- mpirun -n 4 ./app
 upat report  RESULT                # re-render (text); --format html for the HTML report
