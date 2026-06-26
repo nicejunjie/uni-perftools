@@ -386,14 +386,21 @@ def roofline_view(snap, profile, out):
     # achieved DRAM bandwidth + their ratio).
     out.append("    measured application:  %.1f GFLOP/s   %.1f GB/s DRAM   AI %.3f FLOP/byte"
                % (g, bw_gbs, ai))
-    c = roofline.classify(points[0]["ai"], points[0]["gflops"], pk, "dp")
-    if c:
-        if c[2] == "latency":
-            out.append("    whole program sits at %.0f%% of the DP ceiling — far below the "
-                       "roofline: latency/overhead/idle-bound, not compute- or bandwidth-bound."
-                       % c[1])
-        else:
-            out.append("    whole program is %s-bound at %.0f%% of the DP ceiling." % (c[2], c[1]))
+    if _m(snap, "fp_mixed_precision"):
+        # AMD/ARM: FP count mixes SP+DP with no split, and the compute roof is
+        # precision-dependent — place the point against BOTH roofs, don't guess one.
+        v = roofline.precision_unknown_summary(points[0]["ai"], points[0]["gflops"], pk)
+        if v:
+            out.append("    whole program: %s" % v)
+    else:
+        c = roofline.classify(points[0]["ai"], points[0]["gflops"], pk, "dp")
+        if c:
+            if c[2] == "latency":
+                out.append("    whole program sits at %.0f%% of the DP ceiling — far below the "
+                           "roofline: latency/overhead/idle-bound, not compute- or bandwidth-bound."
+                           % c[1])
+            else:
+                out.append("    whole program is %s-bound at %.0f%% of the DP ceiling." % (c[2], c[1]))
 
 
 # ------------------------------------------------ per-function roofline (B)

@@ -141,9 +141,10 @@ pub fn aggregate(dir: &Path) -> Result<(Snapshot, usize)> {
     // Keys that are per-rank representative, not additive: take the MAX across
     // ranks (job wall = slowest rank; threads/rank = busiest rank; world size is
     // identical on every rank), not the sum.
-    // `gpu_offload` is a per-rank boolean (1 = this rank drove a GPU); MAX makes the
-    // aggregate flag the job whenever ANY rank offloaded to a GPU.
-    const MAX_KEYS: &[&str] = &["elapsed_time", "max_threads", "mpi_world_size", "gpu_offload"];
+    // `gpu_offload` / `fp_mixed_precision` are per-rank booleans; MAX keeps them 1
+    // (a flag) rather than summing to a rank count when folded across ranks.
+    const MAX_KEYS: &[&str] =
+        &["elapsed_time", "max_threads", "mpi_world_size", "gpu_offload", "fp_mixed_precision"];
 
     let mut agg = Snapshot::default();
     // Rank count is always available (the imbalance denominator and the report's

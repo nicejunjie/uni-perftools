@@ -129,6 +129,11 @@ impl Collector for RawPmuCollector {
             Vendor::Amd => {
                 if let (Some(flops), true) = (get("fp"), elapsed > 0.0) {
                     out.push(gflops_metric(flops, elapsed));
+                    // fp_ret_sse_avx_ops counts FLOPs element-weighted (so the RATE is
+                    // exact regardless of precision), but exposes no SP/DP split — and
+                    // the compute roof IS precision-dependent (FP32 peak ~2x FP64). Flag
+                    // it so the report places the point against BOTH roofs.
+                    out.push(mixed_precision_metric());
                 }
                 for (role, key, label) in [
                     ("fills_all", "mem_fills_all", "Demand fills (all sources)"),
@@ -168,6 +173,9 @@ impl Collector for RawPmuCollector {
                 let flops = get("fp_scale").unwrap_or(0.0) + get("fp_fixed").unwrap_or(0.0);
                 if flops > 0.0 && elapsed > 0.0 {
                     out.push(gflops_metric(flops, elapsed));
+                    // FP_SCALE/FP_FIXED are width-aware element-ops covering SP+DP with
+                    // no split — same precision-unknown roofline caveat as AMD.
+                    out.push(mixed_precision_metric());
                 }
                 // last-level read misses ≈ demand fills from DRAM; derive turns
                 // this into DRAM bandwidth (× cache line) + the memory-bound model.
@@ -178,6 +186,18 @@ impl Collector for RawPmuCollector {
             Vendor::Other => {}
         }
         Ok(out)
+    }
+}
+
+/// Marks the FP throughput as a precision-MIXED count (SP+DP together, not
+/// separable) — true for AMD `fp_ret_sse_avx_ops` and ARM `fp_*_ops_spec`. The
+/// report uses it to place the roofline point against both the FP64 and FP32 roofs
+/// (the compute ceiling is precision-dependent) rather than guessing one.
+fn mixed_precision_metric() -> Metric {
+    Metric {
+        key: "fp_mixed_precision",
+        label: "FP precision mix (SP/DP not separable)".into(),
+        value: MetricValue::Int { value: 1, unit: "" },
     }
 }
 

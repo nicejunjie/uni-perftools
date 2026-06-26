@@ -430,6 +430,45 @@ def classify(ai, gflops, pk, prec="dp"):
     return ceil, pct, bound
 
 
+def precision_unknown_summary(ai, gflops, pk):
+    """Roofline verdict for a MIXED-precision FP count (AMD `fp_ret_sse_avx_ops`,
+    ARM `fp_*_ops_spec`): the counter is element-weighted so the achieved GFLOP/s and
+    AI are EXACT, but it exposes no SP/DP split — and the compute roof is
+    precision-dependent (FP32 peak ~2x FP64). So we can't pick one roof; classify
+    against BOTH and report what is / isn't precision-dependent. The bandwidth
+    (slanted) roof does NOT depend on precision, and the FP64/FP32 ridge points sit
+    at AI and 2·AI, so the ambiguity is confined to the band between them. Returns a
+    one-line verdict string, or None if ceilings are unavailable."""
+    dp = peak_compute(pk, "dp")
+    sp = peak_compute(pk, "sp") or dp
+    bw = (pk or {}).get("peak_bw_gbs")
+    if not dp or not bw or ai <= 0:
+        return None
+    ridge_dp, ridge_sp = dp / bw, sp / bw
+    cdp = classify(ai, gflops, pk, "dp")
+    csp = classify(ai, gflops, pk, "sp")
+    if not cdp or not csp:
+        return None
+    if ai < ridge_dp:
+        # left of both ridges → bound by the (precision-independent) bandwidth roof
+        _, pct, bound = cdp
+        if bound == "latency":
+            return ("%.0f%% of the bandwidth roof — latency/overhead/idle-bound, not compute- "
+                    "or bandwidth-bound (precision-independent here)." % pct)
+        return ("memory-bandwidth-bound at %.0f%% of the DRAM roof — precision-independent "
+                "(the bandwidth roof does not depend on FP precision)." % pct)
+    if ai >= ridge_sp:
+        # right of both ridges → compute-bound either way; only %-of-peak differs
+        return ("compute-bound — %.0f%% of the FP64 ceiling / %.0f%% of the FP32 ceiling. "
+                "SP/DP mix is not measurable on this CPU, so %%-of-peak is a range; run `upat` "
+                "for the precision split." % (cdp[1], csp[1]))
+    # between the two ridges → the BOUND itself depends on precision
+    return ("AI %.2f sits between the FP64 and FP32 ridge points (%.2f / %.2f): compute-bound "
+            "if this code is FP64, memory-bandwidth-bound if FP32 — FP precision is not "
+            "measurable on this CPU, so run `upat` (sci-lib trace / sampling) for the split."
+            % (ai, ridge_dp, ridge_sp))
+
+
 def ascii_plot(points, pk, prec="dp", width=52, height=14):
     """A log-log roofline as ASCII art: the bandwidth roof ('/') rising to the
     compute ceiling ('‾'), with measured points marked. Returns indented lines

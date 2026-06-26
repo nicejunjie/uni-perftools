@@ -178,6 +178,19 @@ These are load-bearing for production scale — don't regress them when editing:
   `mem_dram_reads` / `l2_fill_rsp_src.dram_io_*`), not demand-only fills — mixing them
   mis-places memory-bound kernels ~3×. See `_whole_program_point` (`htmlrep.py`),
   `ROOFLINE_EVENTS` (`core/cli/upat`), and `derive.rs`.
+- **Roofline precision is unknowable from the AMD/ARM FP counter — place against BOTH
+  roofs.** AMD `fp_ret_sse_avx_ops` and ARM `fp_*_ops_spec` are element-weighted, so the
+  achieved GFLOP/s and AI are exact, but they expose no SP/DP split — and the *compute*
+  roof is precision-dependent (FP32 peak ≈ 2× FP64). The collector tags these with a
+  `fp_mixed_precision` metric (`raw_pmu.rs`; Intel is exempt — it counts DP umasks, so
+  its point is unambiguously FP64). The renderer (`roofline.precision_unknown_summary`,
+  used by `viewpoints.roofline_view` + `htmlrep`) then classifies against both roofs:
+  the bandwidth (slanted) roof is precision-independent, and the FP64/FP32 ridge points
+  sit at AI and 2·AI, so the ambiguity is confined to the band between them — **left of
+  the FP64 ridge → memory-bound either way; right of the FP32 ridge → compute-bound either
+  way (report %-of-peak as a bracket); between → the bound itself flips with precision**
+  (flag it, defer to `upat` sci-lib trace / sampling for the real split). Never silently
+  pick one roof.
 - **uaps MPI is per-rank, APS-style (`mpirun -n N uaps ./app`)** — the ONE invocation;
   there is deliberately no launcher-wrapping form (that needs launcher-specific flag
   parsing + `-x` propagation; not portable, and two ways to launch confuse users).

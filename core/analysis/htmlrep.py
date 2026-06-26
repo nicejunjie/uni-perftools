@@ -579,8 +579,18 @@ def build(result_dir, manifest, snap, profile, suite, detail=None, threshold=0.1
                          "roofline would misrepresent this job. Profile the device kernels with a "
                          "GPU tool (nsight / rocprof / VTune).</p></div>")
         elif pk:
-            right.append("<div class='sec fig'><h2 style='text-align:left'>Roofline</h2>%s</div>"
-                         % _roofline_svg(pk, _whole_program_point(snap)))
+            pt = _whole_program_point(snap)
+            fig = ("<div class='sec fig'><h2 style='text-align:left'>Roofline</h2>%s"
+                   % _roofline_svg(pk, pt))
+            # AMD/ARM: FP count can't be split SP/DP and the compute roof is
+            # precision-dependent — the SVG already draws both roofs; add the bracketed
+            # verdict so %-of-peak isn't read off the wrong one.
+            if val("fp_mixed_precision") and pt:
+                v = roofline.precision_unknown_summary(pt["ai"], pt["gflops"], pk)
+                if v:
+                    fig += ("<p class='note'>FP64/FP32 not separable on this CPU — point shown "
+                            "against both roofs. %s</p>" % E(v))
+            right.append(fig + "</div>")
 
         # --- MPI bird's-eye (snapshot shim), if this was an MPI run → right ---
         if val("mpi_time") is not None:
