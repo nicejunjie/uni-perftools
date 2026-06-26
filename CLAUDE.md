@@ -100,6 +100,7 @@ bash tests/scale/multinode.sh                   # uaps cross-NODE (2 containers,
 bash tests/scale/aggregate_scale.sh [N]         # `uaps report` at 10k–100k ranks (synthetic)
 bash tests/scale/hybrid.sh                      # hybrid MPI×OpenMP (per-thread counting)
 bash tests/scale/cross_mpi.sh                   # launcher-agnostic: 7 rank schemes + MPICH ABI
+bash tests/scale/instr_crosscheck.sh            # hw_instructions vs `perf stat` ground truth
 ```
 
 `tests/scale/run.sh` simulates a large parallel job on one node: it oversubscribes
@@ -134,6 +135,15 @@ Three deeper opt-in tests (heavier; not in `make test`):
   drives each of the 7 rank schemes by env injection. [A] (auto-skips without a local
   MPICH) builds the PMPI shim against MPICH's different ABI (int vs pointer handles,
   Hydra/`PMI_RANK`) and proves interposition + aggregation still work.
+- `tests/scale/instr_crosscheck.sh` — validates `hw_instructions` against `perf stat -e
+  instructions` (one counter, `inherit=1`: all threads, NO multiplexing/scaling — the
+  ground truth). Result: uaps matches perf to **within ~1% across T=1..16 threads** — the
+  ×~6.7 multiplexing extrapolation in `pmu.rs` (groups share AMD's 6 PMCs) is unbiased.
+  The only residual is a few-% **start-latency** loss on SHORT parallel regions (counter
+  opened after the thread starts), shown by the duration sweep (short 0.2s → 0.94, long
+  5s → 0.998) and gone by ~1s. NB: an earlier "~15% undercount" was a methodology artifact
+  — it compared N×1 vs 1×N MPI layouts (N×1 carries N× the per-rank MPI runtime, inflating
+  the reference), not a measurement vs ground truth. Auto-skips without a working `perf`.
 
 CI mirrors this: `.github/workflows/ci.yml` (build + all e2e on x86 and arm; runners
 have no PMU, so perf-gated checks self-skip) and the HWPC structural sweep.
