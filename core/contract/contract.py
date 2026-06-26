@@ -30,8 +30,11 @@ def prof_glob(result_dir):
 def rank_from_env(env=None):
     """Global MPI rank from the launcher environment, else 0."""
     e = env if env is not None else os.environ
+    # Same vars, SAME ORDER as the Rust `rank_from_env` (uaps-collect/src/lib.rs)
+    # and the C profiler (collectors/profile/src/core/util.c) — all three must agree
+    # or the tiers disagree on a process's rank. PALS_RANKID covers HPE/Cray PALS.
     for k in ("OMPI_COMM_WORLD_RANK", "PMI_RANK", "MV2_COMM_WORLD_RANK", "PMIX_RANK",
-              "SLURM_PROCID", "ALPS_APP_PE"):
+              "SLURM_PROCID", "PALS_RANKID", "ALPS_APP_PE"):
         if e.get(k):
             return int(e[k])
     return 0

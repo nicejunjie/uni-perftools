@@ -97,6 +97,9 @@ cargo test format_bytes                         # a single test by name
 bash tests/run.sh                               # suite-level e2e (both commands)
 bash tests/scale/run.sh                         # uaps per-rank at scale (oversubscription)
 bash tests/scale/multinode.sh                   # uaps cross-NODE (2 containers, one mpirun)
+bash tests/scale/aggregate_scale.sh [N]         # `uaps report` at 10k–100k ranks (synthetic)
+bash tests/scale/hybrid.sh                      # hybrid MPI×OpenMP (per-thread counting)
+bash tests/scale/cross_mpi.sh                   # launcher-agnostic: 7 rank schemes + MPICH ABI
 ```
 
 `tests/scale/run.sh` simulates a large parallel job on one node: it oversubscribes
@@ -112,6 +115,25 @@ Containers share the host PMU, so this validates orchestration, not per-node HW
 accuracy. The aggregation MATH is covered deterministically by unit tests in
 `crates/uaps-cli/src/aggregate.rs` (sum/max/mean, ratios recomputed from summed
 raws, truncated-file skip) and the launcher arg-parser in `main.rs`.
+
+Three deeper opt-in tests (heavier; not in `make test`):
+- `tests/scale/aggregate_scale.sh [N]` — the honest "thousands of ranks" test:
+  collection is per-rank-independent, so only `uaps report` is N-dependent. It
+  synthesizes N rank snapshots (default 20k; validated to 100k → 0.63s, 151MB, ~1.5
+  KB/rank) with an analytically-known SUM/MAX/MEAN/imbalance pattern plus the
+  at-scale failure modes (truncated/dead ranks, short world size, mixed arch/host),
+  and asserts the reduction is exact AND cost stays bounded (<16 KB/rank resident).
+- `tests/scale/hybrid.sh` — hybrid MPI×OpenMP. Validates that per-thread counting
+  sums ALL OpenMP threads (R×T vs (R·T)×1 same total → same aggregate counts), that
+  `gflops` is spin-immune while `/proc`-cputime thread imbalance is BLIND under
+  GOMP's default active-spin (use `OMP_WAIT_POLICY=passive`), `max_threads`, the
+  sub-interval thread-miss floor, and per-rank MPI time under FUNNELED.
+- `tests/scale/cross_mpi.sh` — launcher-agnostic + cross-MPI. [B0] asserts the rank-var
+  list (set + precedence) is IDENTICAL across the Rust (`lib.rs`), C (`util.c`), and
+  Python (`contract.py`) detectors — the guard against tier-disagreement drift. [B1-3]
+  drives each of the 7 rank schemes by env injection. [A] (auto-skips without a local
+  MPICH) builds the PMPI shim against MPICH's different ABI (int vs pointer handles,
+  Hydra/`PMI_RANK`) and proves interposition + aggregation still work.
 
 CI mirrors this: `.github/workflows/ci.yml` (build + all e2e on x86 and arm; runners
 have no PMU, so perf-gated checks self-skip) and the HWPC structural sweep.

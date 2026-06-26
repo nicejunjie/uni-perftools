@@ -50,11 +50,15 @@ pub fn raise_fd_limit() {}
 /// Must stay in sync with `core/contract/contract.py:rank_from_env` and the C
 /// profiler's `util.c` — a launcher missing here makes ranks collide on rank 0.
 pub fn rank_from_env() -> Option<i64> {
+    // SAME ORDER as the C profiler (`util.c`) and `contract.py:rank_from_env`: when a
+    // job exports more than one of these (e.g. MVAPICH2-over-PMIx sets MV2_* and
+    // PMIX_RANK), all three tiers must pick the SAME one or they disagree on a
+    // process's rank. MV2 before PMIX matches the C/Python order.
     const KEYS: [&str; 7] = [
         "OMPI_COMM_WORLD_RANK",
         "PMI_RANK",
-        "PMIX_RANK",
         "MV2_COMM_WORLD_RANK",
+        "PMIX_RANK",
         "SLURM_PROCID",
         "PALS_RANKID",
         "ALPS_APP_PE",

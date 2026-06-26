@@ -1,3 +1,5 @@
 # Regenerable scale-test artifacts: the compiled synthetic workload and the
 # per-run JSON/err outputs. The workload source + run.sh are tracked.
 out/
+# Locally-built MPICH (cross_mpi.sh Part A) — a ~600MB build tree, never tracked.
+mpich/
