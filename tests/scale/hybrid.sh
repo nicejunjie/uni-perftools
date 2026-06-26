@@ -134,6 +134,13 @@ if [ "$HWPC" = 0 ]; then skp "[2] no HW counters"; else
   fi
   if ge "$tp" "$ta"; then ok "[2] active spin MASKS thread imbalance (${ta}% vs true ${tp}% passive)"
   else echo "  NOTE: active thread_imbalance ${ta}% >= passive ${tp}% (idle spin did not mask here)"; fi
+  # The fix: uaps must DETECT the masking risk and flag it under active (so the report
+  # caveats the imbalance as a lower bound), and NOT flag it under passive (trustworthy).
+  if grep -q omp_spin_wait out/h2_act.d/snap.0.json && ! grep -q omp_spin_wait out/h2_pas.d/snap.0.json; then
+    ok "[2] uaps flags omp_spin_wait under active, not passive (imbalance marked a lower bound)"
+  else
+    bad "[2] omp_spin_wait flag wrong: active=$(grep -c omp_spin_wait out/h2_act.d/snap.0.json) passive=$(grep -c omp_spin_wait out/h2_pas.d/snap.0.json)"
+  fi
 fi
 
 # ============================================================================

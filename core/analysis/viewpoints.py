@@ -892,3 +892,10 @@ def threading_view(snap, out):
         out.append("    %-22s %.0f%%" % ("parallel efficiency", cores / threads * 100.0))
     if timb is not None:
         out.append("    %-22s %.0f%%  ((max-avg)/max of per-thread time)" % ("thread imbalance", timb))
+        # Active-spin makes idle OpenMP threads busy-wait, so their /proc CPU time reads
+        # as "busy" and this imbalance is only a LOWER BOUND (often ~0 when it's really
+        # large). We can't separate spin from work in cputime — flag it instead.
+        if _m(snap, "omp_spin_wait"):
+            out.append("      ⚠ OpenMP active-spin (OMP_WAIT_POLICY≠passive): idle threads busy-wait,")
+            out.append("        so this is a LOWER BOUND — re-run with OMP_WAIT_POLICY=passive for the")
+            out.append("        true imbalance (and parallel efficiency above).")

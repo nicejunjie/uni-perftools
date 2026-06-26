@@ -126,8 +126,8 @@ Three deeper opt-in tests (heavier; not in `make test`):
   and asserts the reduction is exact AND cost stays bounded (<16 KB/rank resident).
 - `tests/scale/hybrid.sh` — hybrid MPI×OpenMP. Validates that per-thread counting
   sums ALL OpenMP threads (R×T vs (R·T)×1 same total → same aggregate counts), that
-  `gflops` is spin-immune while `/proc`-cputime thread imbalance is BLIND under
-  GOMP's default active-spin (use `OMP_WAIT_POLICY=passive`), `max_threads`, the
+  `gflops` is spin-immune while `/proc`-cputime thread imbalance is masked under
+  active-spin — now DETECTED + flagged (`omp_spin_wait`), `max_threads`, the
   sub-interval thread-miss floor, and per-rank MPI time under FUNNELED.
 - `tests/scale/cross_mpi.sh` — launcher-agnostic + cross-MPI. [B0] asserts the rank-var
   list (set + precedence) is IDENTICAL across the Rust (`lib.rs`), C (`util.c`), and
@@ -267,6 +267,17 @@ These are load-bearing for production scale — don't regress them when editing:
   and the shared renderer (`roofline_view`/`htmlrep`) **suppresses the roofline** with a
   "profile the device separately" note (and leads the insights with it). Best-effort +
   sticky (checked each sample until found); a GPU job that exits between samples is missed.
+- **OpenMP active-spin masks thread imbalance — detect + flag, don't trust silently.**
+  Thread imbalance comes from per-thread CPU time (`/proc/<pid>/task/*/stat`), which can't
+  tell real work from a busy-WAIT. Under a non-passive `OMP_WAIT_POLICY` (libgomp's default
+  once threads are bound — the HPC norm) idle threads spin at barriers, so every thread
+  looks busy and `(max-avg)/max` reads ~0 even when work is badly skewed (validated: 1.3%
+  shown vs 40.6% true). The spin IS CPU time, so the metric can't be fixed — instead
+  `omp::runtime_loaded` (maps has libgomp/libomp/libiomp5) + `spin_masks_imbalance`
+  (`OMP_WAIT_POLICY` ≠ `passive`) push an `omp_spin_wait` flag (gated on `max_threads>1`);
+  the report then marks the imbalance + parallel-efficiency as a LOWER BOUND and tells the
+  user to re-run with `OMP_WAIT_POLICY=passive`. `gflops`/instruction counts are unaffected
+  (spin is integer work). Same `/proc`-during-sampling pattern as GPU detection.
 - **Per-process counting misses wrapped/forked work** (no `inherit`): `numactl`/
   `taskset`/shell wrappers measure the idle parent (each rank's app must `exec`, not
   fork). The C profiler suppresses its report write in `fork`-without-`exec` children

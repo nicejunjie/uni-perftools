@@ -78,6 +78,7 @@ fn collect_process(
     // roofline numbers misrepresent it (the real compute is on the device). Detect
     // it from /proc while the child lives (sticky — once seen, stop checking).
     let mut gpu: Option<&'static str> = None;
+    let mut omp_loaded = false;
     let status = loop {
         if let Some(status) = child.try_wait().context("failed polling target process")? {
             break status;
@@ -87,6 +88,9 @@ fn collect_process(
         }
         if gpu.is_none() {
             gpu = uaps_collect::gpu::detect(target.pid);
+        }
+        if !omp_loaded {
+            omp_loaded = uaps_collect::omp::runtime_loaded(target.pid);
         }
         std::thread::sleep(interval);
     };
@@ -107,6 +111,7 @@ fn collect_process(
             value: MetricValue::Int { value: 1, unit: "" },
         });
     }
+    push_omp_spin_flag(&mut snapshot, omp_loaded);
     Ok((snapshot, status))
 }
 
@@ -534,6 +539,7 @@ fn run(
     // exited between the exit check and the read).
     let interval = Duration::from_millis(interval_ms.max(1));
     let mut gpu: Option<&'static str> = None;
+    let mut omp_loaded = false;
     let status = loop {
         if let Some(status) = child.try_wait().context("failed polling target process")? {
             break status;
@@ -543,6 +549,9 @@ fn run(
         }
         if gpu.is_none() {
             gpu = uaps_collect::gpu::detect(target.pid);
+        }
+        if !omp_loaded {
+            omp_loaded = uaps_collect::omp::runtime_loaded(target.pid);
         }
         std::thread::sleep(interval);
     };
@@ -566,6 +575,7 @@ fn run(
             value: MetricValue::Int { value: 1, unit: "" },
         });
     }
+    push_omp_spin_flag(&mut snapshot, omp_loaded);
     // Wrapper/fork heads-up: a near-idle measured process usually means the target
     // forked its real work instead of exec'ing it (uaps then saw the idle parent).
     if let Some(w) = wrapper_warning(
@@ -642,6 +652,23 @@ fn wrapper_warning(
         ))
     } else {
         None
+    }
+}
+
+/// Flag `omp_spin_wait` when an OpenMP run under a non-passive wait policy may be
+/// masking thread imbalance (idle threads busy-wait → all threads look busy). Gated on
+/// a real multithreaded run (`max_threads > 1`); the renderer then marks the reported
+/// thread imbalance as a lower bound. The wait policy comes from the env uaps shares
+/// with the child (`OMP_WAIT_POLICY`).
+fn push_omp_spin_flag(snapshot: &mut Snapshot, omp_loaded: bool) {
+    let policy = std::env::var("OMP_WAIT_POLICY").ok();
+    let multithreaded = snapshot.numeric("max_threads").map(|t| t > 1.0).unwrap_or(false);
+    if multithreaded && uaps_collect::omp::spin_masks_imbalance(omp_loaded, policy.as_deref()) {
+        snapshot.push(Metric {
+            key: "omp_spin_wait",
+            label: "OpenMP active-spin (imbalance may be under-reported)".into(),
+            value: MetricValue::Int { value: 1, unit: "" },
+        });
     }
 }
 

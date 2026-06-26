@@ -98,6 +98,14 @@ def suite_insights(snap, profile):
     if numa is not None and numa >= 10:
         out.append("NUMA remote access %.0f%% — bind threads/memory (first-touch / numactl)." % numa)
 
+    # OpenMP active-spin caveat: idle threads busy-wait, so per-thread CPU time can't
+    # reveal imbalance (every thread looks busy) and parallel efficiency reads high even
+    # when work is skewed. The measured imbalance is a lower bound — say so.
+    if _snap(metrics, "omp_spin_wait"):
+        out.append("OpenMP active-spin (OMP_WAIT_POLICY≠passive): idle threads busy-wait, so the "
+                   "measured thread imbalance / parallel efficiency are a LOWER BOUND — re-run "
+                   "with OMP_WAIT_POLICY=passive to measure them accurately.")
+
     # Oversubscription / idle parallelism: many threads but few cores kept busy means
     # workers spin idle (OpenMP) rather than doing work — it surfaces as do_spin /
     # futex / poll dominating the sampling profile and buries the real hotspots.

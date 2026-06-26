@@ -143,8 +143,10 @@ pub fn aggregate(dir: &Path) -> Result<(Snapshot, usize)> {
     // identical on every rank), not the sum.
     // `gpu_offload` / `fp_mixed_precision` are per-rank booleans; MAX keeps them 1
     // (a flag) rather than summing to a rank count when folded across ranks.
-    const MAX_KEYS: &[&str] =
-        &["elapsed_time", "max_threads", "mpi_world_size", "gpu_offload", "fp_mixed_precision"];
+    const MAX_KEYS: &[&str] = &[
+        "elapsed_time", "max_threads", "mpi_world_size",
+        "gpu_offload", "fp_mixed_precision", "omp_spin_wait",
+    ];
 
     let mut agg = Snapshot::default();
     // Rank count is always available (the imbalance denominator and the report's

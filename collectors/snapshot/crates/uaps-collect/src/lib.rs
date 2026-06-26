@@ -12,6 +12,9 @@ pub use mpi::MpiCollector;
 // GPU-offload detection from the CPU side (reads /proc; a no-op off Linux).
 pub mod gpu;
 
+// Detect OpenMP active-spin that can mask thread imbalance (reads /proc + env).
+pub mod omp;
+
 // Linux-only backends; other platforms use the stubs in `fallback`.
 #[cfg(target_os = "linux")]
 pub mod pmudb;
