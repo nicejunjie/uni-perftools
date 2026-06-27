@@ -583,6 +583,7 @@ fn run(
         snapshot.numeric("hw_instructions"),
         snapshot.numeric("elapsed_time"),
         gpu.is_some(),
+        snapshot.numeric("io_wait"),
     ) {
         eprintln!("{w}");
     }
@@ -623,13 +624,14 @@ fn run(
 /// `numactl`/`taskset`, or an env wrapper) that FORKS its real command instead of
 /// exec'ing it: uaps counts only the per-process tree (no `inherit`), so it measured
 /// the idle parent and missed the work in the child pid. `None` when the work looks
-/// real, the run is too short to judge, or GPU offload already explains the idle CPU.
-/// Pure + testable. (A genuinely idle / sleeping process trips it too — the note says so.)
+/// real, the run is too short to judge, or GPU offload / I/O wait already explains the
+/// idle CPU. Pure + testable. (A genuinely idle / sleeping process trips it too.)
 fn wrapper_warning(
     cpu_time: Option<f64>,
     instructions: Option<f64>,
     elapsed: Option<f64>,
     gpu: bool,
+    io_wait: Option<f64>,
 ) -> Option<String> {
     if gpu {
         return None; // GPU offload already explains near-zero CPU work
@@ -637,6 +639,11 @@ fn wrapper_warning(
     let elapsed = elapsed?;
     if elapsed < 0.1 {
         return None; // too short to distinguish a wrapper from startup
+    }
+    // An I/O-bound process is idle on-CPU because it's BLOCKED in I/O, not because a
+    // wrapper forked the real work away — don't cry wrapper when I/O wait explains it.
+    if io_wait.unwrap_or(0.0) > 0.3 * elapsed {
+        return None;
     }
     let cpu = cpu_time.unwrap_or(0.0);
     // <1% core-time utilization: a forking wrapper's parent just fork+waits. A real
@@ -721,6 +728,7 @@ fn collect_rank(
             snapshot.numeric("hw_instructions"),
             snapshot.numeric("elapsed_time"),
             snapshot.numeric("gpu_offload").is_some(),
+            snapshot.numeric("io_wait"),
         ) {
             eprintln!("{w}");
         }
@@ -803,19 +811,21 @@ mod tests {
 
     #[test]
     fn wrapper_warning_flags_idle_parent_but_not_real_work() {
-        // forking wrapper: 0.002s CPU over 5s wall, ~no instructions → warn
-        let w = wrapper_warning(Some(0.002), Some(0.0), Some(5.0), false).expect("should warn");
+        // forking wrapper: 0.002s CPU over 5s wall, ~no instructions, no I/O wait → warn
+        let w = wrapper_warning(Some(0.002), Some(0.0), Some(5.0), false, None).expect("should warn");
         assert!(w.contains("near-zero CPU work") && w.contains("exec"), "{w}");
         // a real compute app: busy CPU → no warning
-        assert!(wrapper_warning(Some(4.8), Some(9e10), Some(5.0), false).is_none());
+        assert!(wrapper_warning(Some(4.8), Some(9e10), Some(5.0), false, None).is_none());
         // perf disabled (no instructions) but CPU genuinely busy → still no warning
-        assert!(wrapper_warning(Some(4.8), None, Some(5.0), false).is_none());
+        assert!(wrapper_warning(Some(4.8), None, Some(5.0), false, None).is_none());
         // billions of retired instructions veto the note even if CPU-time looks low
-        assert!(wrapper_warning(Some(0.01), Some(8e9), Some(5.0), false).is_none());
+        assert!(wrapper_warning(Some(0.01), Some(8e9), Some(5.0), false, None).is_none());
         // GPU offload already explains the idle CPU → suppressed
-        assert!(wrapper_warning(Some(0.002), Some(0.0), Some(5.0), true).is_none());
+        assert!(wrapper_warning(Some(0.002), Some(0.0), Some(5.0), true, None).is_none());
+        // genuinely I/O-bound (idle on CPU because blocked in I/O) → NOT a wrapper, suppressed
+        assert!(wrapper_warning(Some(0.002), Some(0.0), Some(5.0), false, Some(4.5)).is_none());
         // too short to judge → no warning
-        assert!(wrapper_warning(Some(0.0), Some(0.0), Some(0.05), false).is_none());
+        assert!(wrapper_warning(Some(0.0), Some(0.0), Some(0.05), false, None).is_none());
     }
 }
 

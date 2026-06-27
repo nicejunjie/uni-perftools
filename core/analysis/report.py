@@ -146,15 +146,17 @@ def _render_snapshot(snap, out):
 
     elapsed = val("elapsed_time") or 0
 
-    def _rate(k):
-        b = val(k)
-        if not b or not elapsed or elapsed <= 0:
+    def _bw(b, secs):
+        if not b or not secs or secs <= 0:
             return None
-        r = b / elapsed
+        r = b / secs
         for unit, div in (("GB/s", 1e9), ("MB/s", 1e6), ("KB/s", 1e3)):
             if r >= div:
                 return "%.1f %s" % (r / div, unit)
         return "%.0f B/s" % r
+
+    def _rate(k):
+        return _bw(val(k), elapsed)
 
     io = []
     for k, lbl in [("disk_read", "disk read"), ("disk_write", "disk write"),
@@ -194,6 +196,15 @@ def _render_snapshot(snap, out):
                 else:
                     notes.append("of %.0f%% off-CPU (rest non-I/O idle)" % (off * 100))
             out.append("    %-26s %s  (%s)" % ("I/O wait (est.)", disp("io_wait"), "; ".join(notes)))
+            # I/O-ACTIVE bandwidth = bytes ÷ time actually in I/O. For a mixed compute+I/O
+            # run the per-stream rates above (÷ elapsed) understate the device speed; this
+            # recovers it. Shown only when I/O wait is well under the run (else == avg rate).
+            if w and w < 0.8 * elapsed:
+                tot = (val("io_read") or 0) + (val("io_write") or 0)  # logical = NFS-reliable
+                act = _bw(tot, w)
+                if act:
+                    out.append("    %-26s %s  (logical, over %.1fs of I/O wait)"
+                               % ("I/O-active rate", act, w))
 
 
 def render(result_dir, fmt="text", view="all", collector="upat", detail=None, threshold=0.1):
