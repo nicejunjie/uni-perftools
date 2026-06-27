@@ -136,22 +136,33 @@ def roofline_spec():
     return ";".join(chans) if any(ch.startswith("fp,") for ch in chans) else None
 
 
+# Multi-node launchers that need explicit env propagation and that we do NOT handle —
+# warn for these (their ranks won't see LD_PRELOAD/UPAT_*). A bare `./app` or a wrapper
+# is handled fine by the `env` fallback, so it must NOT warn.
+_UNSUPPORTED_LAUNCHERS = {"aprun", "jsrun", "lrun", "prun", "mpiexec.hydra", "runjob", "srun.x"}
+
+
 def scoped(cmd, env_vars):
-    """Scope env to the TARGET only (keep it out of the snapshot collector)."""
+    """Return (argv, child_env): argv carries the launcher's env-propagation flags, and
+    child_env is the environment to run it under (None = inherit unchanged). NOTE: srun's
+    `--export` is a COMMA-separated list, so a comma/semicolon-laden value (e.g.
+    UPAT_ROOFLINE_SPEC) inlined there is truncated on every rank — instead put the vars in
+    the child ENVIRONMENT and let `--export=ALL` forward the inherited env intact."""
     launcher = os.path.basename(cmd[0]) if cmd else ""
     kv = ["%s=%s" % (k, v) for k, v in env_vars.items()]
     if launcher in ("mpirun", "mpiexec", "orterun"):
         inj = []
         for x in kv:
-            inj += ["-x", x]
-        return [cmd[0]] + inj + cmd[1:]
+            inj += ["-x", x]  # one argv element per var → embedded commas are preserved
+        return [cmd[0]] + inj + cmd[1:], None
     if launcher == "srun":
-        # srun propagates env to ranks via --export (ALL keeps the inherited env).
-        return [cmd[0], "--export=ALL," + ",".join(kv)] + cmd[1:]
-    if launcher:
-        sys.stderr.write("[upat] warning: unrecognized launcher '%s' — env (LD_PRELOAD/"
-                         "UPAT_*) may not propagate to ranks\n" % launcher)
-    return ["env"] + kv + cmd
+        child = dict(os.environ)
+        child.update(env_vars)  # values with commas survive (not parsed as a list)
+        return [cmd[0], "--export=ALL"] + cmd[1:], child
+    if launcher in _UNSUPPORTED_LAUNCHERS:
+        sys.stderr.write("[upat] warning: launcher '%s' is not specially handled — env "
+                         "(LD_PRELOAD/UPAT_*) may not propagate to its ranks\n" % launcher)
+    return ["env"] + kv + cmd, None
 
 
 def do_collect(args):
@@ -184,7 +195,7 @@ def do_collect(args):
 
     # profile only — upat injects via LD_PRELOAD. The snapshot tier is the
     # separate `uaps` command; run it on its own (cost tiers, not combined).
-    full = scoped(args.cmd, env_vars)
+    full, child_env = scoped(args.cmd, env_vars)
 
     json.dump({"schema_version": contract.SCHEMA_VERSION, "command": args.cmd,
                "collectors": ["profile"]},
@@ -192,7 +203,7 @@ def do_collect(args):
 
     sys.stderr.write("[upat] collecting: %s\n" % " ".join(args.cmd))
     try:
-        rc = subprocess.run(full).returncode
+        rc = subprocess.run(full, env=child_env).returncode
     except FileNotFoundError:
         sys.stderr.write("upat: cannot exec %s\n" % full[0])
         sys.exit(127)
@@ -274,9 +285,9 @@ def main():
         # wins; otherwise auto — a deep profile if one was recorded, else the snapshot.
         coll = args.collector or ("upat" if contract.prof_glob(result) else "uaps")
         args.collector = coll
-        if args.outdir and args.format in ("text", "html"):
+        if args.outdir and args.format in ("text", "html", "json"):
             os.makedirs(args.outdir, exist_ok=True)
-            ext = "html" if args.format == "html" else "txt"
+            ext = {"html": "html", "json": "json"}.get(args.format, "txt")
             name = ("detail.%s.%s" % (args.detail, ext) if args.detail
                     else "%s.%s" % (coll, ext))
             path = os.path.join(args.outdir, name)

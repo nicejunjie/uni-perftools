@@ -165,10 +165,16 @@ def suite_insights(snap, profile):
                    % (lib_f * 100, top["name"], eff))
 
     if not out:
-        if core_pct is not None and core_pct < 50:
-            out.append("CPU utilization is low (%.0f%% of cores) with no single dominant "
-                       "hotspot — the run is latency- or idle-bound; look at thread activity "
-                       "and synchronization rather than per-function tuning." % core_pct)
+        # Use PER-THREAD on-CPU fraction (cores busy ÷ threads), NOT node-relative
+        # cpu_core_pct (cores_used/ncpu) — a fully-busy single-thread or per-rank process
+        # has cpu_core_pct ≈ 1/ncpu and would falsely read "idle". Only meaningful
+        # per-process (aggregate sums cores_used vs MAX threads), so gate on that.
+        thr = threads or 1
+        on_cpu = (cores_used / thr) if cores_used else 0.0
+        if not is_aggregate and on_cpu < 0.5:
+            out.append("Threads mostly off-CPU (~%.0f%% on-CPU) with no dominant hotspot — the run "
+                       "is wait/latency-bound; look at I/O, synchronization, or sleep, not "
+                       "per-function tuning." % (on_cpu * 100))
         else:
             out.append("No dominant bottleneck detected; the run looks reasonably balanced and efficient.")
     return out

@@ -121,7 +121,16 @@ def _render_snapshot(snap, out):
         out.append("    %-26s %s" % ("Avg CPU frequency", disp("cpu_freq_ghz")))
     if disp("cpu_core_pct"):
         cu = val("cpu_cores_used")
-        extra = " (%.1f cores busy)" % cu if cu else ""
+        nr = int(val("nranks") or 1)
+        # In an aggregate cpu_cores_used is SUMMED across ranks while cpu_core_pct is the
+        # per-rank MEAN — so the cores-busy is a job total, not "% of this line". Label it
+        # so "4% (100 cores busy)" can't be misread as one rank using 100 cores.
+        if cu and nr > 1:
+            extra = " (avg per rank; %.0f cores busy summed across %d ranks)" % (cu, nr)
+        elif cu:
+            extra = " (%.1f cores busy)" % cu
+        else:
+            extra = ""
         out.append("    %-26s %s%s" % ("Physical core utilization", disp("cpu_core_pct"), extra))
     if disp("ipc"):
         out.append("    %-26s %s" % ("IPC (instructions/cycle)", disp("ipc")))

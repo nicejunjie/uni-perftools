@@ -497,13 +497,17 @@ def build(result_dir, manifest, snap, profile, suite, detail=None, threshold=0.1
 
     if do_uaps and snap:
         # --- hero metric tiles (big numbers, severity-coloured where actionable) ---
+        # Under GPU offload the host FP counters are near-zero and misleading (the roofline
+        # is suppressed for the same reason), so don't show a red "FP throughput / X% of
+        # peak" tile that contradicts the rest of the report.
+        gpu_off = bool(val("gpu_offload"))
         fp_eff = None
-        if val("gflops") and pk and pk.get("peak_gflops"):
+        if not gpu_off and val("gflops") and pk and pk.get("peak_gflops"):
             fp_eff = val("gflops") / pk["peak_gflops"] * 100.0
         heroes = []
         if disp("elapsed_time"):
             heroes.append(_hero("elapsed", disp("elapsed_time")))
-        if val("gflops") is not None:
+        if not gpu_off and val("gflops") is not None:
             heroes.append(_hero("FP throughput", "%.1f" % val("gflops"), "GFLOP/s",
                                 _status("fp_eff", fp_eff), viewpoints.define("GFLOP/s")))
         if disp("cpu_freq_ghz"):

@@ -907,6 +907,11 @@ def threading_view(snap, out):
     # Node CPU utilization is already reported in the snapshot/microarch sections.
     if _m(snap, "system_wide"):
         return
+    # Same for a `uaps report` AGGREGATE: cpu_cores_used/active_threads are SUMMED across
+    # ranks while max_threads is MAX (one rank), so pairing them gives "active 32 of 4 /
+    # efficiency 800%". Per-process threading isn't representative across ranks — skip it.
+    if (_m(snap, "nranks") or 1) > 1:
+        return
     threads = _m(snap, "max_threads")
     if not threads or threads < 2:
         return

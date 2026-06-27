@@ -66,9 +66,27 @@ static void reg_del(void *plan)
     pthread_rwlock_wrlock(&reg_lock);
     if (reg_cap) {
         size_t mask = reg_cap - 1, i = pmix(plan) & mask;
-        while (reg[i].used) {
-            if (reg[i].plan == plan) { reg[i].used = 0; reg_len--; break; }
-            i = (i + 1) & mask;
+        while (reg[i].used && reg[i].plan != plan) i = (i + 1) & mask;
+        if (reg[i].used && reg[i].plan == plan) {
+            reg_len--;
+            /* Backward-shift deletion (Knuth 6.4 Algorithm R, forward probe): refill the
+             * gap so no live entry's linear-probe chain is severed. A plain `used=0`
+             * leaves a hole, and reg_get/reg_put stop at the first empty slot — so a
+             * still-live plan that collided and probed PAST the deleted slot becomes
+             * unfindable, and its fftw_execute()s get misattributed to the bare row. */
+            size_t j = i, k;
+            for (;;) {
+                reg[i].used = 0;
+                do {
+                    j = (j + 1) & mask;
+                    if (!reg[j].used) { pthread_rwlock_unlock(&reg_lock); return; }
+                    k = pmix(reg[j].plan) & mask;   /* home slot of the entry at j */
+                    /* keep scanning while entry-at-j must NOT move into the gap i
+                     * (its home k lies in the open span (i, j] cyclically) */
+                } while ((i <= j) ? (i < k && k <= j) : (k > i || k <= j));
+                reg[i] = reg[j];
+                i = j;
+            }
         }
     }
     pthread_rwlock_unlock(&reg_lock);

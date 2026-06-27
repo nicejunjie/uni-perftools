@@ -172,7 +172,11 @@ pub fn read_values(leader: &mut File, n: usize) -> Option<GroupRead> {
 }
 
 struct Group {
-    leader: File,
+    /// Leader perf fd. Dropped to `None` once the group dies (thread exited) so its fds
+    /// (and the member fds) are CLOSED — otherwise dead groups leak fds for the whole run
+    /// and a thread-churning target hits EMFILE. `last`/`coverage` retain what `read_sums`
+    /// needs, so closing the fds is lossless.
+    leader: Option<File>,
     _members: Vec<File>,
     /// Last successful scaled read. Counters are cumulative, so the newest read
     /// supersedes the previous one; a thread that has since exited keeps this
@@ -223,7 +227,7 @@ fn open_group(spec: &[EventCfg], pid: libc::pid_t, cpu: i32) -> Option<Group> {
     unsafe {
         sys::ioctls::ENABLE(lfd, sys::bindings::PERF_IOC_FLAG_GROUP);
     }
-    Some(Group { leader, _members: members, last: None, coverage: 0.0, dead: false })
+    Some(Group { leader: Some(leader), _members: members, last: None, coverage: 0.0, dead: false })
 }
 
 /// Manages a set of counter groups replicated across every thread of a target.
@@ -300,7 +304,12 @@ impl ThreadGroups {
                 if group.dead {
                     continue;
                 }
-                match read_values(&mut group.leader, sizes[gi]) {
+                // Read via the Option (the borrow ends before we may null it out below).
+                let res = match group.leader.as_mut() {
+                    Some(l) => read_values(l, sizes[gi]),
+                    None => None,
+                };
+                match res {
                     Some(r) => {
                         group.last = Some(r.vals);
                         group.coverage = r.coverage;
@@ -319,6 +328,8 @@ impl ThreadGroups {
                     None => {
                         if group.last.is_some() {
                             group.dead = true;
+                            group.leader = None;     // close the leader fd
+                            group._members.clear();  // close the member fds
                         }
                     }
                 }

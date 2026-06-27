@@ -99,7 +99,9 @@ ok "dedicated MPI table"        "echo \"$OUT\" | grep -q 'MPI (communication)'"
 ok "MPI_Allreduce has GB/s"     "echo \"$OUT\" | grep -q MPI_Allreduce"
 # (max-avg)/max for ranks [20,10,10,10]: avg 12.5, max 20 -> 37.5%
 ok "dgemm imbalance 37.5% (20 vs 10)" "echo \"$OUT\" | grep -E ' dgemm_ ' | grep -qE '37\.5%'"
-ok "no GB/s in compute table"   "echo \"$OUT\" | sed -n '/Compute/,/MPI (comm/p' | grep -qv 'GB/s'"
+# NOTE: must be `! … | grep -q` — `grep -qv` is a false-green (passes as soon as ANY one
+# line lacks the pattern, so a leaked GB/s column never trips it).
+ok "no GB/s in compute table"   "! echo \"$OUT\" | sed -n '/Compute/,/MPI (comm/p' | grep -q 'GB/s'"
 
 # --- Fortran MPI bindings (mpi_*_): Fortran codes call these, not the C ABI ---
 if command -v mpif90 >/dev/null 2>&1; then
