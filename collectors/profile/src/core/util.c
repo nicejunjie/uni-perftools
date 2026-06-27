@@ -49,9 +49,19 @@ static const char *const RANK_ENV[] = {
 
 static const char *rank_env_value(void)
 {
+    /* Match the Rust (uaps) and Python (contract) detectors: SKIP a var that is unset,
+     * empty, or not a valid integer, and fall through to the next key. A launcher that
+     * exports e.g. OMPI_COMM_WORLD_RANK="" alongside a real SLURM_PROCID must not make
+     * every rank parse as 0 here while the other two tiers pick SLURM — that divergence
+     * would collide all ranks on prof.0.json and disagree with uaps/contract. */
     for (int i = 0; RANK_ENV[i]; i++) {
         const char *r = getenv(RANK_ENV[i]);
-        if (r) return r;
+        if (r && *r) {
+            char *end;
+            (void)strtol(r, &end, 10);
+            if (end != r && *end == '\0')
+                return r;
+        }
     }
     return NULL;
 }

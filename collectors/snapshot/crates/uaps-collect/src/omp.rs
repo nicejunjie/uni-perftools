@@ -24,25 +24,25 @@ pub fn runtime_loaded(pid: u32) -> bool {
 
 /// Decide whether active-spin may be masking thread imbalance, given that an OpenMP
 /// runtime is loaded, the value of `OMP_WAIT_POLICY`, whether threads are bound, and
-/// whether libomp's `KMP_BLOCKTIME=infinite` is set. `passive` makes idle threads sleep
-/// (never a risk); `active` always spins; UNSET is the subtle case — libgomp spins
-/// indefinitely only when threads are bound (a short, sleeping spin otherwise), and
-/// LLVM/Intel libomp spins forever under `KMP_BLOCKTIME=infinite` regardless of binding.
-/// So an unset, unbound, non-infinite-blocktime run shows accurate imbalance and must
-/// NOT be flagged. Pure + testable.
+/// whether the runtime is configured to spin indefinitely regardless of binding
+/// (`runtime_forces_spin`: libgomp `GOMP_SPINCOUNT=infinite`, or LLVM/Intel libomp
+/// `KMP_BLOCKTIME=infinite`). `passive` makes idle threads sleep (never a risk); `active`
+/// always spins; UNSET is the subtle case — libgomp spins indefinitely only when threads
+/// are bound (a short, sleeping spin otherwise). So an unset, unbound, non-forced run
+/// shows accurate imbalance and must NOT be flagged. Pure + testable.
 pub fn spin_masks_imbalance(
     omp_loaded: bool,
     wait_policy: Option<&str>,
     threads_bound: bool,
-    kmp_infinite: bool,
+    runtime_forces_spin: bool,
 ) -> bool {
     if !omp_loaded {
         return false;
     }
     match wait_policy.map(|p| p.trim().to_ascii_lowercase()).as_deref() {
-        Some("passive") => false, // libomp passive also forces blocktime 0 → overrides
+        Some("passive") => false, // passive forces blocktime/spincount to 0 → overrides
         Some("active") => true,
-        _ => threads_bound || kmp_infinite,
+        _ => threads_bound || runtime_forces_spin,
     }
 }
 

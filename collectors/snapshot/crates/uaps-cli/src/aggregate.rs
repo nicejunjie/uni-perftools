@@ -146,7 +146,10 @@ pub fn aggregate(dir: &Path) -> Result<(Snapshot, usize)> {
     const MAX_KEYS: &[&str] = &[
         "elapsed_time", "max_threads", "mpi_world_size",
         "gpu_offload", "fp_mixed_precision", "omp_spin_wait",
-        "io_wait", "io_wait_samples", // worst rank's I/O-wait + its sample count
+        // worst rank's I/O-wait; io_wait_samples is MAX'd too but (being a different
+        // rank's max) is only consumed in single-process mode — the aggregate render/
+        // insight paths gate it out, so the cross-rank pairing is never read.
+        "io_wait", "io_wait_samples",
     ];
 
     let mut agg = Snapshot::default();
@@ -274,14 +277,24 @@ fn node_participation(
             split.join(", ")
         ));
     }
-    if arch_counts.len() > 1 && has_roofline {
+    // Mixed-arch warning: count only RESOLVED CPU models. `node_arch` falls back to the
+    // bare ISA (`x86`/`arm64`) or `unknown` when the pmu-events DB is missing on a node,
+    // so a DB-less but physically-identical node would otherwise read as a 2nd "model" and
+    // false-alarm. A node with a fallback arch has no roofline anyway (DB missing →
+    // partial_hwpc_warning already covers it), so excluding it here can't hide a real mix.
+    let resolved: BTreeSet<&str> = arch_counts
+        .keys()
+        .filter(|a| !matches!(**a, "x86" | "arm64" | "unknown"))
+        .cloned()
+        .collect();
+    if resolved.len() > 1 && has_roofline {
         out.push(format!(
             "uaps: WARNING: ranks span {} different CPU models ({}) — the aggregated roofline / \
              GFLOPS / top-down MIX heterogeneous FLOP+bandwidth ceilings, so the single job-level \
              roofline point is not physically meaningful. Group ranks by node type and compare \
              per-arch instead.",
-            arch_counts.len(),
-            arch_counts.keys().cloned().collect::<Vec<_>>().join(", ")
+            resolved.len(),
+            resolved.iter().cloned().collect::<Vec<_>>().join(", ")
         ));
     }
     out
@@ -310,12 +323,25 @@ fn partial_hwpc_warning(hwpc_ranks: usize, generic_ranks: usize, n: usize) -> Op
                  FP+memory work (an idle or I/O-bound run produces none)."
             ))
         }
-    } else {
+    } else if generic_ranks < n {
+        // Some ranks have NO counters at all (not even generic) → a real config gap on
+        // those nodes (paranoid/DB), and the FP/roofline job totals genuinely undercount.
         Some(format!(
-            "uaps: WARNING: vendor HW counters on only {hwpc_ranks} of {n} ranks — the other {} \
-             contribute NO FP/roofline/top-down, so those job totals UNDERCOUNT. Likely the pmu-events \
-             DB is missing OR perf_event_paranoid > 1 on those nodes (stage pmu-events alongside the \
-             binary or set UAPS_PMU_EVENTS, and ensure perf_event_paranoid ≤ 1).",
+            "uaps: WARNING: vendor HW counters on only {hwpc_ranks} of {n} ranks, and {} have NONE at \
+             all — those contribute NO FP/roofline/top-down, so those job totals UNDERCOUNT. Likely the \
+             pmu-events DB is missing OR perf_event_paranoid > 1 on those nodes (stage pmu-events \
+             alongside the binary or set UAPS_PMU_EVENTS, and ensure perf_event_paranoid ≤ 1).",
+            n - generic_ranks
+        ))
+    } else {
+        // Every rank has generic counters (so perf works on all), but {missing} produced no
+        // vendor metric. That is NOT necessarily a misconfig: a master/worker or I/O/
+        // coordinator rank legitimately does no FP+memory work. Note it, don't cry undercount.
+        Some(format!(
+            "uaps: NOTE: {} of {n} ranks reported no FP/roofline/top-down — either those ranks did \
+             little/no FP+memory work (e.g. I/O / coordinator ranks), or the pmu-events DB didn't \
+             resolve vendor events there. The FP/roofline job totals reflect only the {hwpc_ranks} \
+             ranks that did FP work.",
             n - hwpc_ranks
         ))
     }
@@ -554,8 +580,12 @@ mod tests {
         // complete (all 4 have vendor HWPC) → no warning
         assert!(partial_hwpc_warning(4, 4, 4).is_none());
         assert!(partial_hwpc_warning(0, 0, 0).is_none());
-        // partial: 2 of 4 have vendor counters → undercount warning mentioning paranoid
-        let w = partial_hwpc_warning(2, 4, 4).expect("should warn");
+        // partial, but ALL ranks have generic counters (2 just did no FP — master/worker)
+        // → soft NOTE, NOT an undercount/paranoid alarm
+        let wn = partial_hwpc_warning(2, 4, 4).expect("should warn");
+        assert!(wn.contains("NOTE") && wn.contains("coordinator") && !wn.contains("UNDERCOUNT"), "{wn}");
+        // partial AND some ranks have NO counters at all (generic=2<4) → real undercount/paranoid
+        let w = partial_hwpc_warning(2, 2, 4).expect("should warn");
         assert!(w.contains("only 2 of 4 ranks") && w.contains("UNDERCOUNT"), "{w}");
         assert!(w.contains("paranoid"), "should mention paranoid: {w}");
         // none have vendor BUT generic counters worked → DB-missing OR no-FP-work (not paranoid)

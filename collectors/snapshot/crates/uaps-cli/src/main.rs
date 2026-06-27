@@ -584,6 +584,7 @@ fn run(
         snapshot.numeric("elapsed_time"),
         gpu.is_some(),
         snapshot.numeric("io_wait"),
+        Some(snapshot.numeric("io_read").unwrap_or(0.0) + snapshot.numeric("io_write").unwrap_or(0.0)),
     ) {
         eprintln!("{w}");
     }
@@ -632,6 +633,7 @@ fn wrapper_warning(
     elapsed: Option<f64>,
     gpu: bool,
     io_wait: Option<f64>,
+    io_bytes: Option<f64>,
 ) -> Option<String> {
     if gpu {
         return None; // GPU offload already explains near-zero CPU work
@@ -641,8 +643,11 @@ fn wrapper_warning(
         return None; // too short to distinguish a wrapper from startup
     }
     // An I/O-bound process is idle on-CPU because it's BLOCKED in I/O, not because a
-    // wrapper forked the real work away — don't cry wrapper when I/O wait explains it.
-    if io_wait.unwrap_or(0.0) > 0.3 * elapsed {
+    // wrapper forked the real work away — don't cry wrapper when I/O explains it. io_wait
+    // (D-state, leader-thread only) catches single-threaded I/O; the process-aggregate
+    // /proc/<pid>/io byte volume also catches I/O done on a worker/async thread (which
+    // io_wait misses), so a few MB of real I/O vetoes the note too.
+    if io_wait.unwrap_or(0.0) > 0.3 * elapsed || io_bytes.unwrap_or(0.0) > 4e6 {
         return None;
     }
     let cpu = cpu_time.unwrap_or(0.0);
@@ -680,13 +685,17 @@ fn push_omp_spin_flag(snapshot: &mut Snapshot, omp_loaded: bool) {
         .unwrap_or(false)
         || nonempty("OMP_PLACES")
         || nonempty("GOMP_CPU_AFFINITY");
-    // libomp (LLVM/Intel) spins forever under KMP_BLOCKTIME=infinite, regardless of binding.
-    let kmp_infinite = std::env::var("KMP_BLOCKTIME")
+    // Runtimes that spin forever regardless of binding: libomp KMP_BLOCKTIME=infinite,
+    // libgomp GOMP_SPINCOUNT=infinite.
+    let forces_spin = std::env::var("KMP_BLOCKTIME")
         .map(|v| v.trim().eq_ignore_ascii_case("infinite"))
-        .unwrap_or(false);
+        .unwrap_or(false)
+        || std::env::var("GOMP_SPINCOUNT")
+            .map(|v| v.trim().eq_ignore_ascii_case("infinite"))
+            .unwrap_or(false);
     let multithreaded = snapshot.numeric("max_threads").map(|t| t > 1.0).unwrap_or(false);
     if multithreaded
-        && uaps_collect::omp::spin_masks_imbalance(omp_loaded, policy.as_deref(), bound, kmp_infinite)
+        && uaps_collect::omp::spin_masks_imbalance(omp_loaded, policy.as_deref(), bound, forces_spin)
     {
         snapshot.push(Metric {
             key: "omp_spin_wait",
@@ -746,6 +755,7 @@ fn collect_rank(
             snapshot.numeric("elapsed_time"),
             snapshot.numeric("gpu_offload").is_some(),
             snapshot.numeric("io_wait"),
+            Some(snapshot.numeric("io_read").unwrap_or(0.0) + snapshot.numeric("io_write").unwrap_or(0.0)),
         ) {
             eprintln!("{w}");
         }
@@ -828,21 +838,24 @@ mod tests {
 
     #[test]
     fn wrapper_warning_flags_idle_parent_but_not_real_work() {
-        // forking wrapper: 0.002s CPU over 5s wall, ~no instructions, no I/O wait → warn
-        let w = wrapper_warning(Some(0.002), Some(0.0), Some(5.0), false, None).expect("should warn");
+        // forking wrapper: 0.002s CPU over 5s wall, ~no instructions, no I/O wait/volume → warn
+        let w = wrapper_warning(Some(0.002), Some(0.0), Some(5.0), false, None, None).expect("warn");
         assert!(w.contains("near-zero CPU work") && w.contains("exec"), "{w}");
         // a real compute app: busy CPU → no warning
-        assert!(wrapper_warning(Some(4.8), Some(9e10), Some(5.0), false, None).is_none());
+        assert!(wrapper_warning(Some(4.8), Some(9e10), Some(5.0), false, None, None).is_none());
         // perf disabled (no instructions) but CPU genuinely busy → still no warning
-        assert!(wrapper_warning(Some(4.8), None, Some(5.0), false, None).is_none());
+        assert!(wrapper_warning(Some(4.8), None, Some(5.0), false, None, None).is_none());
         // billions of retired instructions veto the note even if CPU-time looks low
-        assert!(wrapper_warning(Some(0.01), Some(8e9), Some(5.0), false, None).is_none());
+        assert!(wrapper_warning(Some(0.01), Some(8e9), Some(5.0), false, None, None).is_none());
         // GPU offload already explains the idle CPU → suppressed
-        assert!(wrapper_warning(Some(0.002), Some(0.0), Some(5.0), true, None).is_none());
-        // genuinely I/O-bound (idle on CPU because blocked in I/O) → NOT a wrapper, suppressed
-        assert!(wrapper_warning(Some(0.002), Some(0.0), Some(5.0), false, Some(4.5)).is_none());
+        assert!(wrapper_warning(Some(0.002), Some(0.0), Some(5.0), true, None, None).is_none());
+        // genuinely I/O-bound (D-state) → NOT a wrapper, suppressed
+        assert!(wrapper_warning(Some(0.002), Some(0.0), Some(5.0), false, Some(4.5), None).is_none());
+        // threaded/async I/O: leader not in D so io_wait≈0, but process moved real bytes
+        // (process-aggregate /proc/<pid>/io) → suppressed, not a wrapper
+        assert!(wrapper_warning(Some(0.002), Some(0.0), Some(5.0), false, None, Some(50e6)).is_none());
         // too short to judge → no warning
-        assert!(wrapper_warning(Some(0.0), Some(0.0), Some(0.05), false, None).is_none());
+        assert!(wrapper_warning(Some(0.0), Some(0.0), Some(0.05), false, None, None).is_none());
     }
 }
 

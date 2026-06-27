@@ -25,7 +25,10 @@ struct ProcSample {
     io_wchar: u64,
     /// Process state char from `/proc/<pid>/stat` (R/S/D/…). `D` = uninterruptible
     /// sleep = blocked on I/O — the NFS-aware I/O-wait signal (block-I/O delay
-    /// accounting reads 0 for NFS, but the task still parks in D).
+    /// accounting reads 0 for NFS, but the task still parks in D). NOTE: this is the
+    /// thread-GROUP-LEADER's state; I/O done entirely on a worker/async thread while the
+    /// leader runs/sleeps is missed (an under-count for that pattern). The process-wide
+    /// `/proc/<pid>/io` byte volume still captures such I/O for the wrapper-note veto.
     state: u8,
 }
 
