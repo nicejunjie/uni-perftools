@@ -168,43 +168,49 @@ def _render_snapshot(snap, out):
         out.append("\n══ I/O ══")
         for lbl, v in io:
             out.append("    %-26s %s" % (lbl, v))
-        # I/O-wait time (sampled D-state fraction × wall) with a SELF-AWARE qualifier:
-        # the binomial confidence from the sample count, and a cross-check against the
-        # independently-measured CPU time (I/O wait must fit inside the off-CPU time).
+        # I/O-wait time (sampled D-state fraction × wall). The per-process refinements
+        # below (confidence, CPU cross-check, I/O-active rate) pair io_wait with the
+        # sample count / cpu_time / byte volume; under `uaps report` aggregation io_wait
+        # is the worst rank's (MAX) while bytes & cpu_time are SUMMED, so those pairings
+        # are nonsense across ranks — gate them to a single-process snapshot.
         if disp("io_wait") and elapsed:
             w = val("io_wait") or 0.0
-            n = int(val("io_wait_samples") or 0)
             frac = min(1.0, w / elapsed) if elapsed > 0 else 0.0
-            notes = ["%.0f%% of elapsed" % (frac * 100)]
-            # statistical confidence: SE = sqrt(p(1-p)/N); ±1.96·SE for ~95%.
-            if n >= 1:
-                ci = 1.96 * (max(0.0, frac * (1 - frac) / n) ** 0.5) * 100.0
-                if n < 20:
-                    notes.append("LOW confidence: only %d samples" % n)
-                elif ci >= 1.0:
-                    notes.append("±%.0f%%, %d samples" % (ci, n))
-                else:
-                    notes.append("%d samples" % n)
-            # cross-check vs measured off-CPU time (= 1 − CPU-time/threads ÷ elapsed).
-            thr = val("max_threads") or 1
-            off = max(0.0, 1.0 - (val("cpu_time") or 0.0) / (elapsed * max(thr, 1)))
-            if off > 0.02:
-                if frac > off * 1.15:
-                    notes.append("⚠ exceeds %.0f%% off-CPU — may overcount" % (off * 100))
-                elif frac >= off * 0.85:
-                    notes.append("✓ matches %.0f%% off-CPU" % (off * 100))
-                else:
-                    notes.append("of %.0f%% off-CPU (rest non-I/O idle)" % (off * 100))
-            out.append("    %-26s %s  (%s)" % ("I/O wait (est.)", disp("io_wait"), "; ".join(notes)))
-            # I/O-ACTIVE bandwidth = bytes ÷ time actually in I/O. For a mixed compute+I/O
-            # run the per-stream rates above (÷ elapsed) understate the device speed; this
-            # recovers it. Shown only when I/O wait is well under the run (else == avg rate).
-            if w and w < 0.8 * elapsed:
-                tot = (val("io_read") or 0) + (val("io_write") or 0)  # logical = NFS-reliable
-                act = _bw(tot, w)
-                if act:
-                    out.append("    %-26s %s  (logical, over %.1fs of I/O wait)"
-                               % ("I/O-active rate", act, w))
+            if int(val("nranks") or 1) > 1:
+                out.append("    %-26s %s  (worst rank, %.0f%% of its elapsed)"
+                           % ("I/O wait (est.)", disp("io_wait"), frac * 100))
+            else:
+                n = int(val("io_wait_samples") or 0)
+                notes = ["%.0f%% of elapsed" % (frac * 100)]
+                # statistical confidence: SE = sqrt(p(1-p)/N); ±1.96·SE for ~95%.
+                if n >= 1:
+                    ci = 1.96 * (max(0.0, frac * (1 - frac) / n) ** 0.5) * 100.0
+                    if n < 20:
+                        notes.append("LOW confidence: only %d samples" % n)
+                    elif ci >= 1.0:
+                        notes.append("±%.0f%%, %d samples" % (ci, n))
+                    else:
+                        notes.append("%d samples" % n)
+                # cross-check vs measured off-CPU time (= 1 − CPU-time/threads ÷ elapsed).
+                thr = val("max_threads") or 1
+                off = max(0.0, 1.0 - (val("cpu_time") or 0.0) / (elapsed * max(thr, 1)))
+                if off > 0.02:
+                    if frac > off * 1.15:
+                        notes.append("⚠ exceeds %.0f%% off-CPU — may overcount" % (off * 100))
+                    elif frac >= off * 0.85:
+                        notes.append("✓ matches %.0f%% off-CPU" % (off * 100))
+                    else:
+                        notes.append("of %.0f%% off-CPU (rest non-I/O idle)" % (off * 100))
+                out.append("    %-26s %s  (%s)" % ("I/O wait (est.)", disp("io_wait"), "; ".join(notes)))
+                # I/O-ACTIVE bandwidth = bytes ÷ time actually in I/O — recovers the device
+                # rate a mixed compute+I/O run's avg (÷ elapsed) understates. Single-process
+                # only (Σbytes ÷ one rank's io_wait is meaningless). Skip when ≈ avg rate.
+                if w and w < 0.8 * elapsed:
+                    tot = (val("io_read") or 0) + (val("io_write") or 0)  # logical = NFS-reliable
+                    act = _bw(tot, w)
+                    if act:
+                        out.append("    %-26s %s  (logical, over %.1fs of I/O wait)"
+                                   % ("I/O-active rate", act, w))
 
 
 def render(result_dir, fmt="text", view="all", collector="upat", detail=None, threshold=0.1):
