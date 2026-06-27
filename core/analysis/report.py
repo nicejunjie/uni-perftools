@@ -164,7 +164,10 @@ def _render_snapshot(snap, out):
         if disp(k):
             spd = _rate(k)                       # bandwidth = volume ÷ elapsed
             io.append((lbl, disp(k) + ("   @ %s" % spd if spd else "")))
-    if io:
+    # Render the section if there's byte volume OR an I/O-wait time — a job blocked in
+    # 'D' on mmap page-faults-over-NFS has io_wait but no read()/write() byte counters,
+    # and the headline insight may already call it I/O-bound, so the detail must show.
+    if io or disp("io_wait"):
         out.append("\n══ I/O ══")
         for lbl, v in io:
             out.append("    %-26s %s" % (lbl, v))
@@ -177,7 +180,9 @@ def _render_snapshot(snap, out):
             w = val("io_wait") or 0.0
             frac = min(1.0, w / elapsed) if elapsed > 0 else 0.0
             if int(val("nranks") or 1) > 1:
-                out.append("    %-26s %s  (worst rank, %.0f%% of its elapsed)"
+                # MAX io_wait and MAX elapsed can come from different ranks, so this %
+                # is a lower bound over the JOB wall, not that rank's own wall.
+                out.append("    %-26s %s  (worst rank; ≥%.0f%% of job wall)"
                            % ("I/O wait (est.)", disp("io_wait"), frac * 100))
             else:
                 n = int(val("io_wait_samples") or 0)

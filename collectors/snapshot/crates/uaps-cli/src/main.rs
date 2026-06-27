@@ -680,8 +680,14 @@ fn push_omp_spin_flag(snapshot: &mut Snapshot, omp_loaded: bool) {
         .unwrap_or(false)
         || nonempty("OMP_PLACES")
         || nonempty("GOMP_CPU_AFFINITY");
+    // libomp (LLVM/Intel) spins forever under KMP_BLOCKTIME=infinite, regardless of binding.
+    let kmp_infinite = std::env::var("KMP_BLOCKTIME")
+        .map(|v| v.trim().eq_ignore_ascii_case("infinite"))
+        .unwrap_or(false);
     let multithreaded = snapshot.numeric("max_threads").map(|t| t > 1.0).unwrap_or(false);
-    if multithreaded && uaps_collect::omp::spin_masks_imbalance(omp_loaded, policy.as_deref(), bound) {
+    if multithreaded
+        && uaps_collect::omp::spin_masks_imbalance(omp_loaded, policy.as_deref(), bound, kmp_infinite)
+    {
         snapshot.push(Metric {
             key: "omp_spin_wait",
             label: "OpenMP active-spin (imbalance may be under-reported)".into(),
