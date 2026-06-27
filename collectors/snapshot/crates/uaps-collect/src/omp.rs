@@ -23,15 +23,20 @@ pub fn runtime_loaded(pid: u32) -> bool {
 }
 
 /// Decide whether active-spin may be masking thread imbalance, given that an OpenMP
-/// runtime is loaded and the value of `OMP_WAIT_POLICY` (from the env uaps shares with
-/// the child). Only an explicit `passive` policy makes idle threads sleep — anything
-/// else (explicit `active`, or unset, which spins when threads are bound) is a risk.
-/// Pure + testable.
-pub fn spin_masks_imbalance(omp_loaded: bool, wait_policy: Option<&str>) -> bool {
+/// runtime is loaded, the value of `OMP_WAIT_POLICY`, and whether threads are bound.
+/// `passive` makes idle threads sleep (never a risk); `active` always spins; UNSET is
+/// the subtle case — libgomp spins indefinitely only when threads are bound (a short,
+/// sleeping spin otherwise), so an unset+unbound run still shows accurate imbalance and
+/// must NOT be flagged. Pure + testable.
+pub fn spin_masks_imbalance(omp_loaded: bool, wait_policy: Option<&str>, threads_bound: bool) -> bool {
     if !omp_loaded {
         return false;
     }
-    !matches!(wait_policy, Some(p) if p.trim().eq_ignore_ascii_case("passive"))
+    match wait_policy.map(|p| p.trim().to_ascii_lowercase()).as_deref() {
+        Some("passive") => false,
+        Some("active") => true,
+        _ => threads_bound, // unset (or other): indefinite spin only when bound
+    }
 }
 
 #[cfg(test)]
@@ -39,15 +44,18 @@ mod tests {
     use super::spin_masks_imbalance;
 
     #[test]
-    fn flags_active_or_default_but_not_passive() {
+    fn flags_active_or_bound_default_but_not_passive_or_unbound() {
         // not an OpenMP run → never flagged
-        assert!(!spin_masks_imbalance(false, None));
-        assert!(!spin_masks_imbalance(false, Some("active")));
-        // OpenMP loaded: passive is safe (idle threads sleep), everything else risks masking
-        assert!(!spin_masks_imbalance(true, Some("passive")));
-        assert!(!spin_masks_imbalance(true, Some("PASSIVE")));
-        assert!(!spin_masks_imbalance(true, Some(" passive ")));
-        assert!(spin_masks_imbalance(true, Some("active")));
-        assert!(spin_masks_imbalance(true, None)); // default spins when bound (HPC norm)
+        assert!(!spin_masks_imbalance(false, None, true));
+        assert!(!spin_masks_imbalance(false, Some("active"), true));
+        // passive → idle threads sleep → never a risk (regardless of binding)
+        assert!(!spin_masks_imbalance(true, Some("passive"), true));
+        assert!(!spin_masks_imbalance(true, Some("PASSIVE"), true));
+        assert!(!spin_masks_imbalance(true, Some(" passive "), true));
+        // explicit active → always spins
+        assert!(spin_masks_imbalance(true, Some("active"), false));
+        // UNSET: indefinite spin only when threads are BOUND
+        assert!(spin_masks_imbalance(true, None, true));    // bound → flag
+        assert!(!spin_masks_imbalance(true, None, false));  // unbound → accurate, don't flag
     }
 }

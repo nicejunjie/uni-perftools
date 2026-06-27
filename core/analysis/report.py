@@ -203,13 +203,15 @@ def _render_snapshot(snap, out):
                         notes.append("of %.0f%% off-CPU (rest non-I/O idle)" % (off * 100))
                 out.append("    %-26s %s  (%s)" % ("I/O wait (est.)", disp("io_wait"), "; ".join(notes)))
                 # I/O-ACTIVE bandwidth = bytes ÷ time actually in I/O — recovers the device
-                # rate a mixed compute+I/O run's avg (÷ elapsed) understates. Single-process
-                # only (Σbytes ÷ one rank's io_wait is meaningless). Skip when ≈ avg rate.
+                # rate a mixed compute+I/O run's avg (÷ elapsed) understates. Uses PHYSICAL
+                # block bytes (disk_*), not logical (rchar/wchar): io_wait is uncached
+                # D-state time, so logical bytes — which include page-cache hits that never
+                # block — paired with it would blow up to absurd rates. Skip when ≈ avg rate.
                 if w and w < 0.8 * elapsed:
-                    tot = (val("io_read") or 0) + (val("io_write") or 0)  # logical = NFS-reliable
+                    tot = (val("disk_read") or 0) + (val("disk_write") or 0)  # block I/O ↔ io_wait
                     act = _bw(tot, w)
                     if act:
-                        out.append("    %-26s %s  (logical, over %.1fs of I/O wait)"
+                        out.append("    %-26s %s  (physical block I/O, over %.1fs of I/O wait)"
                                    % ("I/O-active rate", act, w))
 
 

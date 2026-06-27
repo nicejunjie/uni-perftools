@@ -665,12 +665,23 @@ fn wrapper_warning(
 /// Flag `omp_spin_wait` when an OpenMP run under a non-passive wait policy may be
 /// masking thread imbalance (idle threads busy-wait → all threads look busy). Gated on
 /// a real multithreaded run (`max_threads > 1`); the renderer then marks the reported
-/// thread imbalance as a lower bound. The wait policy comes from the env uaps shares
-/// with the child (`OMP_WAIT_POLICY`).
+/// thread imbalance as a lower bound. Wait policy + thread binding come from the env
+/// uaps shares with the child (`OMP_WAIT_POLICY`, `OMP_PROC_BIND`/`OMP_PLACES`/
+/// `GOMP_CPU_AFFINITY`) — libgomp only spins indefinitely when threads are bound.
 fn push_omp_spin_flag(snapshot: &mut Snapshot, omp_loaded: bool) {
     let policy = std::env::var("OMP_WAIT_POLICY").ok();
+    let nonempty = |k: &str| std::env::var(k).map(|v| !v.trim().is_empty()).unwrap_or(false);
+    // OMP_PROC_BIND binds unless explicitly false/disabled; PLACES/affinity also bind.
+    let bound = std::env::var("OMP_PROC_BIND")
+        .map(|v| {
+            let v = v.trim();
+            !v.is_empty() && !v.eq_ignore_ascii_case("false") && !v.eq_ignore_ascii_case("disabled")
+        })
+        .unwrap_or(false)
+        || nonempty("OMP_PLACES")
+        || nonempty("GOMP_CPU_AFFINITY");
     let multithreaded = snapshot.numeric("max_threads").map(|t| t > 1.0).unwrap_or(false);
-    if multithreaded && uaps_collect::omp::spin_masks_imbalance(omp_loaded, policy.as_deref()) {
+    if multithreaded && uaps_collect::omp::spin_masks_imbalance(omp_loaded, policy.as_deref(), bound) {
         snapshot.push(Metric {
             key: "omp_spin_wait",
             label: "OpenMP active-spin (imbalance may be under-reported)".into(),

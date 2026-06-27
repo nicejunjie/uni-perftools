@@ -67,19 +67,21 @@ def suite_insights(snap, profile):
     io_f = catfrac.get("IO", 0.0)
     lib_f = catfrac.get("math-libs", 0.0)
 
-    # I/O-bound (snapshot signal): the snapshot can't time-categorize like the profile
-    # tier, but a large sampled I/O-wait fraction — or real I/O volume while the cores
-    # sit idle — means time is going to I/O, not compute. Surface that instead of the
-    # generic "stalled on memory / synchronization" verdict further down.
+    # I/O-bound (snapshot signal): keyed on the DIRECT io_wait measurement, not on CPU
+    # utilization (cpu_core_pct is node-relative — ~1/ncpu for a per-rank process, so it
+    # would mislabel almost everything) and not on raw I/O volume (high volume can mean
+    # high bandwidth, not I/O-bound). Only meaningful per-process: in a `uaps report`
+    # aggregate io_wait is the worst rank's (MAX), not representative — so gate on nranks.
+    # Require enough samples so a brief D-state blip (e.g. a page fault) can't trip it.
     io_wait = _snap(metrics, "io_wait")
     elapsed = _snap(metrics, "elapsed_time")
     io_vol = (_snap(metrics, "io_read") or 0) + (_snap(metrics, "io_write") or 0)
     io_wait_frac = (io_wait / elapsed) if (io_wait and elapsed and elapsed > 0) else 0.0
-    io_bound = io_wait_frac >= 0.25 or (io_vol > 8e6 and (core_pct or 0) < 10 and io_f < 0.15)
+    is_aggregate = _snap(metrics, "nranks") is not None
+    io_bound = (not is_aggregate and io_wait_frac >= 0.3
+                and (_snap(metrics, "io_wait_samples") or 0) >= 20)
     if io_bound:
-        parts = ["Likely I/O-bound"]
-        if io_wait_frac >= 0.25:
-            parts.append("~%.0f%% of wall in I/O wait" % (io_wait_frac * 100))
+        parts = ["Likely I/O-bound", "~%.0f%% of wall in I/O wait" % (io_wait_frac * 100)]
         if io_vol > 0:
             parts.append("%.0f MB moved" % (io_vol / 1e6))
         out.append(", ".join(parts) + " — batch/buffer I/O or use parallel I/O; "
