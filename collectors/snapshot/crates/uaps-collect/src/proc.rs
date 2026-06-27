@@ -333,6 +333,13 @@ impl Collector for ProcCollector {
                     label: "I/O wait (sampled est.)".into(),
                     value: MetricValue::Duration(Duration::from_secs_f64(frac * wall)),
                 });
+                // Sample count behind the estimate, so the report can show a confidence
+                // range (binomial error ∝ 1/√N) and flag a small-N / low-confidence run.
+                out.push(Metric {
+                    key: "io_wait_samples",
+                    label: "I/O-wait samples".into(),
+                    value: MetricValue::Int { value: self.samples as i64, unit: "" },
+                });
             }
         }
 

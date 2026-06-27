@@ -146,7 +146,7 @@ pub fn aggregate(dir: &Path) -> Result<(Snapshot, usize)> {
     const MAX_KEYS: &[&str] = &[
         "elapsed_time", "max_threads", "mpi_world_size",
         "gpu_offload", "fp_mixed_precision", "omp_spin_wait",
-        "io_wait", // per-rank I/O-wait time → report the worst rank's
+        "io_wait", "io_wait_samples", // worst rank's I/O-wait + its sample count
     ];
 
     let mut agg = Snapshot::default();
