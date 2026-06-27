@@ -380,7 +380,7 @@ def roofline_view(snap, profile, out):
     out.append("\n══ Roofline (whole program) ══")
     roofline.render(points, pk, out)
     if not points:
-        out.append("    (whole-program point needs FP + DRAM counters — check perf_event_paranoid)")
+        out.append("    (no whole-program point — %s)" % _hwpc_gap_reason(snap))
         return
     # The measured point's coordinates, spelled out (application FLOP rate +
     # achieved DRAM bandwidth + their ratio).
@@ -475,10 +475,33 @@ def roofline_func_view(profile, out):
 
 
 # ------------------------------------------------------- microarch / memory
+def _hwpc_gap_reason(snap):
+    """Why a vendor-HWPC metric (top-down slots / FP / roofline) is absent — inferred
+    from what DID populate. The vendor PMU groups need the thread ON-CPU and free PMU
+    counter slots; the generic counters (IPC) are single events that survive when the
+    larger vendor groups can't be scheduled, so their presence localizes the cause."""
+    if _m(snap, "ipc") is None and _m(snap, "hw_instructions") is None:
+        # even the generic single events are gone → counting itself was disallowed
+        return ("no HW counters at all — perf_event_paranoid is > 1 (need ≤ 1 for "
+                "per-process counting), or perf is disabled / unavailable")
+    # generic counters worked, so paranoid is fine — the *vendor PMU group* didn't run.
+    nr = _m(snap, "nranks") or 1
+    thr = _m(snap, "max_threads") or 1
+    busy = _m(snap, "cpu_cores_used")          # avg cores busy (summed over ranks)
+    on_cpu = (busy / (nr * thr) * 100.0) if busy else 0.0
+    if on_cpu < 10.0:
+        return ("threads were only ~%.0f%% on-CPU (idle / I/O- or sync-bound), so the "
+                "per-thread PMU group accumulated too little runtime to measure — "
+                "oversubscription compounds it" % on_cpu)
+    return ("the vendor PMU group could not be scheduled — the pmu-events DB was not "
+            "found for this CPU model, or the PMU counters were oversubscribed")
+
+
 def microarch_view(snap, out):
     if not snap:
         return
     out.append("\n══ Microarchitecture (top-down pipeline slots) ══")
+    slots_shown = False
     for k, lbl in [("topdown_retiring_pct", "retiring (useful)"),
                    ("topdown_frontend_pct", "frontend-bound"),
                    ("topdown_backend_pct", "backend-bound"),
@@ -488,6 +511,7 @@ def microarch_view(snap, out):
         v = _m(snap, k)
         if v is not None:
             out.append("    %-18s %5.1f%%" % (lbl, v))
+            slots_shown = True
     # SMT contention = the slots unaccounted by the four buckets (the sibling thread
     # took them). Only meaningful with SMT on; NA otherwise (then the four sum ~100%).
     four = [_m(snap, k) for k in ("topdown_retiring_pct", "topdown_frontend_pct",
@@ -498,6 +522,12 @@ def microarch_view(snap, out):
             roofline.comment(out, "retiring + frontend + backend + bad-spec + SMT = 100% of slots")
         else:
             out.append("    %-18s %5s" % ("SMT contention", "NA"))
+    # The four slots come from the vendor top-down PMU GROUP (co-scheduled events that
+    # need the thread on-CPU); when it couldn't be measured, say so + why rather than
+    # silently dropping the slots (branch mispredict below is generic-derived and may
+    # still appear).
+    if not slots_shown:
+        out.append("    top-down slots unavailable — %s." % _hwpc_gap_reason(snap))
     # branch mispredict is NOT part of the slot partition above — it's a rate over
     # branches and the main *cause* of the 'bad speculation' slots. Shown separately.
     bm = _disp(snap, "branch_mispredict_rate")

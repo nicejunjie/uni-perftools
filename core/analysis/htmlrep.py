@@ -570,6 +570,16 @@ def build(result_dir, manifest, snap, profile, suite, detail=None, threshold=0.1
         if mem:
             left.append("<div class='sec'><h2>Memory &amp; microarchitecture</h2>%s</div>" % _mlist(mem))
 
+        # --- I/O (snapshot volume: physical disk_* + logical io_*) → left. The other
+        # <h2>I/O</h2> below is the PROFILE tier's traced per-call I/O; this is the
+        # snapshot's own read/write volume, which was previously absent from the HTML. ---
+        iorows = [(lbl, disp(k), "none") for k, lbl in [
+                    ("disk_read", "disk read"), ("disk_write", "disk write"),
+                    ("io_read", "logical read"), ("io_write", "logical write")]
+                  if disp(k) is not None]
+        if iorows:
+            left.append("<div class='sec'><h2>I/O (volume)</h2>%s</div>" % _mlist(iorows))
+
         # --- roofline figure → right (anchors the column, scales to fit) ---
         # Suppressed under GPU offload: a CPU-only roofline misrepresents a job whose
         # compute runs on the device (uaps reads only CPU counters).
