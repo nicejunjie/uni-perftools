@@ -17,20 +17,20 @@
 
 /// What an open file descriptor's target tells us about GPU use.
 enum FdHit {
-    /// A compute-only device node — unambiguous (vendor named).
+    /// An NVIDIA char device — unambiguous (these aren't casually opened/probed).
     Compute(&'static str),
-    /// A DRM render node — GPU, but shared with graphics; needs corroboration.
-    RenderNode,
+    /// A GPU device node that is NOT proof of compute on its own: a DRM render node
+    /// (shared with graphics) OR `/dev/kfd` (an APU/ROCm node — MPI/UCX and topology
+    /// probes open it without doing GPU compute). Confirm with a mapped runtime.
+    DeviceNode,
 }
 
 /// Classify one `/proc/<pid>/fd/*` symlink target.
 fn classify_fd(target: &str) -> Option<FdHit> {
     if target.contains("/dev/nvidia") {
         Some(FdHit::Compute("NVIDIA"))
-    } else if target.contains("/dev/kfd") {
-        Some(FdHit::Compute("AMD ROCm"))
-    } else if target.contains("/dev/dri/renderD") {
-        Some(FdHit::RenderNode)
+    } else if target.contains("/dev/kfd") || target.contains("/dev/dri/renderD") {
+        Some(FdHit::DeviceNode)
     } else {
         None
     }
@@ -61,22 +61,23 @@ fn vendor_from_maps(maps: &str) -> Option<&'static str> {
 
 /// The GPU vendor/stack driving this process, or `None` if no GPU use is seen.
 pub fn detect(pid: u32) -> Option<&'static str> {
-    let mut render_node = false;
+    let mut device_node = false;
     if let Ok(rd) = std::fs::read_dir(format!("/proc/{pid}/fd")) {
         for e in rd.flatten() {
             let Ok(target) = std::fs::read_link(e.path()) else { continue };
             match classify_fd(&target.to_string_lossy()) {
-                Some(FdHit::Compute(vendor)) => return Some(vendor),
-                Some(FdHit::RenderNode) => render_node = true,
+                Some(FdHit::Compute(vendor)) => return Some(vendor), // NVIDIA → unambiguous
+                Some(FdHit::DeviceNode) => device_node = true,
                 None => {}
             }
         }
     }
-    // Render node open: trust it as GPU COMPUTE only if a compute runtime is also
-    // mapped. A render node alone is shared with graphics (a desktop compositor/
-    // browser opens it), so requiring the runtime avoids false-positives off the
-    // cluster. CUDA/ROCm jobs hit the unambiguous nvidia/kfd nodes above regardless.
-    if render_node {
+    // A GPU device node (renderD or /dev/kfd) is open — trust it as GPU COMPUTE only if
+    // a compute runtime is ALSO mapped. A render node is shared with graphics, and on an
+    // AMD APU node `/dev/kfd` is opened by MPI/UCX/topology probes that do no compute;
+    // requiring CUDA/ROCm/Level-Zero/OpenCL in the maps avoids both false-positives. A
+    // real GPU-compute job always maps its runtime (libamdhip64/libhsa, libcuda, …).
+    if device_node {
         let maps = std::fs::read_to_string(format!("/proc/{pid}/maps")).unwrap_or_default();
         return vendor_from_maps(&maps);
     }
@@ -88,22 +89,27 @@ mod tests {
     use super::*;
 
     #[test]
-    fn compute_device_nodes_are_unambiguous() {
+    fn nvidia_unambiguous_but_kfd_and_render_need_corroboration() {
+        // NVIDIA char devices are unambiguous (not casually probed)
         assert!(matches!(classify_fd("/dev/nvidia0"), Some(FdHit::Compute("NVIDIA"))));
         assert!(matches!(classify_fd("/dev/nvidiactl"), Some(FdHit::Compute("NVIDIA"))));
-        assert!(matches!(classify_fd("/dev/kfd"), Some(FdHit::Compute("AMD ROCm"))));
-        assert!(matches!(classify_fd("/dev/dri/renderD128"), Some(FdHit::RenderNode)));
+        // /dev/kfd and renderD are device nodes that need a mapped runtime to confirm
+        // (an APU's /dev/kfd is opened by MPI/topology probes that do no GPU compute)
+        assert!(matches!(classify_fd("/dev/kfd"), Some(FdHit::DeviceNode)));
+        assert!(matches!(classify_fd("/dev/dri/renderD128"), Some(FdHit::DeviceNode)));
         // ordinary files are not GPU use
         assert!(classify_fd("/home/u/app.dat").is_none());
         assert!(classify_fd("/dev/dri/card0").is_none()); // primary node ≠ render node
     }
 
     #[test]
-    fn render_node_needs_a_compute_runtime_to_name_a_vendor() {
+    fn device_node_needs_a_compute_runtime_to_name_a_vendor() {
         assert_eq!(vendor_from_maps("...libamdhip64.so.6..."), Some("AMD ROCm"));
         assert_eq!(vendor_from_maps("...libcudart.so.12..."), Some("NVIDIA"));
         assert_eq!(vendor_from_maps("...libze_loader.so.1..."), Some("Intel oneAPI"));
-        // a graphics-only renderD use (Mesa) maps no compute runtime → no vendor
+        // an APU node with /dev/kfd open but NO ROCm runtime mapped (MPI/UCX probe) and
+        // a graphics-only renderD use (Mesa) both map no compute runtime → no GPU compute
+        assert_eq!(vendor_from_maps("...libmpi.so.40 libucp.so.0 libc.so.6..."), None);
         assert_eq!(vendor_from_maps("...libGLX_mesa.so.0 libglapi.so.0..."), None);
     }
 }

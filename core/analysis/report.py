@@ -144,13 +144,33 @@ def _render_snapshot(snap, out):
         for lbl, v in imb:
             out.append("    %-26s %s" % (lbl, v))
 
-    io = [(lbl, disp(k)) for k, lbl in
-          [("disk_read", "disk read"), ("disk_write", "disk write"),
-           ("io_read", "logical read"), ("io_write", "logical write")] if disp(k)]
+    elapsed = val("elapsed_time") or 0
+
+    def _rate(k):
+        b = val(k)
+        if not b or not elapsed or elapsed <= 0:
+            return None
+        r = b / elapsed
+        for unit, div in (("GB/s", 1e9), ("MB/s", 1e6), ("KB/s", 1e3)):
+            if r >= div:
+                return "%.1f %s" % (r / div, unit)
+        return "%.0f B/s" % r
+
+    io = []
+    for k, lbl in [("disk_read", "disk read"), ("disk_write", "disk write"),
+                   ("io_read", "logical read"), ("io_write", "logical write")]:
+        if disp(k):
+            spd = _rate(k)                       # bandwidth = volume ÷ elapsed
+            io.append((lbl, disp(k) + ("   @ %s" % spd if spd else "")))
     if io:
         out.append("\n══ I/O ══")
         for lbl, v in io:
             out.append("    %-26s %s" % (lbl, v))
+        # I/O-wait time (sampled D-state fraction × wall) + its share of elapsed.
+        if disp("io_wait"):
+            frac = ("  (%.0f%% of elapsed)" % (val("io_wait") / elapsed * 100.0)
+                    if val("io_wait") and elapsed else "")
+            out.append("    %-26s %s%s" % ("I/O wait (est.)", disp("io_wait"), frac))
 
 
 def render(result_dir, fmt="text", view="all", collector="upat", detail=None, threshold=0.1):

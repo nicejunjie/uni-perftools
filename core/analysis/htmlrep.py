@@ -573,12 +573,25 @@ def build(result_dir, manifest, snap, profile, suite, detail=None, threshold=0.1
         # --- I/O (snapshot volume: physical disk_* + logical io_*) → left. The other
         # <h2>I/O</h2> below is the PROFILE tier's traced per-call I/O; this is the
         # snapshot's own read/write volume, which was previously absent from the HTML. ---
-        iorows = [(lbl, disp(k), "none") for k, lbl in [
+        _elapsed = val("elapsed_time") or 0
+
+        def _iorate(k):
+            b = val(k)
+            if not b or not _elapsed or _elapsed <= 0:
+                return ""
+            r = b / _elapsed
+            for u, d in (("GB/s", 1e9), ("MB/s", 1e6), ("KB/s", 1e3)):
+                if r >= d:
+                    return "  @ %.1f %s" % (r / d, u)
+            return "  @ %.0f B/s" % r
+        iorows = [(lbl, disp(k) + _iorate(k), "none") for k, lbl in [
                     ("disk_read", "disk read"), ("disk_write", "disk write"),
                     ("io_read", "logical read"), ("io_write", "logical write")]
                   if disp(k) is not None]
+        if disp("io_wait"):
+            iorows.append(("I/O wait (est.)", disp("io_wait"), "none"))
         if iorows:
-            left.append("<div class='sec'><h2>I/O (volume)</h2>%s</div>" % _mlist(iorows))
+            left.append("<div class='sec'><h2>I/O (volume + speed)</h2>%s</div>" % _mlist(iorows))
 
         # --- roofline figure → right (anchors the column, scales to fit) ---
         # Suppressed under GPU offload: a CPU-only roofline misrepresents a job whose

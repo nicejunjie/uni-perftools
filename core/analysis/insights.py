@@ -67,13 +67,33 @@ def suite_insights(snap, profile):
     io_f = catfrac.get("IO", 0.0)
     lib_f = catfrac.get("math-libs", 0.0)
 
+    # I/O-bound (snapshot signal): the snapshot can't time-categorize like the profile
+    # tier, but a large sampled I/O-wait fraction — or real I/O volume while the cores
+    # sit idle — means time is going to I/O, not compute. Surface that instead of the
+    # generic "stalled on memory / synchronization" verdict further down.
+    io_wait = _snap(metrics, "io_wait")
+    elapsed = _snap(metrics, "elapsed_time")
+    io_vol = (_snap(metrics, "io_read") or 0) + (_snap(metrics, "io_write") or 0)
+    io_wait_frac = (io_wait / elapsed) if (io_wait and elapsed and elapsed > 0) else 0.0
+    io_bound = io_wait_frac >= 0.25 or (io_vol > 8e6 and (core_pct or 0) < 10 and io_f < 0.15)
+    if io_bound:
+        parts = ["Likely I/O-bound"]
+        if io_wait_frac >= 0.25:
+            parts.append("~%.0f%% of wall in I/O wait" % (io_wait_frac * 100))
+        if io_vol > 0:
+            parts.append("%.0f MB moved" % (io_vol / 1e6))
+        out.append(", ".join(parts) + " — batch/buffer I/O or use parallel I/O; "
+                   "profile with upat for the per-call I/O time breakdown.")
+
     # --- cross-layer rules ------------------------------------------------
-    if mem is not None and mem >= 30 and lib_f > 0.2 and top is not None and \
+    # (memory-bound suppressed when the run is I/O-bound — the few CPU cycles an idle
+    #  I/O job spends can read as memory-bound, which would misdirect.)
+    if not io_bound and mem is not None and mem >= 30 and lib_f > 0.2 and top is not None and \
             contract.category_of(top.get("group", "")) == "math-libs":
         out.append("Memory-bound (%.0f%% of slots) and %s dominates compute — "
                    "cache-block / raise arithmetic intensity, check NUMA placement."
                    % (mem, top["name"]))
-    elif mem is not None and mem >= 30:
+    elif not io_bound and mem is not None and mem >= 30:
         out.append("Memory-bound (%.0f%% of slots) — improve data locality / working-set size."
                    % mem)
 
@@ -121,7 +141,7 @@ def suite_insights(snap, profile):
 
     # Pipeline mostly stalled (low IPC) with no library/MPI/I-O hotspot to blame: the
     # cores are waiting (memory latency or synchronization), not computing.
-    if not oversub and ipc is not None and ipc < 0.5 and lib_f < 0.3 \
+    if not oversub and not io_bound and ipc is not None and ipc < 0.5 and lib_f < 0.3 \
             and mpi_f < 0.2 and io_f < 0.15:
         out.append("Low IPC %.2f (CPI %.1f) with no dominant library/MPI/I-O hotspot — the "
                    "pipeline is stalled (memory latency or synchronization), not "

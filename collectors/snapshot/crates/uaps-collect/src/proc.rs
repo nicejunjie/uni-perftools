@@ -5,7 +5,7 @@
 //! once the process exits, every sample is cached so [`finish`] can report the
 //! last-seen values (and the running peaks).
 
-use std::time::Instant;
+use std::time::{Duration, Instant};
 
 use anyhow::Result;
 use uaps_core::{Collector, Metric, MetricValue, Target};
@@ -23,6 +23,10 @@ struct ProcSample {
     /// `/proc/<pid>/io` rchar / wchar (logical bytes through read/write).
     io_rchar: u64,
     io_wchar: u64,
+    /// Process state char from `/proc/<pid>/stat` (R/S/D/…). `D` = uninterruptible
+    /// sleep = blocked on I/O — the NFS-aware I/O-wait signal (block-I/O delay
+    /// accounting reads 0 for NFS, but the task still parks in D).
+    state: u8,
 }
 
 pub struct ProcCollector {
@@ -44,6 +48,10 @@ pub struct ProcCollector {
     /// Node-wide block I/O (read,write) bytes at start / latest sample.
     node_disk_base: (u64, u64),
     node_disk_last: (u64, u64),
+    /// Samples taken / samples where the process was in `D` (I/O-wait) state — gives a
+    /// sampled I/O-wait FRACTION of wall time (NFS-aware; see `ProcSample::state`).
+    samples: u64,
+    blocked: u64,
 }
 
 /// Total non-idle CPU ticks across the whole node (sum over all CPUs), from the
@@ -122,6 +130,8 @@ impl ProcCollector {
             node_peak_mem: 0,
             node_disk_base: (0, 0),
             node_disk_last: (0, 0),
+            samples: 0,
+            blocked: 0,
         }
     }
 
@@ -134,6 +144,8 @@ impl ProcCollector {
         let stat = std::fs::read_to_string(format!("/proc/{}/stat", self.pid)).ok()?;
         let after = &stat[stat.rfind(')')? + 1..];
         let f: Vec<&str> = after.split_whitespace().collect();
+        // field 3 (state) is the first token after the ')'; index N-3 → index 0.
+        s.state = f.first().and_then(|t| t.bytes().next()).unwrap_or(0);
         let utime: u64 = f.get(11)?.parse().ok()?;
         let stime: u64 = f.get(12)?.parse().ok()?;
         s.cpu_ticks = utime + stime;
@@ -197,6 +209,10 @@ impl Collector for ProcCollector {
         if let Some(s) = self.read_sample() {
             self.peak_rss = self.peak_rss.max(s.rss_bytes);
             self.max_threads = self.max_threads.max(s.threads);
+            self.samples += 1;
+            if s.state == b'D' {
+                self.blocked += 1; // uninterruptible sleep = blocked on I/O
+            }
             self.last = Some(s);
         }
         Ok(())
@@ -211,6 +227,10 @@ impl Collector for ProcCollector {
         if let Some(s) = self.read_sample() {
             self.peak_rss = self.peak_rss.max(s.rss_bytes);
             self.max_threads = self.max_threads.max(s.threads);
+            self.samples += 1;
+            if s.state == b'D' {
+                self.blocked += 1; // uninterruptible sleep = blocked on I/O
+            }
             self.last = Some(s);
         }
         Ok(())
@@ -303,6 +323,17 @@ impl Collector for ProcCollector {
                 label: "I/O write (logical)".into(),
                 value: MetricValue::Bytes(last.io_wchar),
             });
+            // Sampled I/O-wait time: fraction of samples the process was parked in `D`
+            // (blocked on I/O) × wall. NFS-aware where block-I/O delay accounting is 0.
+            // Coarse for very short runs (few samples); an estimate, labelled as such.
+            if self.samples > 0 && self.blocked > 0 {
+                let frac = self.blocked as f64 / self.samples as f64;
+                out.push(Metric {
+                    key: "io_wait",
+                    label: "I/O wait (sampled est.)".into(),
+                    value: MetricValue::Duration(Duration::from_secs_f64(frac * wall)),
+                });
+            }
         }
 
         // SMT enabled? Lets the report attribute the AMD top-down residual to

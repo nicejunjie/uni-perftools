@@ -146,6 +146,7 @@ pub fn aggregate(dir: &Path) -> Result<(Snapshot, usize)> {
     const MAX_KEYS: &[&str] = &[
         "elapsed_time", "max_threads", "mpi_world_size",
         "gpu_offload", "fp_mixed_precision", "omp_spin_wait",
+        "io_wait", // per-rank I/O-wait time → report the worst rank's
     ];
 
     let mut agg = Snapshot::default();
@@ -205,10 +206,23 @@ pub fn aggregate(dir: &Path) -> Result<(Snapshot, usize)> {
 
     // Detect PARTIAL / MISSING vendor HWPC: ranks that reported but have no vendor
     // counters (FP/roofline/top-down) — summed gflops/DRAM/etc. then silently
-    // undercount those ranks. Almost always the pmu-events DB wasn't found on some
-    // nodes (a staged binary without its DB), or perf is disabled there.
-    let hwpc_ranks = ranks.iter().filter(|r| r.contains_key("gflops")).count();
-    if let Some(w) = partial_hwpc_warning(hwpc_ranks, n) {
+    // undercount those ranks. A rank "has vendor HWPC" if it produced ANY vendor metric
+    // (not just gflops — an FP-free kernel legitimately has no gflops); `generic_ranks`
+    // (those with basic perf counters) separates a paranoid/perf-off cause from a
+    // DB-missing or simply-no-work one.
+    const VENDOR_KEYS: &[&str] = &[
+        "gflops", "topdown_retiring_pct", "dram_bandwidth_gbs", "mem_dram_reads",
+        "memory_bound", "vectorization_pct",
+    ];
+    let hwpc_ranks = ranks
+        .iter()
+        .filter(|r| VENDOR_KEYS.iter().any(|k| r.contains_key(*k)))
+        .count();
+    let generic_ranks = ranks
+        .iter()
+        .filter(|r| r.contains_key("hw_instructions") || r.contains_key("ipc"))
+        .count();
+    if let Some(w) = partial_hwpc_warning(hwpc_ranks, generic_ranks, n) {
         eprintln!("{w}");
     }
 
@@ -276,23 +290,32 @@ fn node_participation(
 /// Warning when vendor HWPC is missing on some/all ranks (the rest contribute no
 /// FP/roofline/top-down, so the job totals undercount). `None` when every rank has
 /// it. Pure + testable; the caller prints it.
-fn partial_hwpc_warning(hwpc_ranks: usize, n: usize) -> Option<String> {
+fn partial_hwpc_warning(hwpc_ranks: usize, generic_ranks: usize, n: usize) -> Option<String> {
     if n == 0 || hwpc_ranks >= n {
         return None;
     }
     if hwpc_ranks == 0 {
-        Some(format!(
-            "uaps: WARNING: no vendor HW counters on ANY of the {n} ranks (FP/roofline/top-down \
-             absent). The pmu-events DB was not found, or perf is disabled. Stage the pmu-events \
-             tree alongside the uaps binary (or set UAPS_PMU_EVENTS), and ensure \
-             perf_event_paranoid<=1."
-        ))
+        if generic_ranks == 0 {
+            // even the generic single events are gone → counting itself was disallowed
+            Some(format!(
+                "uaps: WARNING: no HW counters on ANY of the {n} ranks — perf_event_paranoid is > 1 \
+                 (need ≤ 1 for per-process counting), or perf is disabled/unavailable on these nodes."
+            ))
+        } else {
+            // perf works (generic counters present) but no vendor metric anywhere → NOT
+            // paranoid; either the DB isn't deployed, or the workload simply did no FP/mem work.
+            Some(format!(
+                "uaps: WARNING: no vendor metrics (FP / roofline / top-down) on any of the {n} ranks. \
+                 Either the pmu-events DB is not deployed on these nodes, or the workload did little/no \
+                 FP+memory work (an idle or I/O-bound run produces none)."
+            ))
+        }
     } else {
         Some(format!(
-            "uaps: WARNING: vendor HW counters present on only {hwpc_ranks} of {n} ranks — the \
-             other {} contribute NO FP/roofline/top-down, so those job totals UNDERCOUNT. Likely \
-             the pmu-events DB is missing on some nodes (a staged binary without its DB): stage \
-             pmu-events alongside the binary, or set UAPS_PMU_EVENTS.",
+            "uaps: WARNING: vendor HW counters on only {hwpc_ranks} of {n} ranks — the other {} \
+             contribute NO FP/roofline/top-down, so those job totals UNDERCOUNT. Likely the pmu-events \
+             DB is missing OR perf_event_paranoid > 1 on those nodes (stage pmu-events alongside the \
+             binary or set UAPS_PMU_EVENTS, and ensure perf_event_paranoid ≤ 1).",
             n - hwpc_ranks
         ))
     }
@@ -528,14 +551,18 @@ mod tests {
 
     #[test]
     fn partial_hwpc_warning_flags_ranks_missing_vendor_counters() {
-        assert!(partial_hwpc_warning(4, 4).is_none(), "complete → no warning");
-        assert!(partial_hwpc_warning(0, 0).is_none());
-        // some ranks have HWPC, some don't (staged binary without DB on some nodes)
-        let w = partial_hwpc_warning(2, 4).expect("should warn");
-        assert!(w.contains("only 2 of 4 ranks"), "{w}");
-        assert!(w.contains("UNDERCOUNT"), "{w}");
-        // none have it
-        let w0 = partial_hwpc_warning(0, 4).expect("should warn");
-        assert!(w0.contains("no vendor HW counters on ANY"), "{w0}");
+        // complete (all 4 have vendor HWPC) → no warning
+        assert!(partial_hwpc_warning(4, 4, 4).is_none());
+        assert!(partial_hwpc_warning(0, 0, 0).is_none());
+        // partial: 2 of 4 have vendor counters → undercount warning mentioning paranoid
+        let w = partial_hwpc_warning(2, 4, 4).expect("should warn");
+        assert!(w.contains("only 2 of 4 ranks") && w.contains("UNDERCOUNT"), "{w}");
+        assert!(w.contains("paranoid"), "should mention paranoid: {w}");
+        // none have vendor BUT generic counters worked → DB-missing OR no-FP-work (not paranoid)
+        let w0 = partial_hwpc_warning(0, 4, 4).expect("should warn");
+        assert!(w0.contains("no vendor metrics") && w0.contains("idle or I/O-bound"), "{w0}");
+        // none have ANY counter (generic also absent) → paranoid / perf disabled
+        let wp = partial_hwpc_warning(0, 0, 4).expect("should warn");
+        assert!(wp.contains("no HW counters on ANY") && wp.contains("paranoid"), "{wp}");
     }
 }
