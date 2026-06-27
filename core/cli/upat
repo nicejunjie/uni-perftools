@@ -254,6 +254,9 @@ def main():
                          "html: report.html or report.<detail>.html)")
     sc = sub.add_parser("scale", help="compare multiple results (scaling analysis)")
     sc.add_argument("results", nargs="+")
+    sc.add_argument("--weak", action="store_true",
+                    help="weak scaling (work grows with ranks; ideal time constant) "
+                         "instead of the default strong scaling")
 
     # implicit `run`: `upat ./app` / `upat --no-sample ./app` == `upat run …`
     VERBS = ("collect", "run", "report", "roofline", "scale")
@@ -276,7 +279,7 @@ def main():
         sys.exit(rc)
     elif args.verb == "scale":
         import scaling
-        scaling.render(args.results)
+        scaling.render(args.results, weak=args.weak)
     else:
         result = args.result or contract.latest_result()
         if not result:

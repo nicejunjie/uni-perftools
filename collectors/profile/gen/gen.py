@@ -137,7 +137,10 @@ def emit_variadic_open(f, ret, name, arg_names, flags_idx):
     else:  # openat
         decl = "int dirfd, const char *path, int flags"
         fixed_names = ["dirfd", "path", "flags"]
-    fp = "%s (*)()" % ret
+    # Prototyped cast (the resolved 3-fixed-arg form: fixed decls + the int mode) — same
+    # reason as emit_wrapper; these args are int/pointer so no float corruption, but keep
+    # it prototyped for correctness.
+    fp = "%s (*)(%s, int)" % (ret, decl)
     callfixed = ", ".join(fixed_names)
     f.write("#include <stdarg.h>\n#include <fcntl.h>\n")
     f.write("#ifndef O_TMPFILE\n#define O_TMPFILE 0\n#endif\n")
@@ -171,7 +174,13 @@ def emit_wrapper(f, ret, name, args, arg_names, dialect):
         arg_names = ["a%d" % i for i in range(len(arg_names))]
         args = ", ".join("void* %s" % a for a in arg_names) if arg_names else "void"
     call_args = ", ".join(arg_names)
-    fp = "%s (*)()" % ret
+    # FULLY-PROTOTYPED function-pointer cast: an empty `(*)()` is unprototyped, so the
+    # call applies default-argument-promotion (a by-value `float` → `double`), passing a
+    # 64-bit pattern where the real callee reads a 32-bit float → CORRUPTS the traced
+    # app's scalar args (e.g. cblas_sscal alpha). Casting through the real parameter list
+    # (`args`, names allowed+ignored in a type) suppresses the promotion. Affects both
+    # backends (same generated body).
+    fp = "%s (*)(%s)" % (ret, args)
     addr = "&" if dialect in ("c", "opaque") else ""  # by-value args passed by address
     # opaque (MPI/IO) returns an int/ssize_t we want (e.g. bytes actually read);
     # otherwise only capture pointer returns (e.g. fftw_plan).

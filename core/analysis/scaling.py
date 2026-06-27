@@ -33,7 +33,7 @@ def _info(result):
     return nranks, runtime
 
 
-def render(results):
+def render(results, weak=False):
     rows = []
     for r in results:
         for d in (sorted(glob.glob(r)) if any(c in r for c in "*?[") else [r]):
@@ -47,11 +47,20 @@ def render(results):
         print("\n══ Scaling ══")
         print("  (scaling unavailable — no runtime recorded for the smallest run)")
         return
-    print("\n══ Scaling ══")
+    print("\n══ Scaling (%s) ══" % ("weak" if weak else "strong"))
     print("  %-30s %6s %10s %9s %11s" % ("result", "ranks", "time(s)", "speedup", "efficiency"))
     for n, t, d in rows:
         sp = base_t / t if t > 0 else 0.0
-        ideal = n / base_n if base_n else 1
-        eff = sp / ideal * 100.0 if ideal else 0.0
+        if weak:
+            # WEAK scaling: work grows with ranks, so the IDEAL runtime is CONSTANT and
+            # efficiency = T_base / T_n (NOT divided by n — that's the strong-scaling
+            # formula, which would report perfect weak scaling as ~1/N ≈ 0%).
+            eff = sp * 100.0
+        else:
+            ideal = n / base_n if base_n else 1
+            eff = sp / ideal * 100.0 if ideal else 0.0
         print("  %-30s %6d %10.3f %8.2fx %10.0f%%" % (os.path.basename(d.rstrip("/")), n, t, sp, eff))
-    print("  (speedup & efficiency relative to the smallest run; >100%% = super-linear)")
+    if weak:
+        print("  (weak: work grows with ranks → ideal time is constant; efficiency = T_base/T_n)")
+    else:
+        print("  (strong: speedup & efficiency vs the smallest run; >100%% = super-linear)")

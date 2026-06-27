@@ -79,7 +79,9 @@ def elf_etype(path):
     try:
         with open(path, "rb") as f:
             hdr = f.read(18)
-        if hdr[:4] == b"\x7fELF":
+        # require the full e_type field (bytes 16-17); a truncated file that starts with
+        # the ELF magic but is < 18 bytes must not IndexError and abort the whole report.
+        if len(hdr) >= 18 and hdr[:4] == b"\x7fELF":
             et = hdr[16] | (hdr[17] << 8)
     except OSError:
         et = 0

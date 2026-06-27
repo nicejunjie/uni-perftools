@@ -55,8 +55,11 @@ def _build(acc):
     cc = os.environ.get("CC", "cc")
     arch = "-mcpu=native" if os.uname().machine.startswith("aarch64") else "-march=native"
     out = os.path.join(_CACHE_DIR, "calibrate_a%d" % acc)
+    # Keep -fopenmp as long as possible — a bare -O2 measures single-threaded (~ncores×
+    # too low). The final -O2 is a true last resort (now DCE-safe via volatile g_sink).
     for flags in (["-O3", arch, "-ffast-math", "-funroll-loops", "-fopenmp"],
-                  ["-O3", "-ffast-math", "-funroll-loops", "-fopenmp"], ["-O2"]):
+                  ["-O3", "-ffast-math", "-funroll-loops", "-fopenmp"],
+                  ["-O3", "-fopenmp"], ["-O2"]):
         if subprocess.run([cc] + flags + ["-DFMA_ACC=%d" % acc, _SRC, "-o", out],
                           capture_output=True).returncode == 0:
             return out
@@ -146,14 +149,21 @@ def _run_env():
 
 
 def _cpu_model():
-    """Live CPU brand string from /proc/cpuinfo ('' if unavailable)."""
+    """Live CPU identity from /proc/cpuinfo ('' if unavailable). Mirrors calibrate.c
+    cpu_model(): x86 'model name', else (aarch64, which has no model name) a stable
+    'arm:<implementer>:<part>' so the per-machine peaks-cache guard isn't a no-op on ARM."""
+    impl = part = ""
     try:
         for line in open("/proc/cpuinfo"):
             if line.startswith("model name"):
                 return line.split(":", 1)[1].strip()
+            if not impl and line.startswith("CPU implementer"):
+                impl = line.split(":", 1)[1].strip()
+            if not part and line.startswith("CPU part"):
+                part = line.split(":", 1)[1].strip()
     except OSError:
         pass
-    return ""
+    return ("arm:%s:%s" % (impl, part)) if (impl or part) else ""
 
 
 def _max_freq_ghz():
@@ -387,7 +397,11 @@ def peaks(force=False):
     if not force and os.path.exists(_PEAKS) and not _stale():
         try:
             cached = json.load(open(_PEAKS))
-            if cached.get("cpu", "") == _cpu_model():
+            me = _cpu_model()
+            # Trust the cache only on a NON-EMPTY exact CPU match. An empty identity
+            # (couldn't read /proc/cpuinfo) must force recalibration, never match an
+            # empty cached "cpu" — that would silently reuse a cross-machine ceiling.
+            if me and cached.get("cpu", "") == me:
                 return cached
         except Exception:
             pass

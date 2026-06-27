@@ -191,7 +191,12 @@ static void triad(double *restrict a, const double *restrict b,
  * achievable peak. Aggregate flops/wall over all threads. Measured at BOTH
  * precisions: SP packs 2x the lanes of DP, so the FP32 peak is ~2x the FP64
  * peak — an SP-heavy app must be judged against the FP32 ceiling. */
-static double g_sink = 0.0;
+/* `volatile`: the only thing preventing the timed FMA/triad loops from being deleted is
+ * that this sink escapes. With OpenMP the `#pragma omp atomic` did that, but the
+ * non-OpenMP fallback build (`-O2` only, no -fopenmp) ignores the pragma, leaving a
+ * write-only static the compiler can eliminate → the loop vanishes → an absurd "ceiling".
+ * volatile forces the store regardless of build flags. */
+static volatile double g_sink = 0.0;
 
 static double peak_gflops_dp(void)
 {
@@ -366,20 +371,38 @@ static double peak_bw_gbs(void)
     return best;
 }
 
+static void field_after_colon(char *line, char *dst, size_t n)
+{
+    char *p = strchr(line, ':');
+    if (p) { p += 2; p[strcspn(p, "\n")] = 0; snprintf(dst, n, "%s", p); }
+}
+
 static void cpu_model(char *out, size_t n)
 {
     out[0] = 0;
     FILE *f = fopen("/proc/cpuinfo", "r");
     if (!f) return;
-    char line[512];
+    char line[512], impl[64] = "", part[64] = "";
     while (fgets(line, sizeof(line), f)) {
-        if (strncmp(line, "model name", 10) == 0) {
-            char *p = strchr(line, ':');
-            if (p) { p += 2; p[strcspn(p, "\n")] = 0; snprintf(out, n, "%s", p); }
+        if (strncmp(line, "model name", 10) == 0) {  /* x86: definitive */
+            field_after_colon(line, out, n);
             break;
         }
+        /* aarch64 has no "model name" — build a stable identity from implementer+part so
+         * the per-machine peaks-cache guard isn't a no-op (which would let a cross-machine
+         * cache be reused on ARM, violating the never-reuse rule). */
+        if (!impl[0] && strncmp(line, "CPU implementer", 15) == 0)
+            field_after_colon(line, impl, sizeof impl);
+        if (!part[0] && strncmp(line, "CPU part", 8) == 0)
+            field_after_colon(line, part, sizeof part);
     }
     fclose(f);
+    if (!out[0] && (impl[0] || part[0]))
+        snprintf(out, n, "arm:%s:%s", impl, part);
+    /* JSON-sanitize: a model string with a quote/backslash/control char would make the
+     * output invalid JSON and lose the whole measurement (driver gets None). */
+    for (char *q = out; *q; q++)
+        if (*q == '"' || *q == '\\' || (unsigned char)*q < 0x20) *q = '_';
 }
 
 /* Mode (argv[1]): "compute" → FP peaks only, "bw" → bandwidth only, else both.
