@@ -35,8 +35,14 @@ def rank_from_env(env=None):
     # or the tiers disagree on a process's rank. PALS_RANKID covers HPE/Cray PALS.
     for k in ("OMPI_COMM_WORLD_RANK", "PMI_RANK", "MV2_COMM_WORLD_RANK", "PMIX_RANK",
               "SLURM_PROCID", "PALS_RANKID", "ALPS_APP_PE"):
-        if e.get(k):
-            return int(e[k])
+        v = e.get(k)
+        if v:
+            # Skip an empty/non-integer value and fall through (matches the Rust `parse`
+            # and C `strtol` guards) rather than crashing the whole report on `int("x")`.
+            try:
+                return int(v)
+            except (ValueError, TypeError):
+                continue
     return 0
 
 

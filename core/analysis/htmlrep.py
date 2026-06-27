@@ -151,6 +151,9 @@ def _roofline_svg(pk, point):
             xmax = max(xmax, 10 ** math.ceil(math.log10(point["ai"])))
         if point.get("gflops", 0) > 0:
             ymin = min(ymin, 10 ** math.floor(math.log10(point["gflops"])))
+            # Grow the TOP too — a point above a mis-calibrated low ceiling (the case
+            # compute_warn flags) would otherwise render above the canvas (Y < pad).
+            ymax = max(ymax, 10 ** math.ceil(math.log10(point["gflops"])))
     lx0, lx1, ly0, ly1 = math.log10(xmin), math.log10(xmax), math.log10(ymin), math.log10(ymax)
 
     def X(ai):
@@ -589,7 +592,10 @@ def build(result_dir, manifest, snap, profile, suite, detail=None, threshold=0.1
                     ("io_read", "logical read"), ("io_write", "logical write")]
                   if disp(k) is not None]
         if disp("io_wait"):
-            iorows.append(("I/O wait (est.)", disp("io_wait"), "none"))
+            # In an aggregate, io_wait is the worst rank's (MAX) — label it so it isn't
+            # read as job-wide (matches the text report's "worst rank" annotation).
+            iow_lbl = "I/O wait (worst rank)" if (val("nranks") or 1) > 1 else "I/O wait (est.)"
+            iorows.append((iow_lbl, disp("io_wait"), "none"))
         if iorows:
             left.append("<div class='sec'><h2>I/O (volume + speed)</h2>%s</div>" % _mlist(iorows))
 

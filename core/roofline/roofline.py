@@ -449,14 +449,17 @@ def precision_unknown_summary(ai, gflops, pk):
     csp = classify(ai, gflops, pk, "sp")
     if not cdp or not csp:
         return None
+    # Far below the roofline under BOTH precisions → latency/overhead/idle-bound, not
+    # compute- or bandwidth-bound. This is precision-independent (which compute roof you'd
+    # pick is moot), so it must be caught before the ridge-band branches — otherwise a
+    # point at e.g. 8% of peak above the FP64 ridge would be wrongly called "compute-bound".
+    if cdp[2] == "latency" and csp[2] == "latency":
+        return ("%.0f%% of the FP64 ceiling — far below the roofline: latency/overhead/idle-bound, "
+                "not compute- or bandwidth-bound (precision choice is moot here)." % cdp[1])
     if ai < ridge_dp:
         # left of both ridges → bound by the (precision-independent) bandwidth roof
-        _, pct, bound = cdp
-        if bound == "latency":
-            return ("%.0f%% of the bandwidth roof — latency/overhead/idle-bound, not compute- "
-                    "or bandwidth-bound (precision-independent here)." % pct)
         return ("memory-bandwidth-bound at %.0f%% of the DRAM roof — precision-independent "
-                "(the bandwidth roof does not depend on FP precision)." % pct)
+                "(the bandwidth roof does not depend on FP precision)." % cdp[1])
     if ai >= ridge_sp:
         # right of both ridges → compute-bound either way; only %-of-peak differs
         return ("compute-bound — %.0f%% of the FP64 ceiling / %.0f%% of the FP32 ceiling. "

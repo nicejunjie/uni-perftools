@@ -130,7 +130,7 @@ if [ "$HWPC" = 0 ]; then skp "[2] no HW counters"; else
   if ge "$(ratio "$ia" "$ip")" 1.10; then
     ok "[2] spin INFLATES hw_instructions by $(ratio "$ia" "$ip")x under active (use passive for clean counts)"
   else
-    ok "[2] spin inflation modest here ($(ratio "$ia" "$ip")x) — GOMP_SPINCOUNT/short idle"
+    echo "  NOTE: [2] spin inflation modest here ($(ratio "$ia" "$ip")x) — GOMP_SPINCOUNT/short idle (informational, not a pass)"
   fi
   if ge "$tp" "$ta"; then ok "[2] active spin MASKS thread imbalance (${ta}% vs true ${tp}% passive)"
   else echo "  NOTE: active thread_imbalance ${ta}% >= passive ${tp}% (idle spin did not mask here)"; fi
@@ -210,7 +210,7 @@ if [ "$HWPC" = 0 ]; then skp "[5] no HW counters"; else
   if ge "${RAT[400000000]}" 6.0; then ok "[5] long region (400M iters) accurate: ratio ${RAT[400000000]} (~8) — trustworthy"
   else bad "[5] long region ratio ${RAT[400000000]} < 6 — even long workloads undercount"; fi
   if lt "${RAT[1000000]}" 6.0; then ok "[5] short region (1M iters, ~few ms) undercounts: ratio ${RAT[1000000]} < 6 — documented limit confirmed"
-  else echo "  NOTE: 1M-iter region still gave ratio ${RAT[1000000]} (GOMP thread-pool persisted across the run)"; ok "[5] threads caught even at 1M iters (persistent pool) — better than worst case"; fi
+  else echo "  NOTE: [5] 1M-iter region gave ratio ${RAT[1000000]} (GOMP thread-pool persisted) — informational, not a pass"; fi
 fi
 
 # ============================================================================
@@ -233,7 +233,7 @@ if [ -n "$mt_s" ] && ge "$mt_s" 0 && [ -n "$mi_s" ]; then
   else bad "[6] mpi_imbalance_pct out of range (skew ${mi_s}%, bal ${mi_b}%)"; fi
   # The straggler (rank 0 4x work) must make the OTHER ranks wait -> higher imbalance.
   if ge "$(awk "BEGIN{print $mi_s-$mi_b}")" 10; then ok "[6] straggler rank raises MPI imbalance (${mi_s}% vs balanced ${mi_b}%)"
-  else echo "  NOTE: skew imbalance ${mi_s}% not clearly above balanced ${mi_b}% (Allreduce sync tolerance)"; ok "[6] mpi_time captured per-rank under threads (PMPI shim works with OpenMP)"; fi
+  else echo "  NOTE: [6] skew imbalance ${mi_s}% not clearly above balanced ${mi_b}% (Allreduce sync tolerance) — informational, not a pass"; fi
 else
   bad "[6] no mpi_time/mpi_imbalance in the aggregate — PMPI shim did not capture MPI under threads"
 fi

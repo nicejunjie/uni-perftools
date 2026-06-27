@@ -5,6 +5,7 @@
 #include <string.h>
 #include <stdio.h>
 #include <limits.h>
+#include <ctype.h>
 
 void get_exe_path(char **path)
 {
@@ -58,7 +59,9 @@ static const char *rank_env_value(void)
         const char *r = getenv(RANK_ENV[i]);
         if (r && *r) {
             char *end;
-            (void)strtol(r, &end, 10);
+            (void)strtol(r, &end, 10);  /* strtol already skips leading whitespace */
+            while (*end && isspace((unsigned char)*end))
+                end++;                   /* tolerate trailing whitespace, like trim() */
             if (end != r && *end == '\0')
                 return r;
         }
